@@ -1,0 +1,169 @@
+import 'dart:io';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
+
+typedef RootDirectoryProvider = Future<Directory> Function();
+
+class SongFileStorage {
+  SongFileStorage({RootDirectoryProvider? rootDirectoryProvider})
+    : _rootDirectoryProvider =
+          rootDirectoryProvider ?? getApplicationDocumentsDirectory;
+
+  final RootDirectoryProvider _rootDirectoryProvider;
+
+  String pdfPathFor(String songId) => path.join('scores', '$songId.pdf');
+
+  Future<String> storePdf({
+    required PickedLocalFile source,
+    required String songId,
+  }) async {
+    final relativePath = await _store(
+      source: source,
+      directory: 'scores',
+      fileName: path.basename(pdfPathFor(songId)),
+      invalidMessage: 'PDF를 다시 선택하세요.',
+    );
+    final file = await resolve(relativePath);
+
+    try {
+      final reader = await file.open();
+      try {
+        final header = String.fromCharCodes(await reader.read(1024));
+        if (!header.contains('%PDF-')) {
+          throw const FormatException('PDF를 다시 선택하세요.');
+        }
+      } finally {
+        await reader.close();
+      }
+    } on Object {
+      await delete(relativePath);
+      rethrow;
+    }
+
+    return relativePath;
+  }
+
+  String annotationPathFor(String songId) =>
+      path.join('annotations', '$songId.json');
+
+  Future<void> saveAnnotations(String songId, String jsonContent) async {
+    final relativePath = annotationPathFor(songId);
+    final fullPath = path.join(
+      (await _rootDirectoryProvider()).path,
+      relativePath,
+    );
+    final file = File(fullPath);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(jsonContent);
+  }
+
+  Future<String?> loadAnnotations(String songId) async {
+    final relativePath = annotationPathFor(songId);
+    final fullPath = path.join(
+      (await _rootDirectoryProvider()).path,
+      relativePath,
+    );
+    final file = File(fullPath);
+    if (await file.exists()) {
+      return file.readAsString();
+    }
+    return null;
+  }
+
+  Future<String> storeAudio({
+    required PickedLocalFile source,
+    required String songId,
+  }) {
+    final extension = path.extension(source.name).toLowerCase();
+    return _store(
+      source: source,
+      directory: 'audio',
+      fileName:
+          '$songId-${DateTime.now().microsecondsSinceEpoch}'
+          '${extension.isEmpty ? '.audio' : extension}',
+      invalidMessage: '오디오를 다시 선택하세요.',
+    );
+  }
+
+  Future<String> storeJamPdf({
+    required List<int> bytes,
+    required String songId,
+  }) async {
+    if (bytes.isEmpty) {
+      throw const FormatException('빈 PDF입니다.');
+    }
+    final relativePath = path.join('jam_host', '$songId.pdf');
+    final file = await resolve(relativePath);
+    await file.parent.create(recursive: true);
+    try {
+      await file.writeAsBytes(bytes, flush: true);
+      final header = String.fromCharCodes(bytes.take(1024));
+      if (!header.contains('%PDF-') || await file.length() == 0) {
+        throw const FormatException('PDF를 확인하세요.');
+      }
+      return relativePath;
+    } on Object {
+      if (await file.exists()) {
+        await file.delete();
+      }
+      rethrow;
+    }
+  }
+
+  Future<String> _store({
+    required PickedLocalFile source,
+    required String directory,
+    required String fileName,
+    required String invalidMessage,
+  }) async {
+    final root = await _rootDirectoryProvider();
+    final targetDirectory = Directory(path.join(root.path, directory));
+    await targetDirectory.create(recursive: true);
+
+    final relativePath = path.join(directory, fileName);
+    final destination = File(path.join(root.path, relativePath));
+
+    try {
+      if (source.path case final sourcePath?) {
+        await File(sourcePath).copy(destination.path);
+      } else {
+        await destination.writeAsBytes(source.bytes!, flush: true);
+      }
+      if (await destination.length() == 0) {
+        throw FormatException(invalidMessage);
+      }
+    } on Object {
+      if (await destination.exists()) {
+        await destination.delete();
+      }
+      rethrow;
+    }
+
+    return relativePath;
+  }
+
+  Future<File> resolve(String relativePath) async {
+    final root = await _rootDirectoryProvider();
+    final normalized = path.normalize(relativePath);
+    if (path.isAbsolute(normalized) ||
+        normalized == '..' ||
+        normalized.startsWith('..${path.separator}')) {
+      throw const FormatException('파일 경로를 확인하세요.');
+    }
+    return File(path.join(root.path, normalized));
+  }
+
+  Future<void> delete(String relativePath) async {
+    final file = await resolve(relativePath);
+    if (await file.exists()) {
+      await file.delete();
+    }
+  }
+}
+
+final songFileStorageProvider = Provider<SongFileStorage>((ref) {
+  return SongFileStorage();
+});

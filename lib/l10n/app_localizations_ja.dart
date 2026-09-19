@@ -1,0 +1,1473 @@
+// ignore: unused_import
+import 'package:intl/intl.dart' as intl;
+import 'app_localizations.dart';
+
+// ignore_for_file: type=lint
+
+/// The translations for Japanese (`ja`).
+class AppLocalizationsJa extends AppLocalizations {
+  AppLocalizationsJa([String locale = 'ja']) : super(locale);
+
+  @override
+  String get appName => 'Page-a-Diddle';
+
+  @override
+  String get tagline => 'ドラム譜面練習';
+
+  @override
+  String get tabHome => 'ホーム';
+
+  @override
+  String get tabLibrary => 'ライブラリ';
+
+  @override
+  String get tabSetlists => 'セットリスト';
+
+  @override
+  String get tabTools => 'ツール';
+
+  @override
+  String get tabJam => '合奏';
+
+  @override
+  String get settings => '設定';
+
+  @override
+  String get language => '言語';
+
+  @override
+  String get theme => 'テーマ';
+
+  @override
+  String get themeSystem => 'システム';
+
+  @override
+  String get themeLight => 'ライト';
+
+  @override
+  String get themeDark => 'ダーク';
+
+  @override
+  String get languageSystem => 'システム';
+
+  @override
+  String get languageKorean => '한국어';
+
+  @override
+  String get languageEnglish => 'English';
+
+  @override
+  String get languageJapanese => '日本語';
+
+  @override
+  String get languageChinese => '中文';
+
+  @override
+  String get languageLatin => 'ラテン語';
+
+  @override
+  String get version => 'バージョン';
+
+  @override
+  String get sectionPractice => '練習';
+
+  @override
+  String get sectionLibraryStage => 'ライブラリ・演奏';
+
+  @override
+  String get sectionApp => 'アプリ';
+
+  @override
+  String get tapTempo => 'タップテンポ';
+
+  @override
+  String get tempoTrainer => 'テンポトレーナー';
+
+  @override
+  String get cloudScores => 'クラウド譜面';
+
+  @override
+  String get webDavTechnical => 'WebDAV';
+
+  @override
+  String get countIn => 'カウントイン';
+
+  @override
+  String get syncAnchor => 'オーディオアンカー';
+
+  @override
+  String get followConductor => '指揮者に従う';
+
+  @override
+  String get returnToLive => 'ライブに戻る';
+
+  @override
+  String get autoPaused => '自動一時停止';
+
+  @override
+  String get followOff => '追従オフ';
+
+  @override
+  String get followOn => '追従オン';
+
+  @override
+  String get progressFollow => '追従';
+
+  @override
+  String get progressPage => 'ページ';
+
+  @override
+  String get resumeLive => 'ライブ再開';
+
+  @override
+  String get progressFollowHint => '音声・合奏に合わせて小節を追います';
+
+  @override
+  String get progressPageHint => 'ページ単位のみめくります';
+
+  @override
+  String get autoPausedHint => '手動移動 · タップでライブへ';
+
+  @override
+  String get roleConductor => '指揮者';
+
+  @override
+  String get roleMembers => 'メンバー';
+
+  @override
+  String get jamPart => 'Your part';
+
+  @override
+  String get jamPartVocal => 'Vocals';
+
+  @override
+  String get jamPartGuitar => 'Guitar';
+
+  @override
+  String get jamPartBass => 'Bass';
+
+  @override
+  String get jamPartDrums => 'Drums';
+
+  @override
+  String get jamPartKeyboard => 'Keyboard';
+
+  @override
+  String get jamPartOther => 'Other';
+
+  @override
+  String get jamPartOtherHint => 'Enter your part';
+
+  @override
+  String get enterOtherPart => 'Enter a part';
+
+  @override
+  String get emptyLibraryTitle => 'まだ譜面がありません';
+
+  @override
+  String get emptyLibraryBody => 'PDFを取り込めば\nすぐ練習できます';
+
+  @override
+  String get emptyRecentTitle => '最近開いた譜面はありません';
+
+  @override
+  String get emptySetlistsTitle => 'セットリストがありません';
+
+  @override
+  String get emptySetlistsBody => '演奏・練習の順番を作れば\nステージで即めくれます';
+
+  @override
+  String get emptyJamSongs => 'まだ曲がありません';
+
+  @override
+  String get emptyJamMembers => 'まだメンバーがいません';
+
+  @override
+  String get loadFailed => '読み込めませんでした。もう一度お試しください。';
+
+  @override
+  String get pickFailed => 'ファイルを選べませんでした';
+
+  @override
+  String get saveFailed => '保存できませんでした';
+
+  @override
+  String get downloadNeeded => '先に譜面をダウンロードしてください';
+
+  @override
+  String get offlineMissing => 'オフラインなし';
+
+  @override
+  String get metronome => 'メトロノーム';
+
+  @override
+  String get metronomeSubtitle => '拍子・アクセント';
+
+  @override
+  String get metronomeSubtitleFull => '拍子・アクセント・カウントイン';
+
+  @override
+  String get openScore => '譜面を開く';
+
+  @override
+  String get practiceDeck => 'すぐ練習';
+
+  @override
+  String get recentScores => '最近の譜面';
+
+  @override
+  String get seeAll => 'すべて';
+
+  @override
+  String get weekPractice => '今週の練習';
+
+  @override
+  String get weekPracticeHint => '譜面を開くと練習時間が自動で積み上がります';
+
+  @override
+  String get statSessions => 'セッション';
+
+  @override
+  String get statTime => '時間';
+
+  @override
+  String get statAverage => '平均';
+
+  @override
+  String sessionCountLabel(int count) {
+    return '$count回';
+  }
+
+  @override
+  String get loadingEllipsis => '読み込み中…';
+
+  @override
+  String get loading => '読み込み中';
+
+  @override
+  String get importHintHome => 'PDFを取り込んで練習を始めましょう';
+
+  @override
+  String get continuePractice => '練習を続ける';
+
+  @override
+  String get greetingMorning => 'おはようございます';
+
+  @override
+  String get greetingAfternoon => 'こんにちは';
+
+  @override
+  String get greetingEvening => 'こんばんは';
+
+  @override
+  String get relativeJustNow => 'たった今';
+
+  @override
+  String relativeMinutesAgo(int minutes) {
+    return '$minutes分前';
+  }
+
+  @override
+  String relativeHoursAgo(int hours) {
+    return '$hours時間前';
+  }
+
+  @override
+  String relativeDaysAgo(int days) {
+    return '$days日前';
+  }
+
+  @override
+  String relativeMonthDay(int month, int day) {
+    return '$month月$day日';
+  }
+
+  @override
+  String durationSeconds(int seconds) {
+    return '$seconds秒';
+  }
+
+  @override
+  String durationMinutes(int minutes) {
+    return '$minutes分';
+  }
+
+  @override
+  String durationHours(int hours) {
+    return '$hours時間';
+  }
+
+  @override
+  String durationHoursMinutes(int hours, int minutes) {
+    return '$hours時間 $minutes分';
+  }
+
+  @override
+  String get filterAll => 'すべて';
+
+  @override
+  String get filterPdf => 'PDF';
+
+  @override
+  String get filterSmartScore => '電子譜面';
+
+  @override
+  String get filterNativeScore => 'PDF';
+
+  @override
+  String get filterDifficult => '難しい';
+
+  @override
+  String get filterFavorites => 'お気に入り';
+
+  @override
+  String get filterRecent => '最近';
+
+  @override
+  String get library => 'ライブラリ';
+
+  @override
+  String get folders => 'フォルダ';
+
+  @override
+  String get allScores => 'すべての譜面';
+
+  @override
+  String get folder => 'フォルダ';
+
+  @override
+  String get unfiled => '未分類';
+
+  @override
+  String get manageFolders => 'フォルダ管理';
+
+  @override
+  String get newFolder => '新しいフォルダ';
+
+  @override
+  String get newSubfolder => 'サブフォルダ';
+
+  @override
+  String get folderParent => '親フォルダ';
+
+  @override
+  String folderDepthLimit(int max) {
+    return 'サブフォルダは最大$max階層までです';
+  }
+
+  @override
+  String get editFolder => 'フォルダを編集';
+
+  @override
+  String get folderName => 'フォルダ名';
+
+  @override
+  String get folderNameRequired => 'フォルダ名を入力してください';
+
+  @override
+  String get folderColor => 'フォルダの色';
+
+  @override
+  String get deleteFolder => 'フォルダを削除';
+
+  @override
+  String get deleteFolderBody => 'フォルダだけ削除されます。譜面は未分類のまま残ります。';
+
+  @override
+  String get labels => 'ラベル';
+
+  @override
+  String get addLabel => 'ラベルを追加';
+
+  @override
+  String get labelHint => '#タグ';
+
+  @override
+  String get noFolder => 'フォルダなし';
+
+  @override
+  String get import => '取り込み';
+
+  @override
+  String get importFrom => '取り込み元';
+
+  @override
+  String get importFromDevice => 'この端末';
+
+  @override
+  String get importFromGoogleDrive => 'Google Drive';
+
+  @override
+  String get importFromOneDrive => 'OneDrive';
+
+  @override
+  String get importFromDropbox => 'Dropbox';
+
+  @override
+  String get importFromWebDav => 'WebDAV';
+
+  @override
+  String importCloudPickerHint(String provider) {
+    return 'ファイル選択で$providerを開き、PDFを選んでください。';
+  }
+
+  @override
+  String importCloudHowTitle(String provider) {
+    return '$providerから選ぶ';
+  }
+
+  @override
+  String importCloudHowBody(String provider) {
+    return 'このアプリ内の$providerログインはまだありません。\n\n1. 端末に$providerアプリを入れてログイン\n2. 続行でシステムファイル選択を開く\n3. サイドメニュー(☰)から$providerを選ぶ\n4. PDFを選択\n\nエミュレータにはクラウドアプリがないことが多いです。実機で試してください。';
+  }
+
+  @override
+  String get importCloudViaSystem => 'システムファイルから';
+
+  @override
+  String get importWebDavViaApp => 'アプリ内でログイン';
+
+  @override
+  String get continueAction => '続行';
+
+  @override
+  String get importPdf => 'PDFを取り込む';
+
+  @override
+  String get importMusicXml => 'PDFを取り込む';
+
+  @override
+  String get importing => '取り込み中…';
+
+  @override
+  String get importFailed => '取り込み失敗';
+
+  @override
+  String get searchHint => '曲 · アーティスト · BPM · ラベル';
+
+  @override
+  String get songTitle => '曲名';
+
+  @override
+  String get songTitleRequired => '曲名が必要です';
+
+  @override
+  String get artist => 'アーティスト';
+
+  @override
+  String get more => 'その他';
+
+  @override
+  String get favorite => 'お気に入り';
+
+  @override
+  String get unfavorite => 'お気に入り解除';
+
+  @override
+  String targetBpmShort(int target) {
+    return '目標 $target';
+  }
+
+  @override
+  String libraryCountFilter(int count, String filter) {
+    return '$count曲 · $filter';
+  }
+
+  @override
+  String get smartThumb => '電子';
+
+  @override
+  String get newSetlist => '新しいセットリスト';
+
+  @override
+  String get create => '作成';
+
+  @override
+  String get createFailed => '作成失敗';
+
+  @override
+  String get createSetlist => 'セットリストを作成';
+
+  @override
+  String get setlist => 'セットリスト';
+
+  @override
+  String get name => '名前';
+
+  @override
+  String get save => '保存';
+
+  @override
+  String get cancel => 'キャンセル';
+
+  @override
+  String get delete => '削除';
+
+  @override
+  String get remove => '削除';
+
+  @override
+  String get rename => '名前を変更';
+
+  @override
+  String get confirmDelete => '削除しますか？';
+
+  @override
+  String get addSongs => '曲を追加';
+
+  @override
+  String get noSongs => '曲なし';
+
+  @override
+  String songAdded(String title) {
+    return '$title を追加しました';
+  }
+
+  @override
+  String songCount(int count) {
+    return '$count曲';
+  }
+
+  @override
+  String get stage => 'ステージ';
+
+  @override
+  String get startStage => 'ステージ開始';
+
+  @override
+  String get saveOffline => 'オフライン保存';
+
+  @override
+  String get downloadFailed => 'ダウンロード失敗';
+
+  @override
+  String get downloadRequired => 'ダウンロードが必要';
+
+  @override
+  String savedSongs(int count) {
+    return '$count曲保存';
+  }
+
+  @override
+  String savedSongsPartial(int saved, int failed) {
+    return '$saved曲保存 · $failed曲失敗';
+  }
+
+  @override
+  String get changeFailed => '変更失敗';
+
+  @override
+  String get fetchFailed => '読み込み失敗';
+
+  @override
+  String get setlistPromptBody => '練習・演奏の順番を作ってください';
+
+  @override
+  String get jam => '合奏';
+
+  @override
+  String get jamTagline => 'バンドのように、同じ譜面・同じ拍子';
+
+  @override
+  String get jamHubHint => '同じWi-Fiでセッションを作り、コードやQRで招待';
+
+  @override
+  String get activeJams => '進行中の合奏';
+
+  @override
+  String get nearbyJams => '近くの部屋';
+
+  @override
+  String get findNearbyJams => '近くを検索';
+
+  @override
+  String get noNearbyJams => '同じWi-Fiに部屋がありません';
+
+  @override
+  String get createJam => '合奏を作成';
+
+  @override
+  String get jamName => '合奏名';
+
+  @override
+  String get join => '参加';
+
+  @override
+  String get joinWithCode => 'コードで参加';
+
+  @override
+  String get code => 'コード';
+
+  @override
+  String get tapToGoBack => 'タップして戻る';
+
+  @override
+  String get inviteCode => '招待コード';
+
+  @override
+  String get copy => 'コピー';
+
+  @override
+  String get move => '移動';
+
+  @override
+  String get moveToFolder => 'フォルダへ移動';
+
+  @override
+  String get copyToFolder => 'フォルダへコピー';
+
+  @override
+  String selectedCount(int count) {
+    return '$count件選択';
+  }
+
+  @override
+  String get deleteSelectedBody => '選択した譜面を削除しますか？元に戻せません。';
+
+  @override
+  String get editSong => '譜面を編集';
+
+  @override
+  String get codeCopied => 'コードをコピーしました';
+
+  @override
+  String get jamCode => '合奏コード';
+
+  @override
+  String get showQr => 'QRコードを表示';
+
+  @override
+  String get scanQr => 'QRスキャン';
+
+  @override
+  String get clickTrack => 'クリック音';
+
+  @override
+  String get leave => '退出';
+
+  @override
+  String get none => 'なし';
+
+  @override
+  String get select => '選択';
+
+  @override
+  String get change => '変更';
+
+  @override
+  String get previous => '前へ';
+
+  @override
+  String get next => '次へ';
+
+  @override
+  String get open => '開く';
+
+  @override
+  String get play => '再生';
+
+  @override
+  String get stop => '停止';
+
+  @override
+  String get pause => '一時停止';
+
+  @override
+  String get connected => '接続';
+
+  @override
+  String get disconnected => '切断';
+
+  @override
+  String get me => '自分';
+
+  @override
+  String get setlistNotFound => 'セットリストが見つかりません';
+
+  @override
+  String get noOpenableScore => '開ける譜面がありません';
+
+  @override
+  String get jamSessionNotFound => '合奏セッションが見つかりません';
+
+  @override
+  String get jamNetworkUnavailable => 'Wi-Fiをオンにして、もう一度お試しください';
+
+  @override
+  String get jamJoinTimedOut => 'セッションが見つかりません。Wi-Fiとコードを確認してください';
+
+  @override
+  String get jamHostUnavailable => 'ホストに接続できません。ホストのアプリとWi-Fiを確認してください';
+
+  @override
+  String get jamHostDisconnected => 'ホストがセッションを終了したか、接続が切れました';
+
+  @override
+  String get jamBackToHub => '合奏一覧へ';
+
+  @override
+  String get jamLobby => 'Jam lobby';
+
+  @override
+  String get ready => 'Ready';
+
+  @override
+  String get readyDone => 'Ready';
+
+  @override
+  String get waitingForReady => 'Waiting for everyone…';
+
+  @override
+  String jamReadyCount(int ready, int total) {
+    return '$ready/$total ready';
+  }
+
+  @override
+  String get jamNotReady => 'Wait until everyone is ready';
+
+  @override
+  String get toolsWifiSync => '同じWi-Fiで合奏';
+
+  @override
+  String get toolsGraduallyFaster => '徐々に速く';
+
+  @override
+  String get toolsTapForBpm => 'タップでBPM計測';
+
+  @override
+  String get start => '開始';
+
+  @override
+  String get preparing => '準備中';
+
+  @override
+  String get tapToStart => 'タップして開始';
+
+  @override
+  String get audioError => 'オーディオエラー';
+
+  @override
+  String get bpmUp => 'BPMを上げる';
+
+  @override
+  String get bpmDown => 'BPMを下げる';
+
+  @override
+  String get meter => '拍子記号';
+
+  @override
+  String get beatUnit => '分割';
+
+  @override
+  String get accent => 'アクセント';
+
+  @override
+  String get double => '2倍';
+
+  @override
+  String get halve => '半分';
+
+  @override
+  String get reset => 'リセット';
+
+  @override
+  String get tapInput => '拍を入力';
+
+  @override
+  String get target => '目標';
+
+  @override
+  String get targetReached => '目標到達';
+
+  @override
+  String get repetitions => '小節/段階';
+
+  @override
+  String get repsDone => '繰り返し完了';
+
+  @override
+  String get checkSettings => '設定を確認してください';
+
+  @override
+  String get increase => '増加';
+
+  @override
+  String trainerProgress(int current, int total, int beat) {
+    return '$current/$total 小節 · $beat拍';
+  }
+
+  @override
+  String get trainerHint => '開始テンポから目標まで、設定した小節ごとに自動で上がります。';
+
+  @override
+  String trainerPlan(int start, int step, int bars, int target) {
+    return '$startから $bars小節ごとに +$step、$targetまで';
+  }
+
+  @override
+  String trainerNext(int bpm) {
+    return '次は $bpm BPM';
+  }
+
+  @override
+  String trainerStageBars(int current, int total) {
+    return 'この段階 $current/$total 小節';
+  }
+
+  @override
+  String get trainerIdleTitle => 'テンポを上げて身につける';
+
+  @override
+  String get close => '閉じる';
+
+  @override
+  String get back => '戻る';
+
+  @override
+  String get done => '完了';
+
+  @override
+  String get score => '譜面';
+
+  @override
+  String get openFailed => '開けませんでした';
+
+  @override
+  String get scoreSettings => '譜面設定';
+
+  @override
+  String get music => '音楽';
+
+  @override
+  String get metroShort => 'メトロ';
+
+  @override
+  String get view => '表示';
+
+  @override
+  String get annotations => '注釈';
+
+  @override
+  String get playback => '再生';
+
+  @override
+  String get attachMusic => '音楽を接続';
+
+  @override
+  String get playing => '再生中';
+
+  @override
+  String get pickFile => 'ファイルを選択';
+
+  @override
+  String get playbackSpeed => '再生速度';
+
+  @override
+  String get loopSection => '区間リピート';
+
+  @override
+  String get progress => '進行';
+
+  @override
+  String get pageLayout => 'ページレイアウト';
+
+  @override
+  String get autoAdvance => '自動進行';
+
+  @override
+  String get returnToCurrent => '現在位置に戻る';
+
+  @override
+  String get currentMeasure => '現在の小節';
+
+  @override
+  String get notSelected => '未選択';
+
+  @override
+  String get nextSong => '次の曲';
+
+  @override
+  String get practiceSync => '練習・同期';
+
+  @override
+  String anchorsCount(int count) {
+    return '$count個';
+  }
+
+  @override
+  String get pedal => 'ペダル';
+
+  @override
+  String get practiceLog => '練習記録';
+
+  @override
+  String get hardMeasures => '難しい小節';
+
+  @override
+  String get display => '表示';
+
+  @override
+  String get showAnnotations => '注釈を表示';
+
+  @override
+  String get clearAnnotations => '注釈を消去';
+
+  @override
+  String get statusBar => 'ステータスバー';
+
+  @override
+  String get layoutAuto => '自動 · 横2ページ / 縦スクロール';
+
+  @override
+  String get layoutFit => 'フィット';
+
+  @override
+  String get layoutTwoUp => '2ページ';
+
+  @override
+  String get layoutScroll => 'スクロール';
+
+  @override
+  String get off => 'オフ';
+
+  @override
+  String get wakeLockFailed => '画面維持に失敗';
+
+  @override
+  String get metronomeError => 'メトロノームエラー';
+
+  @override
+  String get haptics => '触覚';
+
+  @override
+  String get openInMetronome => 'メトロノームで開く';
+
+  @override
+  String get metronomeStop => 'メトロノーム停止';
+
+  @override
+  String get audioConnect => 'オーディオ接続';
+
+  @override
+  String get anchorLinkHint => '音楽位置と小節開始を接続します。';
+
+  @override
+  String get measure => '小節';
+
+  @override
+  String get audioSeconds => 'オーディオ秒';
+
+  @override
+  String get currentPosition => '現在位置';
+
+  @override
+  String get checkTime => '時間を確認してください';
+
+  @override
+  String get deleteAnchorHere => 'この小節のアンカーを削除';
+
+  @override
+  String get needTwoAnchors => '先にアンカーを2つ以上保存してください';
+
+  @override
+  String get needTwoSectionAnchors => 'セクションアンカーが2つ必要';
+
+  @override
+  String get loopRangeHint => '小節/セクションアンカー間を繰り返します。';
+
+  @override
+  String get loopRange => 'リピート範囲';
+
+  @override
+  String get measureRange => '小節範囲';
+
+  @override
+  String get startMeasure => '開始小節';
+
+  @override
+  String get endMeasure => '終了小節';
+
+  @override
+  String get startLoop => 'リピート開始';
+
+  @override
+  String get clearLoop => 'リピート解除';
+
+  @override
+  String get label => '表示';
+
+  @override
+  String get enterLabel => '表示を入力してください';
+
+  @override
+  String get endRecording => '記録終了';
+
+  @override
+  String get startPractice => '練習開始';
+
+  @override
+  String get targetBpm => '目標BPM';
+
+  @override
+  String get optional => '任意';
+
+  @override
+  String get targetBpmAboveCurrent => '目標BPMは現在以上';
+
+  @override
+  String get checkStartTargetBpm => '開始・目標BPMを確認';
+
+  @override
+  String get recent => '最近';
+
+  @override
+  String get targetAchieved => '目標達成';
+
+  @override
+  String targetBpmValue(int target) {
+    return '目標 $target BPM';
+  }
+
+  @override
+  String targetRemaining(int delta) {
+    return '目標まで $delta BPM';
+  }
+
+  @override
+  String maxBpmLabel(int bpm, String target) {
+    return '最高 $bpm BPM$target';
+  }
+
+  @override
+  String practiceInProgress(int bpm, String date) {
+    return '進行中 · $bpm BPM · $date';
+  }
+
+  @override
+  String inProgressLabel(String target) {
+    return '進行中$target';
+  }
+
+  @override
+  String noneWithTarget(String target) {
+    return 'なし$target';
+  }
+
+  @override
+  String sessionsWithTarget(int count, String target) {
+    return '$count回$target';
+  }
+
+  @override
+  String targetSuffix(int bpm) {
+    return ' · 目標 $bpm BPM';
+  }
+
+  @override
+  String get progressMode => '進行方式';
+
+  @override
+  String get pressKey => 'キーを押してください';
+
+  @override
+  String get defaults => 'デフォルト';
+
+  @override
+  String get left => '左';
+
+  @override
+  String get right => '右';
+
+  @override
+  String get loop => 'リピート';
+
+  @override
+  String meterConfigured(String label) {
+    return '$label · 設定';
+  }
+
+  @override
+  String get timeSignature => '拍子記号';
+
+  @override
+  String get numerator => '分子';
+
+  @override
+  String get denominator => '分母';
+
+  @override
+  String get startBpm => '開始BPM';
+
+  @override
+  String get endBpm => '終了BPM';
+
+  @override
+  String get checkInput => '入力を確認';
+
+  @override
+  String get bpmRangeError => 'BPMは40〜240である必要があります';
+
+  @override
+  String get reimportPdf => 'PDFを再取り込みしてください。';
+
+  @override
+  String get editMeasures => '小節を編集';
+
+  @override
+  String get dragAddMeasure => 'ドラッグして小節を追加';
+
+  @override
+  String get deleteMeasure => '小節を削除';
+
+  @override
+  String get pageNav => 'ページ移動';
+
+  @override
+  String get prevPage => '前のページ';
+
+  @override
+  String get nextPage => '次のページ';
+
+  @override
+  String loopMeasures(int start, int end) {
+    return '$start–$end 小節';
+  }
+
+  @override
+  String measureBeat(int measure, int beat) {
+    return '$measure小節 $beat拍';
+  }
+
+  @override
+  String practiceStatsLine(int count, String duration, int bpm) {
+    return '$count回 · 合計 $duration · 平均 $bpm BPM';
+  }
+
+  @override
+  String minutesSeconds(int minutes, int seconds) {
+    return '$minutes分 $seconds秒';
+  }
+
+  @override
+  String get songInfo => '曲情報';
+
+  @override
+  String get memo => 'メモ';
+
+  @override
+  String get audio => 'オーディオ';
+
+  @override
+  String get connect => '接続';
+
+  @override
+  String get saving => '保存中…';
+
+  @override
+  String get audioAttachFailed => 'オーディオ接続失敗';
+
+  @override
+  String get importPdfScore => 'PDF譜面を取り込む';
+
+  @override
+  String get cloudSyncHint => 'クラウド譜面を同期できます';
+
+  @override
+  String get serverAddress => 'サーバーURL';
+
+  @override
+  String get username => 'ユーザー名';
+
+  @override
+  String get password => 'パスワード';
+
+  @override
+  String get enterServerInfo => 'サーバー情報を入力して接続';
+
+  @override
+  String get reconnect => '再接続';
+
+  @override
+  String get disconnect => '切断';
+
+  @override
+  String get notConnected => '未接続';
+
+  @override
+  String get connectedStatus => '接続済み';
+
+  @override
+  String get checking => '確認中…';
+
+  @override
+  String get browseFiles => 'ファイルを見る';
+
+  @override
+  String get checkUrl => 'URLを確認してください。';
+
+  @override
+  String get cantSaveSettings => '設定を保存できません。';
+
+  @override
+  String get cantDisconnect => '切断できません。';
+
+  @override
+  String get cantReadSettings => '保存された設定を読めません。';
+
+  @override
+  String get webdavFiles => 'WebDAVファイル';
+
+  @override
+  String get webdavNeeded => 'WebDAV接続が必要です。';
+
+  @override
+  String get cloudOAuthSetupTitle => 'クラウドログイン未設定';
+
+  @override
+  String get cloudOAuthNotConfigured =>
+      'DROPBOX_CLIENT_ID を --dart-define で指定して再ビルドしてください。Google Drive はアプリの Google ログイン設定を使います。';
+
+  @override
+  String get cloudDisconnect => '切断';
+
+  @override
+  String get retry => '再試行';
+
+  @override
+  String get root => 'ルート';
+
+  @override
+  String get parentFolder => '上のフォルダ';
+
+  @override
+  String get emptyFolder => 'このフォルダにファイルがありません';
+
+  @override
+  String get addFailed => '追加失敗';
+
+  @override
+  String get cantSaveSync => '同期状態を保存できません。';
+
+  @override
+  String get accentStrong => '強';
+
+  @override
+  String get accentNormal => '標準';
+
+  @override
+  String get accentMute => 'ミュート';
+
+  @override
+  String barsLabel(int count) {
+    return '$count小節';
+  }
+
+  @override
+  String get strokeThin => '細';
+
+  @override
+  String get strokeMedium => '中';
+
+  @override
+  String get strokeThick => '太';
+
+  @override
+  String get strokeHighlight => 'ハイライト';
+
+  @override
+  String get strokeEraser => '消しゴム';
+
+  @override
+  String get color => '色';
+
+  @override
+  String get undo => '元に戻す';
+
+  @override
+  String get clearAll => 'すべて消去';
+
+  @override
+  String get syncSynced => '同期済み';
+
+  @override
+  String get syncCloud => 'クラウド';
+
+  @override
+  String get syncOffline => 'オフライン';
+
+  @override
+  String get syncUpdate => '更新';
+
+  @override
+  String get syncMissing => '欠落';
+
+  @override
+  String get cameraMissing => 'カメラなし';
+
+  @override
+  String get key => 'キー';
+
+  @override
+  String get device => '端末';
+
+  @override
+  String get filePicker => 'ファイル選択';
+
+  @override
+  String get noPdf => 'PDFなし';
+
+  @override
+  String get emptyPdf => '空のPDFです。再取り込みしてください。';
+
+  @override
+  String get noScore => '譜面なし';
+
+  @override
+  String stageMeasure(int measure) {
+    return '$measure小節';
+  }
+
+  @override
+  String stageNextSection(String section, int count) {
+    return '次 $section · $count小節後';
+  }
+
+  @override
+  String stageNextSong(String title) {
+    return '次 · $title';
+  }
+
+  @override
+  String get nameRequired => '名前が必要です';
+
+  @override
+  String get enterName => '名前を入力してください。';
+
+  @override
+  String get endSession => '終了';
+
+  @override
+  String get session => 'セッション';
+
+  @override
+  String get participants => '参加者';
+
+  @override
+  String get song => '曲';
+
+  @override
+  String get notify => 'お知らせ';
+
+  @override
+  String get onboardingSkip => 'スキップ';
+
+  @override
+  String get onboardingNext => '次へ';
+
+  @override
+  String get onboardingStart => '練習を始める';
+
+  @override
+  String get onboardTitle1 => '譜面は手元に。';
+
+  @override
+  String get onboardBody1 => 'PDFを取り込み、ステージでも使えるビューアで練習。';
+
+  @override
+  String get onboardTitle2 => '拍に合わせて';
+
+  @override
+  String get onboardBody2 => 'メトロノーム・タップ・トレーナー・追従でポケットを締める。';
+
+  @override
+  String get onboardTitle3 => '一緒に叩く';
+
+  @override
+  String get onboardBody3 => 'セットリストを作り、同じWi-Fiで合奏 — 同じ譜面、同じ拍子。';
+
+  @override
+  String get sectionLegal => '規約・サポート';
+
+  @override
+  String get privacyPolicy => 'プライバシーポリシー';
+
+  @override
+  String get termsOfUse => '利用規約';
+
+  @override
+  String get contactSupport => 'サポートに連絡';
+
+  @override
+  String get openSourceLicenses => 'オープンソースライセンス';
+
+  @override
+  String get replayOnboarding => 'ようこそ画面を再表示';
+
+  @override
+  String get couldNotOpenMail => 'メールアプリを開けません';
+
+  @override
+  String get privacyBody =>
+      'Page-a-Diddleは譜面・セットリスト・練習記録・設定をこの端末に保存します。\n\n任意機能（WebDAV同期・同一Wi-Fi合奏）は、あなたが選んだサーバー／端末にのみデータを送ります。譜面を収集する公式アカウントサーバーは運営しません。\n\nカメラは合奏QRの読み取りのみ、ローカルネットワークは合奏のみに使います。\n\n取り込んだファイルとアプリデータは、アプリ削除またはストレージ消去で削除できます。\n\n問い合わせ: support@page-a-diddle.app\n\n本文は製品向け要約です。ストア公開前に必要なら法務確認を行ってください。';
+
+  @override
+  String get termsBody =>
+      'Page-a-Diddleの利用により、合法的な個人／業務の音楽練習目的で使うことに同意します。\n\n取り込む譜面・音声・ファイルの権利は利用者の責任です。権限のない素材を取り込まないでください。\n\nアプリは現状有姿で提供され、中断のない動作を保証しません。練習・ステージ利用の責任は利用者にあります。\n\n合奏・WebDAVは利用者のネットワークと設定した外部サーバーに依存します。\n\n規約はアップデートで変わることがあり、更新後の継続利用は改定への同意とみなします。\n\n連絡: support@page-a-diddle.app';
+
+  @override
+  String get homeTipTitle => '今日の練習';
+
+  @override
+  String get homeTipBody => '譜面を開き、テンポを取り、難しい小節を繰り返そう。';
+
+  @override
+  String get retryAction => '再試行';
+
+  @override
+  String get hardBadge => '難';
+
+  @override
+  String get viewerControlsHint => '上をタップで操作';
+
+  @override
+  String get cue => 'キュー';
+
+  @override
+  String get sectionLabel => 'セクション';
+
+  @override
+  String get tempoMap => 'テンポマップ';
+
+  @override
+  String get tempoStep => 'ステップ';
+
+  @override
+  String get tempoGradual => '徐々に';
+
+  @override
+  String get tempo => 'テンポ';
+
+  @override
+  String get bpmHintRange => '40〜240';
+
+  @override
+  String get nowLabel => 'いま';
+
+  @override
+  String get sectionIntro => 'イントロ';
+
+  @override
+  String get sectionVerse => 'ヴァース';
+
+  @override
+  String get sectionPre => 'プレコーラス';
+
+  @override
+  String get sectionChorus => 'コーラス';
+
+  @override
+  String get sectionBridge => 'ブリッジ';
+
+  @override
+  String get sectionOutro => 'アウトロ';
+}

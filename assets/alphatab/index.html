@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Page-a-Diddle Native Score</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #1a1a2e;
+      overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: pan-y;
+    }
+    #alphaTab-container {
+      width: 100%; height: 100%;
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .at-surface svg { display: block; max-width: 100%; }
+    .at-cursor-bar {
+      background: rgba(66, 133, 244, 0.15);
+    }
+    .at-cursor-beat {
+      background: rgba(66, 133, 244, 0.7);
+      width: 3px;
+    }
+    .at-highlight {
+      fill: #4285f4;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/alphaTab.min.js"></script>
+</head>
+<body>
+  <div id="alphaTab-container"></div>
+  <script>
+    (function() {
+      'use strict';
+
+      var api = null;
+      var container = document.getElementById('alphaTab-container');
+      var drumOnly = true;
+      var lastScore = null;
+
+      function initAlphaTab() {
+        var baseWidth = container.clientWidth || window.innerWidth;
+        var scale = Math.min(1.0, baseWidth / 800);
+
+        var settings = {
+          core: {
+            engine: 'svg',
+            enableWorker: false,
+            includeNoteBounds: true
+          },
+          display: {
+            scale: scale,
+            layout: 'page',
+            staveProfile: 'scorelist',
+            stretchForce: 0.8,
+            resources: {
+              mainGlyphColor: '#e0e0e0',
+              secondaryGlyphColor: '#a0a0a0',
+              staffLineColor: '#555555',
+              barSeparatorColor: '#444444',
+              barNumberColor: '#888888',
+              fingeringColor: '#e0e0e0',
+              markerColor: '#4285f4'
+            }
+          },
+          player: {
+            enablePlayer: false
+          },
+          notation: {
+            rhythmMode: 'show',
+            elements: {
+              scoreTitle: { hideIfEmpty: true },
+              partNames: { hideIfEmpty: true }
+            }
+          }
+        };
+
+        api = new alphaTab.AlphaTabApi(container, settings);
+
+        // Bar cursor highlight overlay
+        var cursorBarEl = document.createElement('div');
+        cursorBarEl.className = 'at-cursor-bar';
+        cursorBarEl.style.cssText =
+          'position:absolute;pointer-events:none;display:none;z-index:10;' +
+          'transition:left 0.08s linear,width 0.08s linear;';
+        container.style.position = 'relative';
+        container.appendChild(cursorBarEl);
+
+        api.scoreLoaded.on(function(score) {
+          lastScore = score;
+          if (drumOnly && score.tracks.length > 0) {
+            filterDrumTracks(score);
+          }
+          postToFlutter('scoreLoaded', {
+            title: score.title || '',
+            artist: score.artist || '',
+            tempo: score.tempo || 120,
+            partCount: score.tracks.length,
+            measureCount: score.masterBars.length
+          });
+        });
+
+        api.renderStarted.on(function() {
+          container.scrollTop = 0;
+        });
+
+        api.renderFinished.on(function() {
+          setupBarClickHandlers();
+        });
+
+        window._alphaTabReady = true;
+        postToFlutter('ready', {});
+      }
+
+      function filterDrumTracks(score) {
+        var drumTracks = [];
+        var drumKeywords = ['drum', 'perc', 'kit', 'drums', 'percussion'];
+
+        for (var i = 0; i < score.tracks.length; i++) {
+          var track = score.tracks[i];
+          var name = (track.name || '').toLowerCase();
+          var isDrum = false;
+
+          for (var k = 0; k < drumKeywords.length; k++) {
+            if (name.indexOf(drumKeywords[k]) !== -1) {
+              isDrum = true;
+              break;
+            }
+          }
+
+          if (!isDrum && track.staves.length > 0) {
+            var staff = track.staves[0];
+            if (staff.showStandardNotation === false ||
+                staff.isPercussion === true) {
+              isDrum = true;
+            }
+            for (var b = 0; b < staff.bars.length && !isDrum; b++) {
+              var bar = staff.bars[b];
+              if (bar && bar.voices) {
+                for (var v = 0; v < bar.voices.length; v++) {
+                  var voice = bar.voices[v];
+                  if (voice && voice.beats) {
+                    for (var bt = 0; bt < voice.beats.length; bt++) {
+                      var beat = voice.beats[bt];
+                      if (beat && beat.notes) {
+                        for (var n = 0; n < beat.notes.length; n++) {
+                          if (beat.notes[n].isPercussion) {
+                            isDrum = true;
+                            break;
+                          }
+                        }
+                      }
+                      if (isDrum) break;
+                    }
+                  }
+                  if (isDrum) break;
+                }
+              }
+            }
+          }
+
+          if (isDrum) {
+            drumTracks.push(track);
+          }
+        }
+
+        if (drumTracks.length > 0) {
+          score.tracks = drumTracks;
+        }
+      }
+
+      function setupBarClickHandlers() {
+        var barElements = container.querySelectorAll('[data-bar-id]');
+        barElements.forEach(function(el) {
+          el.style.cursor = 'pointer';
+          el.addEventListener('click', function(e) {
+            var barId = parseInt(el.getAttribute('data-bar-id'));
+            if (!isNaN(barId)) {
+              postToFlutter('scoreTapped', { measure: barId + 1 });
+            }
+          });
+        });
+      }
+
+      // Flutter → alphaTab bridge handlers
+      window.bridgeLoadScore = function(xmlContent) {
+        if (!api) return false;
+        try {
+          var bytes = new TextEncoder().encode(xmlContent);
+          var score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes);
+          api.tex = '';
+          api.renderScore(score);
+          return true;
+        } catch (e) {
+          postToFlutter('error', { message: e.toString() });
+          return false;
+        }
+      };
+
+      window.bridgeLoadScoreWithFilter = function(xmlContent, drumOnlyFlag) {
+        if (!api) return false;
+        drumOnly = drumOnlyFlag !== false;
+        return window.bridgeLoadScore(xmlContent);
+      };
+
+      window.bridgeGoToMeasure = function(measureNumber) {
+        if (!api) return;
+        var score = api.score;
+        if (!score) return;
+        var barIndex = measureNumber - 1;
+        if (barIndex < 0 || barIndex >= score.masterBars.length) return;
+        var barEl = container.querySelector('[data-bar-id="' + barIndex + '"]');
+        if (barEl) {
+          barEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      };
+
+      window.bridgeSetCursor = function(measureNumber, beatIndex) {
+        if (!api || !lastScore) return;
+        var barIndex = measureNumber - 1;
+        if (barIndex < 0 || barIndex >= lastScore.masterBars.length) return;
+        updateCursorOverlay(barIndex);
+        postToFlutter('currentBarChanged', { measure: measureNumber });
+        if (beatIndex !== undefined && beatIndex !== null) {
+          postToFlutter('currentBeatChanged', {
+            measure: measureNumber,
+            beatIndex: beatIndex,
+          });
+        }
+      };
+
+      function updateCursorOverlay(barIndex) {
+        var barEl = container.querySelector('[data-bar-id="' + barIndex + '"]');
+        if (!barEl) {
+          cursorBarEl.style.display = 'none';
+          return;
+        }
+        var containerRect = container.getBoundingClientRect();
+        var barRect = barEl.getBoundingClientRect();
+        cursorBarEl.style.display = 'block';
+        cursorBarEl.style.left =
+          (barRect.left - containerRect.left + container.scrollLeft) + 'px';
+        cursorBarEl.style.top =
+          (barRect.top - containerRect.top + container.scrollTop) + 'px';
+        cursorBarEl.style.width = barRect.width + 'px';
+        cursorBarEl.style.height = barRect.height + 'px';
+      }
+
+      window.bridgeClearCursor = function() {
+        cursorBarEl.style.display = 'none';
+      };
+
+      window.bridgeSetZoom = function(scale) {
+        if (!api) return;
+        api.settings.display.scale = scale;
+        api.updateSettings();
+        if (api.score) {
+          api.renderScore(api.score);
+        }
+      };
+
+      window.bridgeSetLoopRange = function(startMeasure, endMeasure) {
+        postToFlutter('loopRangeSet', {
+          startMeasure: startMeasure,
+          endMeasure: endMeasure
+        });
+      };
+
+      window.bridgeAutoScale = function(containerWidth) {
+        if (!api) return;
+        var scale = Math.min(1.0, containerWidth / 800);
+        api.settings.display.scale = scale;
+        api.updateSettings();
+        if (api.score) {
+          api.renderScore(api.score);
+        }
+        return scale;
+      };
+
+      function postToFlutter(type, data) {
+        if (window.FlutterBridge) {
+          window.FlutterBridge.postMessage(JSON.stringify({
+            type: type,
+            data: data
+          }));
+        }
+      }
+
+      if (typeof alphaTab !== 'undefined') {
+        initAlphaTab();
+      } else {
+        window.addEventListener('load', function() {
+          if (typeof alphaTab !== 'undefined') {
+            initAlphaTab();
+          } else {
+            postToFlutter('error', { message: 'alphaTab library not loaded' });
+          }
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dart *)",
+      "Bash(flutter *)",
+      "Bash(cd *)",
+      "Bash(tail *)",
+      "Bash(adb *)",
+      "Bash(wc *)",
+      "Bash(ps *)",
+      "Bash(grep *)",
+      "Bash(find *)",
+      "Bash(python3 *)"
+    ]
+  },
+  "$version": 4
+}
