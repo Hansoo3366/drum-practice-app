@@ -16,6 +16,9 @@ class SongFileStorage {
 
   String pdfPathFor(String songId) => path.join('scores', '$songId.pdf');
 
+  String musicXmlPathFor(String songId, {required bool compressed}) =>
+      path.join('scores', '$songId.${compressed ? 'mxl' : 'musicxml'}');
+
   Future<String> storePdf({
     required PickedLocalFile source,
     required String songId,
@@ -46,8 +49,37 @@ class SongFileStorage {
     return relativePath;
   }
 
+  Future<String> storeMusicXml({
+    required PickedLocalFile source,
+    required String songId,
+  }) {
+    final extension = path.extension(source.name).toLowerCase();
+    if (!const {'.musicxml', '.mxl', '.xml'}.contains(extension)) {
+      throw const FormatException('MusicXML 또는 MXL 파일을 선택하세요.');
+    }
+    final relativePath = musicXmlPathFor(
+      songId,
+      compressed: extension == '.mxl',
+    );
+    return _store(
+      source: source,
+      directory: 'scores',
+      fileName: path.basename(relativePath),
+      invalidMessage: 'MusicXML 파일을 다시 선택하세요.',
+    );
+  }
+
   String annotationPathFor(String songId) =>
       path.join('annotations', '$songId.json');
+
+  String playbackSequencePathFor(String songId) =>
+      path.join('playback_sequences', '$songId.json');
+
+  String arrangementProfilePathFor(String songId) =>
+      path.join('arrangement_profiles', '$songId.json');
+
+  String originalKeyPathFor(String songId) =>
+      path.join('original_keys', '$songId.json');
 
   Future<void> saveAnnotations(String songId, String jsonContent) async {
     final relativePath = annotationPathFor(songId);
@@ -62,6 +94,52 @@ class SongFileStorage {
 
   Future<String?> loadAnnotations(String songId) async {
     final relativePath = annotationPathFor(songId);
+    final fullPath = path.join(
+      (await _rootDirectoryProvider()).path,
+      relativePath,
+    );
+    final file = File(fullPath);
+    if (await file.exists()) {
+      return file.readAsString();
+    }
+    return null;
+  }
+
+  Future<void> savePlaybackSequence(String songId, String jsonContent) async {
+    await _saveSidecar(playbackSequencePathFor(songId), jsonContent);
+  }
+
+  Future<String?> loadPlaybackSequence(String songId) async {
+    return _loadSidecar(playbackSequencePathFor(songId));
+  }
+
+  Future<void> saveArrangementProfile(String songId, String jsonContent) async {
+    await _saveSidecar(arrangementProfilePathFor(songId), jsonContent);
+  }
+
+  Future<String?> loadArrangementProfile(String songId) async {
+    return _loadSidecar(arrangementProfilePathFor(songId));
+  }
+
+  Future<void> saveOriginalKey(String songId, String jsonContent) async {
+    await _saveSidecar(originalKeyPathFor(songId), jsonContent);
+  }
+
+  Future<String?> loadOriginalKey(String songId) async {
+    return _loadSidecar(originalKeyPathFor(songId));
+  }
+
+  Future<void> _saveSidecar(String relativePath, String jsonContent) async {
+    final fullPath = path.join(
+      (await _rootDirectoryProvider()).path,
+      relativePath,
+    );
+    final file = File(fullPath);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(jsonContent);
+  }
+
+  Future<String?> _loadSidecar(String relativePath) async {
     final fullPath = path.join(
       (await _rootDirectoryProvider()).path,
       relativePath,
@@ -160,6 +238,43 @@ class SongFileStorage {
     final file = await resolve(relativePath);
     if (await file.exists()) {
       await file.delete();
+    }
+  }
+
+  Future<void> replaceFile(String relativePath, List<int> bytes) async {
+    if (bytes.isEmpty) {
+      throw const FormatException('The replacement file is empty.');
+    }
+    final target = await resolve(relativePath);
+    await target.parent.create(recursive: true);
+    final suffix = DateTime.now().microsecondsSinceEpoch;
+    final temporary = File('${target.path}.$suffix.tmp');
+    final backup = File('${target.path}.$suffix.bak');
+    var originalMoved = false;
+    try {
+      await temporary.writeAsBytes(bytes, flush: true);
+      if (await temporary.length() != bytes.length) {
+        throw const FileSystemException('The replacement file is incomplete.');
+      }
+      if (await target.exists()) {
+        await target.rename(backup.path);
+        originalMoved = true;
+      }
+      await temporary.rename(target.path);
+    } on Object {
+      if (await target.exists()) await target.delete();
+      if (originalMoved && await backup.exists()) {
+        await backup.rename(target.path);
+      }
+      if (await temporary.exists()) await temporary.delete();
+      rethrow;
+    }
+    if (await backup.exists()) {
+      try {
+        await backup.delete();
+      } on FileSystemException {
+        // The score is already committed. A stale backup is safer than rollback.
+      }
     }
   }
 }

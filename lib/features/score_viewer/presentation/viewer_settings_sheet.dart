@@ -30,6 +30,7 @@ class ViewerSettingsSnapshot {
     required this.hardMeasuresLabel,
     required this.annotationsVisible,
     required this.hasAnnotationStrokes,
+    required this.exportingAnnotations,
     required this.statusBarVisible,
     required this.annotationMode,
     this.canAnnotate = true,
@@ -59,6 +60,7 @@ class ViewerSettingsSnapshot {
   final String hardMeasuresLabel;
   final bool annotationsVisible;
   final bool hasAnnotationStrokes;
+  final bool exportingAnnotations;
   final bool statusBarVisible;
   final bool annotationMode;
   final bool canAnnotate;
@@ -83,6 +85,7 @@ class ViewerSettingsActions {
     required this.onCues,
     required this.onHardMeasures,
     required this.onAnnotationsVisible,
+    required this.onExportAnnotations,
     required this.onClearAnnotations,
     required this.onStatusBar,
   });
@@ -103,6 +106,7 @@ class ViewerSettingsActions {
   final VoidCallback onCues;
   final VoidCallback onHardMeasures;
   final ValueChanged<bool> onAnnotationsVisible;
+  final VoidCallback onExportAnnotations;
   final VoidCallback onClearAnnotations;
   final VoidCallback onStatusBar;
 }
@@ -434,6 +438,32 @@ class ViewerSettingsSheet extends StatelessWidget {
                     value: s.annotationsVisible,
                     onChanged: a.onAnnotationsVisible,
                   ),
+                  if (s.hasAnnotationStrokes)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: s.exportingAnnotations
+                          ? const SizedBox.square(
+                              dimension: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(
+                              Icons.picture_as_pdf_outlined,
+                              color: Colors.white,
+                            ),
+                      title: Text(
+                        l10n.exportAnnotatedPdf,
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      subtitle: Text(
+                        s.exportingAnnotations
+                            ? l10n.exportingAnnotatedPdf
+                            : l10n.exportAnnotatedPdfSubtitle,
+                        style: const TextStyle(color: AppColors.stageMuted),
+                      ),
+                      onTap: s.exportingAnnotations
+                          ? null
+                          : a.onExportAnnotations,
+                    ),
                   if (s.hasAnnotationStrokes)
                     ListTile(
                       contentPadding: EdgeInsets.zero,

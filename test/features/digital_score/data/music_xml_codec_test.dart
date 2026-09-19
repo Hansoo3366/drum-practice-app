@@ -1,0 +1,212 @@
+import 'dart:convert';
+
+import 'package:archive/archive.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
+import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
+
+void main() {
+  const codec = MusicXmlCodec();
+
+  group('MusicXmlCodec', () {
+    test('decodes piano metadata, grand staff timing, chords, and harmony', () {
+      final score = codec.decodeXml(_pianoMusicXml);
+
+      expect(score.title, 'Autumn Test');
+      expect(score.composer, 'Test Composer');
+      expect(score.tempoBpm, 96);
+      expect(score.parts, hasLength(1));
+      expect(score.measureCount, 1);
+      expect(score.noteCount, 4);
+
+      final measure = score.parts.single.measures.single;
+      expect(measure.attributes.divisions, 4);
+      expect(measure.attributes.keyFifths, -1);
+      expect(measure.attributes.time?.beats, 4);
+      expect(measure.attributes.time?.beatType, 4);
+      expect(measure.attributes.staves, 2);
+      expect(measure.attributes.clefs[1]?.sign, 'G');
+      expect(measure.attributes.clefs[2]?.sign, 'F');
+      expect(measure.durationDivisions, 8);
+
+      final notes = measure.notes.toList();
+      expect(notes.map((note) => note.onset), [0, 0, 4, 0]);
+      expect(notes.map((note) => note.voice), ['1', '1', '1', '2']);
+      expect(notes[1].isChord, isTrue);
+      expect(notes[2].isRest, isTrue);
+      expect(notes[3].staff, 2);
+
+      final direction = measure.events.whereType<MusicDirection>().single;
+      expect(direction.rehearsal, 'INTRO');
+      expect(direction.tempoBpm, 96);
+      final harmony = measure.events.whereType<MusicHarmony>().single;
+      expect(harmony.rootStep, PitchStep.b);
+      expect(harmony.rootAlter, -1);
+      expect(harmony.kind, 'major');
+    });
+
+    test('round-trips supported MusicXML data with multi-voice backup', () {
+      final first = codec.decodeXml(_pianoMusicXml);
+      final encoded = codec.encodeMusicXml(first);
+      final xml = utf8.decode(encoded);
+      final second = codec.decode(encoded, fileName: 'roundtrip.musicxml');
+
+      expect(xml, contains('<backup>'));
+      expect(xml, contains('<duration>8</duration>'));
+      expect(second.title, first.title);
+      expect(second.composer, first.composer);
+      expect(second.tempoBpm, first.tempoBpm);
+      expect(second.noteCount, first.noteCount);
+      expect(second.parts.single.measures.single.attributes.staves, 2);
+      expect(
+        second.parts.single.measures.single.notes.map((note) => note.onset),
+        [0, 0, 4, 0],
+      );
+    });
+
+    test('encodes and decodes a standard compressed MXL container', () {
+      final score = codec.decodeXml(_pianoMusicXml);
+      final encoded = codec.encode(score, MusicXmlFileFormat.mxl);
+      final archive = ZipDecoder().decodeBytes(encoded);
+
+      expect(archive.first.name, 'mimetype');
+      expect(archive.first.compression, CompressionType.none);
+      expect(
+        ascii.decode(archive.first.content),
+        MusicXmlCodec.compressedMimeType,
+      );
+      expect(archive.find('META-INF/container.xml'), isNotNull);
+      expect(archive.find('score.musicxml'), isNotNull);
+
+      final decoded = codec.decode(encoded, fileName: 'score.mxl');
+      expect(decoded.title, 'Autumn Test');
+      expect(decoded.noteCount, 4);
+    });
+
+    test('rejects unsafe MXL root paths', () {
+      final archive = Archive()
+        ..add(
+          ArchiveFile.string(
+            'META-INF/container.xml',
+            '<?xml version="1.0"?>'
+                '<container><rootfiles><rootfile full-path="../score.musicxml"/>'
+                '</rootfiles></container>',
+          ),
+        )
+        ..add(ArchiveFile.string('score.musicxml', _pianoMusicXml));
+      final bytes = ZipEncoder().encodeBytes(archive);
+
+      expect(
+        () => codec.decode(bytes, fileName: 'unsafe.mxl'),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('Unsafe MXL path'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects score-timewise files with a clear compatibility error', () {
+      expect(
+        () => codec.decodeXml(
+          '<?xml version="1.0"?><score-timewise version="4.0"/>',
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            '이 악보 형식은 열 수 없습니다',
+          ),
+        ),
+      );
+    });
+
+    test('rejects OpenLyrics song XML as lyrics, not a score', () {
+      expect(
+        () => codec.decodeXml('''
+<?xml version="1.0" encoding="UTF-8"?>
+<song xmlns="http://openlyrics.info/namespace/2009/song" version="0.8">
+  <properties><titles><title>Test Hymn</title></titles></properties>
+  <lyrics><verse name="v1"><lines>가사</lines></verse></lyrics>
+</song>
+'''),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            '가사 파일입니다',
+          ),
+        ),
+      );
+    });
+
+    test('keeps sequential grace notes separate from chords', () {
+      const xml = '''
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1"><measure number="1">
+    <attributes><divisions>4</divisions></attributes>
+    <note><grace/><pitch><step>D</step><octave>4</octave></pitch><voice>1</voice><type>eighth</type></note>
+    <note><grace/><pitch><step>E</step><octave>4</octave></pitch><voice>1</voice><type>eighth</type></note>
+    <note><pitch><step>F</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>quarter</type></note>
+  </measure></part>
+</score-partwise>
+''';
+      final encoded = utf8.decode(codec.encodeMusicXml(codec.decodeXml(xml)));
+
+      expect(RegExp('<chord').allMatches(encoded), isEmpty);
+      expect(codec.decodeXml(encoded).noteCount, 3);
+    });
+  });
+}
+
+const _pianoMusicXml = '''
+<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <movement-title>Autumn Test</movement-title>
+  <identification>
+    <creator type="composer">Test Composer</creator>
+  </identification>
+  <part-list>
+    <score-part id="P1"><part-name>Piano</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>4</divisions>
+        <key><fifths>-1</fifths><mode>major</mode></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <staves>2</staves>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+        <clef number="2"><sign>F</sign><line>4</line></clef>
+      </attributes>
+      <direction placement="above">
+        <direction-type><rehearsal>INTRO</rehearsal></direction-type>
+        <sound tempo="96"/>
+      </direction>
+      <harmony>
+        <root><root-step>B</root-step><root-alter>-1</root-alter></root>
+        <kind text="B♭">major</kind>
+      </harmony>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>quarter</type><staff>1</staff>
+      </note>
+      <note>
+        <chord/><pitch><step>E</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><type>quarter</type><staff>1</staff>
+      </note>
+      <note>
+        <rest/><duration>4</duration><voice>1</voice><type>quarter</type><staff>1</staff>
+      </note>
+      <backup><duration>8</duration></backup>
+      <note>
+        <pitch><step>C</step><octave>3</octave></pitch>
+        <duration>8</duration><voice>2</voice><type>half</type><staff>2</staff>
+      </note>
+    </measure>
+  </part>
+</score-partwise>
+''';

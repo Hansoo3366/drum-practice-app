@@ -3,12 +3,7 @@ import 'package:page_a_diddle/app/icons/brand_marks.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/core/storage/storage_provider.dart';
 
-enum ImportSource {
-  device,
-  googleDrive,
-  dropbox,
-  webDav,
-}
+enum ImportSource { device, googleDrive, dropbox, webDav }
 
 extension ImportSourceX on ImportSource {
   StorageProvider get storageProvider => switch (this) {
@@ -55,9 +50,9 @@ class _ImportSourceSheet extends StatelessWidget {
                 l10n.import,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
               ),
             ),
             Flexible(

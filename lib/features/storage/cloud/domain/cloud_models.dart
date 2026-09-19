@@ -1,3 +1,5 @@
+import 'package:page_a_diddle/features/library/domain/score_file_filter.dart';
+
 enum CloudKind {
   googleDrive,
   dropbox,
@@ -27,9 +29,10 @@ class CloudEntry {
   final String? path;
   final int? size;
 
-  bool get isPdf {
-    final lower = name.toLowerCase();
-    return lower.endsWith('.pdf');
+  bool get isPdf => matchesScoreFileName(name, ScoreFileFilter.pdf);
+
+  bool matches(ScoreFileFilter filter) {
+    return isFolder || matchesScoreFileName(name, filter);
   }
 }
 

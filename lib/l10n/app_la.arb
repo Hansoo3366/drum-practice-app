@@ -139,6 +139,7 @@
   "smartThumb": "Digitalis",
   "newSetlist": "Novus index",
   "create": "Creare",
+  "createScore": "Partituram creare",
   "createFailed": "Creare non potui",
   "createSetlist": "Indicem creare",
   "setlist": "Index",

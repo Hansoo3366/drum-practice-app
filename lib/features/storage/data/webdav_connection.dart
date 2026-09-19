@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:page_a_diddle/features/library/domain/score_file_filter.dart';
 import 'package:xml/xml.dart';
 
 class WebDavCredentials {
@@ -101,8 +102,9 @@ class WebDavConnection {
 
   Future<List<WebDavEntry>> list(
     WebDavCredentials credentials,
-    Uri directory,
-  ) async {
+    Uri directory, {
+    ScoreFileFilter filter = ScoreFileFilter.pdf,
+  }) async {
     final base = directory.path.endsWith('/')
         ? directory
         : directory.replace(path: '${directory.path}/');
@@ -132,7 +134,7 @@ class WebDavConnection {
             _elementText(node, 'displayname') ??
             (uri.pathSegments.where((part) => part.isNotEmpty).lastOrNull ??
                 uri.host);
-        if (!isDirectory && !name.toLowerCase().endsWith('.pdf')) continue;
+        if (!isDirectory && !matchesScoreFileName(name, filter)) continue;
 
         entries.add(
           WebDavEntry(
@@ -157,12 +159,20 @@ class WebDavConnection {
   Future<WebDavDownloadResult> downloadPdf(
     WebDavCredentials credentials,
     Uri uri,
-  ) async {
+  ) {
+    return download(credentials, uri);
+  }
+
+  Future<WebDavDownloadResult> download(
+    WebDavCredentials credentials,
+    Uri uri, {
+    ScoreFileFilter filter = ScoreFileFilter.pdf,
+  }) async {
     final root = Uri.tryParse(credentials.url.trim());
     if (root == null ||
         uri.scheme != 'https' ||
         !_sameOrigin(root, uri) ||
-        !uri.path.toLowerCase().endsWith('.pdf')) {
+        !matchesScoreFileName(uri.path, filter)) {
       throw const WebDavConnectionException('파일 주소를 확인하세요.');
     }
     return _download(uri, credentials.username.trim(), credentials.password);

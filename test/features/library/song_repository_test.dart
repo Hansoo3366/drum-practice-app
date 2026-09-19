@@ -9,6 +9,7 @@ import 'package:page_a_diddle/core/storage/storage_provider.dart';
 import 'package:page_a_diddle/features/library/data/label_repository.dart';
 import 'package:page_a_diddle/features/library/data/song_repository.dart';
 import 'package:page_a_diddle/features/library/domain/library_filter.dart';
+import 'package:page_a_diddle/features/library/domain/score_type.dart';
 import 'package:page_a_diddle/features/storage/data/webdav_connection.dart';
 import 'package:page_a_diddle/features/storage/domain/sync_status.dart';
 
@@ -203,5 +204,25 @@ void main() {
       (await repository.getSong('song-1'))!.syncStatus,
       SyncStatus.missing.key,
     );
+  });
+
+  test('전자 악보 메타데이터를 수정해도 scoreType을 유지한다', () async {
+    final now = DateTime(2026, 9, 19);
+    await repository.saveSong(
+      SongsCompanion.insert(
+        id: 'musicxml-1',
+        title: 'Before',
+        scoreType: Value(ScoreType.musicXml.key),
+        sourcePath: 'scores/musicxml-1.musicxml',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    await repository.updateMetadata(id: 'musicxml-1', title: 'After');
+
+    final song = await repository.getSong('musicxml-1');
+    expect(song?.title, 'After');
+    expect(song?.scoreType, ScoreType.musicXml.key);
   });
 }

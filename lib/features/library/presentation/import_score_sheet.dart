@@ -2,15 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/core/storage/storage_provider.dart';
+import 'package:page_a_diddle/features/digital_score/data/music_xml_import_service.dart';
 import 'package:page_a_diddle/features/library/data/pdf_import_service.dart';
 import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
 import 'package:path/path.dart' as path;
+
+enum ScoreImportKind { pdf, musicXml }
 
 Future<String?> showImportScoreSheet(
   BuildContext context, {
   required PickedLocalFile file,
   StorageProvider sourceProvider = StorageProvider.local,
   String? folderId,
+  ScoreImportKind kind = ScoreImportKind.pdf,
+  String? initialTitle,
+  String? initialArtist,
+  int? initialTempo,
 }) async {
   return showModalBottomSheet<String>(
     context: context,
@@ -20,6 +27,10 @@ Future<String?> showImportScoreSheet(
       file: file,
       sourceProvider: sourceProvider,
       folderId: folderId,
+      kind: kind,
+      initialTitle: initialTitle,
+      initialArtist: initialArtist,
+      initialTempo: initialTempo,
     ),
   );
 }
@@ -28,12 +39,20 @@ class _ImportScoreSheet extends ConsumerStatefulWidget {
   const _ImportScoreSheet({
     required this.file,
     required this.sourceProvider,
+    required this.kind,
     this.folderId,
+    this.initialTitle,
+    this.initialArtist,
+    this.initialTempo,
   });
 
   final PickedLocalFile file;
   final StorageProvider sourceProvider;
   final String? folderId;
+  final ScoreImportKind kind;
+  final String? initialTitle;
+  final String? initialArtist;
+  final int? initialTempo;
 
   @override
   ConsumerState<_ImportScoreSheet> createState() => _ImportScoreSheetState();
@@ -50,8 +69,12 @@ class _ImportScoreSheetState extends ConsumerState<_ImportScoreSheet> {
   void initState() {
     super.initState();
     _titleController = TextEditingController(
-      text: path.basenameWithoutExtension(widget.file.name),
+      text:
+          widget.initialTitle ??
+          path.basenameWithoutExtension(widget.file.name),
     );
+    _artistController.text = widget.initialArtist ?? '';
+    _tempoController.text = widget.initialTempo?.toString() ?? '';
   }
 
   @override
@@ -71,16 +94,31 @@ class _ImportScoreSheetState extends ConsumerState<_ImportScoreSheet> {
     final tempoText = _tempoController.text.trim();
 
     try {
-      final songId = await ref
-          .read(pdfImportServiceProvider)
-          .importPdf(
-            file: widget.file,
-            title: _titleController.text,
-            artist: _artistController.text,
-            defaultTempo: tempoText.isEmpty ? null : int.parse(tempoText),
-            sourceProvider: widget.sourceProvider,
-            folderId: widget.folderId,
-          );
+      final tempo = tempoText.isEmpty ? null : int.parse(tempoText);
+      final songId = switch (widget.kind) {
+        ScoreImportKind.pdf =>
+          await ref
+              .read(pdfImportServiceProvider)
+              .importPdf(
+                file: widget.file,
+                title: _titleController.text,
+                artist: _artistController.text,
+                defaultTempo: tempo,
+                sourceProvider: widget.sourceProvider,
+                folderId: widget.folderId,
+              ),
+        ScoreImportKind.musicXml =>
+          await ref
+              .read(musicXmlImportServiceProvider)
+              .importMusicXml(
+                file: widget.file,
+                title: _titleController.text,
+                artist: _artistController.text,
+                defaultTempo: tempo,
+                sourceProvider: widget.sourceProvider,
+                folderId: widget.folderId,
+              ),
+      };
 
       if (mounted) {
         Navigator.of(context).pop(songId);
@@ -117,7 +155,9 @@ class _ImportScoreSheetState extends ConsumerState<_ImportScoreSheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                l10n.importPdfScore,
+                widget.kind == ScoreImportKind.pdf
+                    ? l10n.importPdfScore
+                    : l10n.importMusicXml,
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
               const SizedBox(height: 6),

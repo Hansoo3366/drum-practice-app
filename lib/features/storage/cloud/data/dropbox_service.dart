@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_appauth/flutter_appauth.dart';
 import 'package:http/http.dart' as http;
 import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
+import 'package:page_a_diddle/features/library/domain/score_file_filter.dart';
 import 'package:page_a_diddle/features/storage/cloud/data/cloud_oauth_config.dart';
 import 'package:page_a_diddle/features/storage/cloud/data/cloud_token_store.dart';
 import 'package:page_a_diddle/features/storage/cloud/domain/cloud_models.dart';
@@ -90,7 +91,10 @@ class DropboxService {
     return access;
   }
 
-  Future<List<CloudEntry>> list({String? folderPath}) async {
+  Future<List<CloudEntry>> list({
+    String? folderPath,
+    ScoreFileFilter filter = ScoreFileFilter.pdf,
+  }) async {
     final token = await _accessToken();
     final path = folderPath ?? '';
     final response = await _http.post(
@@ -120,7 +124,7 @@ class DropboxService {
       final pathDisplay = item['path_display'] as String?;
       if (name == null || id == null) continue;
       final isFolder = tag == 'folder';
-      if (!isFolder && !name.toLowerCase().endsWith('.pdf')) continue;
+      if (!isFolder && !matchesScoreFileName(name, filter)) continue;
       entries.add(
         CloudEntry(
           id: id,

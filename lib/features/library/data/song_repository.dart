@@ -7,8 +7,10 @@ import 'package:page_a_diddle/core/storage/storage_provider.dart';
 import 'package:page_a_diddle/features/library/data/label_repository.dart';
 import 'package:page_a_diddle/features/library/domain/library_filter.dart';
 import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
+import 'package:page_a_diddle/features/library/domain/score_type.dart';
 import 'package:page_a_diddle/features/storage/data/webdav_connection.dart';
 import 'package:page_a_diddle/features/storage/domain/sync_status.dart';
+import 'package:path/path.dart' as path;
 import 'package:uuid/uuid.dart';
 
 class SongRepository {
@@ -124,9 +126,7 @@ class SongRepository {
   }
 
   Future<void> saveSong(SongsCompanion song) async {
-    await _database
-        .into(_database.songs)
-        .insertOnConflictUpdate(song.copyWith(scoreType: const Value('pdf')));
+    await _database.into(_database.songs).insertOnConflictUpdate(song);
   }
 
   Future<Song?> getSong(String id) {
@@ -274,7 +274,6 @@ class SongRepository {
             : folderId == null
             ? const Value.absent()
             : Value(folderId),
-        scoreType: const Value('pdf'),
         updatedAt: Value(DateTime.now()),
       ),
     );
@@ -318,10 +317,18 @@ class SongRepository {
       final newId = const Uuid().v4();
       final source = await _storage.resolve(song.sourcePath);
       if (!await source.exists()) continue;
-      final relativePath = await _storage.storePdf(
-        source: PickedLocalFile(name: '${song.title}.pdf', path: source.path),
-        songId: newId,
+      final scoreType = ScoreType.fromKey(song.scoreType);
+      final pickedSource = PickedLocalFile(
+        name: path.basename(song.sourcePath),
+        path: source.path,
       );
+      final relativePath = await switch (scoreType) {
+        ScoreType.pdf => _storage.storePdf(source: pickedSource, songId: newId),
+        ScoreType.musicXml => _storage.storeMusicXml(
+          source: pickedSource,
+          songId: newId,
+        ),
+      };
       final now = DateTime.now();
       final nextFolder = clearFolder ? null : folderId ?? song.folderId;
       try {
@@ -332,6 +339,7 @@ class SongRepository {
             artist: Value(song.artist),
             defaultTempo: Value(song.defaultTempo),
             targetBpm: Value(song.targetBpm),
+            scoreType: Value(song.scoreType),
             sourcePath: relativePath,
             sourceProvider: Value(song.sourceProvider),
             note: Value(song.note),
@@ -346,6 +354,14 @@ class SongRepository {
             songId: newId,
             labelNames: labels.map((label) => label.name),
           );
+        }
+        final sequence = await _storage.loadPlaybackSequence(song.id);
+        if (sequence != null) {
+          await _storage.savePlaybackSequence(newId, sequence);
+        }
+        final arrangement = await _storage.loadArrangementProfile(song.id);
+        if (arrangement != null) {
+          await _storage.saveArrangementProfile(newId, arrangement);
         }
       } on Object {
         await _storage.delete(relativePath);
@@ -375,6 +391,21 @@ class SongRepository {
         } on Object {
           // Best-effort file cleanup.
         }
+      }
+      try {
+        await _storage.delete(_storage.playbackSequencePathFor(song.id));
+      } on Object {
+        // Best-effort file cleanup.
+      }
+      try {
+        await _storage.delete(_storage.arrangementProfilePathFor(song.id));
+      } on Object {
+        // Best-effort file cleanup.
+      }
+      try {
+        await _storage.delete(_storage.originalKeyPathFor(song.id));
+      } on Object {
+        // Best-effort file cleanup.
       }
     }
   }

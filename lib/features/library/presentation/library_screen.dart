@@ -5,15 +5,20 @@ import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
 import 'package:page_a_diddle/app/widgets/app_empty_state.dart';
 import 'package:page_a_diddle/app/widgets/compact_controls.dart';
+import 'package:page_a_diddle/app/widgets/sheet_insets.dart';
 import 'package:page_a_diddle/core/database/app_database.dart';
 import 'package:page_a_diddle/core/format/relative_time.dart';
 import 'package:page_a_diddle/core/storage/storage_provider.dart';
+import 'package:page_a_diddle/features/digital_score/data/music_xml_import_service.dart';
+import 'package:page_a_diddle/features/digital_score/data/music_xml_picker.dart';
 import 'package:page_a_diddle/features/library/data/folder_repository.dart';
 import 'package:page_a_diddle/features/library/data/label_repository.dart';
 import 'package:page_a_diddle/features/library/data/pdf_picker.dart';
 import 'package:page_a_diddle/features/library/data/song_repository.dart';
 import 'package:page_a_diddle/features/library/domain/folder_colors.dart';
 import 'package:page_a_diddle/features/library/domain/library_filter.dart';
+import 'package:page_a_diddle/features/library/domain/score_file_filter.dart';
+import 'package:page_a_diddle/features/library/presentation/create_music_xml_sheet.dart';
 import 'package:page_a_diddle/features/library/presentation/edit_song_sheet.dart';
 import 'package:page_a_diddle/features/library/presentation/import_score_sheet.dart';
 import 'package:page_a_diddle/features/library/presentation/import_source_sheet.dart';
@@ -24,6 +29,7 @@ import 'package:page_a_diddle/features/storage/cloud/data/cloud_storage.dart';
 import 'package:page_a_diddle/features/storage/cloud/domain/cloud_models.dart';
 import 'package:page_a_diddle/features/storage/cloud/presentation/cloud_browser_screen.dart';
 import 'package:page_a_diddle/features/storage/data/webdav_connection.dart';
+import 'package:page_a_diddle/features/storage/presentation/webdav_browser_screen.dart';
 
 class LibraryScreen extends ConsumerWidget {
   const LibraryScreen({super.key});
@@ -36,10 +42,67 @@ class LibraryScreen extends ConsumerWidget {
     return key;
   }
 
-  Future<void> _importPdf(BuildContext context, WidgetRef ref) async {
+  Future<void> _importScore(BuildContext context, WidgetRef ref) async {
+    final action = await showModalBottomSheet<_LibraryAddAction>(
+      context: context,
+      useSafeArea: true,
+      builder: (context) => Padding(
+        padding: sheetContentPadding(context, top: 16, bottom: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_note_rounded),
+              title: Text(context.l10n.createScore),
+              onTap: () => Navigator.pop(context, _LibraryAddAction.create),
+            ),
+            ListTile(
+              leading: const Icon(Icons.picture_as_pdf_outlined),
+              title: Text(context.l10n.importPdf),
+              onTap: () => Navigator.pop(context, _LibraryAddAction.pdf),
+            ),
+            ListTile(
+              leading: const Icon(Icons.music_note_rounded),
+              title: Text(context.l10n.importMusicXml),
+              onTap: () =>
+                  Navigator.pop(context, _LibraryAddAction.importMusicXml),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !context.mounted) return;
+    switch (action) {
+      case _LibraryAddAction.create:
+        await _createMusicXml(context, ref);
+      case _LibraryAddAction.pdf:
+        await _importFromSource(context, ref, ScoreImportKind.pdf);
+      case _LibraryAddAction.importMusicXml:
+        await _importFromSource(context, ref, ScoreImportKind.musicXml);
+    }
+  }
+
+  Future<void> _createMusicXml(BuildContext context, WidgetRef ref) async {
+    final songId = await showCreateMusicXmlSheet(
+      context,
+      folderId: _currentImportFolderId(ref),
+    );
+    if (songId == null || !context.mounted) return;
+    await context.push('/score/$songId');
+  }
+
+  Future<void> _importFromSource(
+    BuildContext context,
+    WidgetRef ref,
+    ScoreImportKind kind,
+  ) async {
     final l10n = context.l10n;
     final source = await showImportSourceSheet(context);
     if (source == null || !context.mounted) return;
+    final fileFilter = switch (kind) {
+      ScoreImportKind.pdf => ScoreFileFilter.pdf,
+      ScoreImportKind.musicXml => ScoreFileFilter.musicXml,
+    };
 
     if (source == ImportSource.webDav) {
       final credentials = await ref.read(webDavSettingsStoreProvider).read();
@@ -51,23 +114,30 @@ class LibraryScreen extends ConsumerWidget {
         await context.push('/tools/webdav');
         return;
       }
-      await context.push('/tools/webdav/files');
+      await context.push(
+        '/tools/webdav/files',
+        extra: WebDavBrowseArgs(
+          fileFilter: fileFilter,
+          importFolderId: _currentImportFolderId(ref),
+        ),
+      );
       return;
     }
 
     var sourceProvider = source.storageProvider;
     if (source.usesCloudOAuth) {
-      final kind = switch (source) {
+      final cloudKind = switch (source) {
         ImportSource.googleDrive => CloudKind.googleDrive,
         ImportSource.dropbox => CloudKind.dropbox,
         ImportSource.device || ImportSource.webDav => CloudKind.googleDrive,
       };
-      if (ref.read(cloudStorageProvider).canAttempt(kind)) {
+      if (ref.read(cloudStorageProvider).canAttempt(cloudKind)) {
         await openCloudBrowser(
           context,
           ref,
-          kind: kind,
+          kind: cloudKind,
           importFolderId: _currentImportFolderId(ref),
+          fileFilter: fileFilter,
         );
         return;
       }
@@ -77,6 +147,34 @@ class LibraryScreen extends ConsumerWidget {
     }
 
     try {
+      if (kind == ScoreImportKind.musicXml) {
+        final file = await ref.read(musicXmlPickerProvider).pick();
+        if (file == null || !context.mounted) return;
+        final score = await ref
+            .read(musicXmlImportServiceProvider)
+            .inspect(file);
+        if (!context.mounted) return;
+        final tempo = score.tempoBpm?.round();
+        final imported = await showImportScoreSheet(
+          context,
+          file: file,
+          sourceProvider: sourceProvider,
+          folderId: _currentImportFolderId(ref),
+          kind: ScoreImportKind.musicXml,
+          initialTitle: score.title,
+          initialArtist: score.composer,
+          initialTempo: tempo != null && tempo >= 40 && tempo <= 240
+              ? tempo
+              : null,
+        );
+        if (imported != null && context.mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(l10n.songAdded(file.name))));
+        }
+        return;
+      }
+
       final file = await ref.read(pdfPickerProvider).pick();
       if (file == null || !context.mounted) {
         return;
@@ -93,11 +191,25 @@ class LibraryScreen extends ConsumerWidget {
           context,
         ).showSnackBar(SnackBar(content: Text(l10n.songAdded(file.name))));
       }
+    } on FormatException catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
     } on Object catch (_) {
       if (context.mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(l10n.pickFailed)));
+        ).showSnackBar(
+          SnackBar(
+            content: Text(
+              kind == ScoreImportKind.musicXml
+                  ? l10n.importFailed
+                  : l10n.pickFailed,
+            ),
+          ),
+        );
       }
     }
   }
@@ -134,7 +246,7 @@ class LibraryScreen extends ConsumerWidget {
             CompactIconButton(
               icon: Icons.add_rounded,
               tooltip: l10n.import,
-              onPressed: () => _importPdf(context, ref),
+              onPressed: () => _importScore(context, ref),
             )
           else ...[
             if (selection.length == 1)
@@ -274,7 +386,7 @@ class LibraryScreen extends ConsumerWidget {
                     child: songs.when(
                       data: (items) => items.isEmpty
                           ? _EmptyLibrary(
-                              onImport: () => _importPdf(context, ref),
+                              onImport: () => _importScore(context, ref),
                             )
                           : _SongList(items: items),
                       loading: () =>
@@ -554,7 +666,7 @@ class _EmptyLibrary extends StatelessWidget {
       icon: Icons.library_music_outlined,
       title: l10n.emptyLibraryTitle,
       body: l10n.emptyLibraryBody,
-      actionLabel: l10n.importPdf,
+      actionLabel: l10n.import,
       onAction: onImport,
     );
   }
@@ -574,3 +686,5 @@ class _LibraryError extends StatelessWidget {
     );
   }
 }
+
+enum _LibraryAddAction { create, pdf, importMusicXml }

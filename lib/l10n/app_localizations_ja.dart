@@ -483,6 +483,9 @@ class AppLocalizationsJa extends AppLocalizations {
   String get create => '作成';
 
   @override
+  String get createScore => '楽譜を作る';
+
+  @override
   String get createFailed => '作成失敗';
 
   @override
@@ -1470,4 +1473,162 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get sectionOutro => 'アウトロ';
+
+  @override
+  String get exportAnnotatedPdf => 'Export annotated PDF';
+
+  @override
+  String get exportAnnotatedPdfSubtitle =>
+      'Save a new PDF and keep the original unchanged';
+
+  @override
+  String get exportingAnnotatedPdf => 'Adding notes to the PDF…';
+
+  @override
+  String get annotatedPdfExported => 'Annotated PDF saved';
+
+  @override
+  String get annotatedPdfExportFailed => 'Couldn\'t export the PDF';
+
+  @override
+  String get scoreEdit => 'Edit score';
+
+  @override
+  String get note => 'Note';
+
+  @override
+  String get rest => 'Rest';
+
+  @override
+  String get chordSymbol => 'Chord';
+
+  @override
+  String get addNote => 'Add note';
+
+  @override
+  String get addRest => 'Add rest';
+
+  @override
+  String get addChordSymbol => 'Add chord';
+
+  @override
+  String get editSelected => 'Edit selected';
+
+  @override
+  String get deleteSelectedEvent => 'Delete selected';
+
+  @override
+  String get measureSettings => 'Measure settings';
+
+  @override
+  String get insertMeasureAfter => 'Insert next measure';
+
+  @override
+  String get redo => 'Redo';
+
+  @override
+  String get pitch => 'Pitch';
+
+  @override
+  String get octave => 'Octave';
+
+  @override
+  String get noteValue => 'Note value';
+
+  @override
+  String get staff => 'Staff';
+
+  @override
+  String get voice => 'Voice';
+
+  @override
+  String get position => 'Position';
+
+  @override
+  String get keySignature => 'Key signature';
+
+  @override
+  String get sourceKey => 'Original';
+
+  @override
+  String get part => 'Part';
+
+  @override
+  String get selectScoreEvent => 'Tap the staff';
+
+  @override
+  String get unsavedChangesTitle => 'Unsaved score';
+
+  @override
+  String get unsavedChangesBody => 'Save your score edits before leaving?';
+
+  @override
+  String get discardChanges => 'Discard';
+
+  @override
+  String get scoreSaved => 'Score saved';
+
+  @override
+  String get scoreSection => 'Section';
+
+  @override
+  String get playbackSequence => 'Playback order';
+
+  @override
+  String get playbackSequenceHelp =>
+      'Tap a measure and mark verse or chorus. Then set how many times that section repeats.';
+
+  @override
+  String get moveMeasureEarlier => 'Move measure earlier';
+
+  @override
+  String get moveMeasureLater => 'Move measure later';
+
+  @override
+  String get noSections => 'Mark a section on this measure first';
+
+  @override
+  String get noHarmony => 'No chords';
+
+  @override
+  String get repeatDown => 'Fewer repeats';
+
+  @override
+  String get repeatUp => 'More repeats';
+
+  @override
+  String get scoreTranspose => 'Transpose';
+
+  @override
+  String get semitone => 'Semitone';
+
+  @override
+  String get semitoneDown => 'Down a semitone';
+
+  @override
+  String get semitoneUp => 'Up a semitone';
+
+  @override
+  String get scoreArrangement => 'Accompaniment';
+
+  @override
+  String get arrangementOff => 'Off';
+
+  @override
+  String get arrangementBlock => 'Chord';
+
+  @override
+  String get arrangementPulse => 'Beat';
+
+  @override
+  String get arrangementBroken => 'Arpeggio';
+
+  @override
+  String get scoreProject => 'Project';
+
+  @override
+  String get scoreTools => 'Tools';
+
+  @override
+  String get playFailed => 'Can\'t play';
 }

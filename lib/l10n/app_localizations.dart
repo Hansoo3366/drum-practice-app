@@ -992,6 +992,12 @@ abstract class AppLocalizations {
   /// **'Create'**
   String get create;
 
+  /// createScore
+  ///
+  /// In en, this message translates to:
+  /// **'Create score'**
+  String get createScore;
+
   /// createFailed
   ///
   /// In en, this message translates to:
@@ -2851,6 +2857,318 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Outro'**
   String get sectionOutro;
+
+  /// Export a flattened PDF containing pen annotations
+  ///
+  /// In en, this message translates to:
+  /// **'Export annotated PDF'**
+  String get exportAnnotatedPdf;
+
+  /// Annotated PDF export explanation
+  ///
+  /// In en, this message translates to:
+  /// **'Save a new PDF and keep the original unchanged'**
+  String get exportAnnotatedPdfSubtitle;
+
+  /// Annotated PDF export progress
+  ///
+  /// In en, this message translates to:
+  /// **'Adding notes to the PDF…'**
+  String get exportingAnnotatedPdf;
+
+  /// Annotated PDF export success
+  ///
+  /// In en, this message translates to:
+  /// **'Annotated PDF saved'**
+  String get annotatedPdfExported;
+
+  /// Annotated PDF export failure
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t export the PDF'**
+  String get annotatedPdfExportFailed;
+
+  /// Open or close MusicXML score editing controls
+  ///
+  /// In en, this message translates to:
+  /// **'Edit score'**
+  String get scoreEdit;
+
+  /// Musical note
+  ///
+  /// In en, this message translates to:
+  /// **'Note'**
+  String get note;
+
+  /// Musical rest
+  ///
+  /// In en, this message translates to:
+  /// **'Rest'**
+  String get rest;
+
+  /// Harmony chord symbol
+  ///
+  /// In en, this message translates to:
+  /// **'Chord'**
+  String get chordSymbol;
+
+  /// Add a musical note
+  ///
+  /// In en, this message translates to:
+  /// **'Add note'**
+  String get addNote;
+
+  /// Add a musical rest
+  ///
+  /// In en, this message translates to:
+  /// **'Add rest'**
+  String get addRest;
+
+  /// Add a harmony chord symbol
+  ///
+  /// In en, this message translates to:
+  /// **'Add chord'**
+  String get addChordSymbol;
+
+  /// Edit the selected score event
+  ///
+  /// In en, this message translates to:
+  /// **'Edit selected'**
+  String get editSelected;
+
+  /// Delete the selected score event
+  ///
+  /// In en, this message translates to:
+  /// **'Delete selected'**
+  String get deleteSelectedEvent;
+
+  /// Edit key and time signature
+  ///
+  /// In en, this message translates to:
+  /// **'Measure settings'**
+  String get measureSettings;
+
+  /// Insert a measure after the current measure
+  ///
+  /// In en, this message translates to:
+  /// **'Insert next measure'**
+  String get insertMeasureAfter;
+
+  /// Redo the last score edit
+  ///
+  /// In en, this message translates to:
+  /// **'Redo'**
+  String get redo;
+
+  /// Note pitch
+  ///
+  /// In en, this message translates to:
+  /// **'Pitch'**
+  String get pitch;
+
+  /// Note octave
+  ///
+  /// In en, this message translates to:
+  /// **'Octave'**
+  String get octave;
+
+  /// Musical note duration
+  ///
+  /// In en, this message translates to:
+  /// **'Note value'**
+  String get noteValue;
+
+  /// Score staff
+  ///
+  /// In en, this message translates to:
+  /// **'Staff'**
+  String get staff;
+
+  /// MusicXML voice
+  ///
+  /// In en, this message translates to:
+  /// **'Voice'**
+  String get voice;
+
+  /// Position within a measure
+  ///
+  /// In en, this message translates to:
+  /// **'Position'**
+  String get position;
+
+  /// Music key signature
+  ///
+  /// In en, this message translates to:
+  /// **'Key signature'**
+  String get keySignature;
+
+  /// Concert key of the imported or created score
+  ///
+  /// In en, this message translates to:
+  /// **'Original'**
+  String get sourceKey;
+
+  /// Instrument part
+  ///
+  /// In en, this message translates to:
+  /// **'Part'**
+  String get part;
+
+  /// Empty score editor selection hint
+  ///
+  /// In en, this message translates to:
+  /// **'Tap the staff'**
+  String get selectScoreEvent;
+
+  /// Unsaved score confirmation title
+  ///
+  /// In en, this message translates to:
+  /// **'Unsaved score'**
+  String get unsavedChangesTitle;
+
+  /// Unsaved score confirmation message
+  ///
+  /// In en, this message translates to:
+  /// **'Save your score edits before leaving?'**
+  String get unsavedChangesBody;
+
+  /// Discard unsaved changes
+  ///
+  /// In en, this message translates to:
+  /// **'Discard'**
+  String get discardChanges;
+
+  /// Score save success
+  ///
+  /// In en, this message translates to:
+  /// **'Score saved'**
+  String get scoreSaved;
+
+  /// Section mark on a digital score measure
+  ///
+  /// In en, this message translates to:
+  /// **'Section'**
+  String get scoreSection;
+
+  /// Section repeat order for digital score playback
+  ///
+  /// In en, this message translates to:
+  /// **'Playback order'**
+  String get playbackSequence;
+
+  /// How to mark a section role and set its repeat count
+  ///
+  /// In en, this message translates to:
+  /// **'Tap a measure and mark verse or chorus. Then set how many times that section repeats.'**
+  String get playbackSequenceHelp;
+
+  /// Swap the selected measure with the previous one
+  ///
+  /// In en, this message translates to:
+  /// **'Move measure earlier'**
+  String get moveMeasureEarlier;
+
+  /// Swap the selected measure with the next one
+  ///
+  /// In en, this message translates to:
+  /// **'Move measure later'**
+  String get moveMeasureLater;
+
+  /// Empty playback sequence when the score has no section marks
+  ///
+  /// In en, this message translates to:
+  /// **'Mark a section on this measure first'**
+  String get noSections;
+
+  /// Arrangement sheet when the score has no chord symbols
+  ///
+  /// In en, this message translates to:
+  /// **'No chords'**
+  String get noHarmony;
+
+  /// Decrease a playback section repeat count
+  ///
+  /// In en, this message translates to:
+  /// **'Fewer repeats'**
+  String get repeatDown;
+
+  /// Increase a playback section repeat count
+  ///
+  /// In en, this message translates to:
+  /// **'More repeats'**
+  String get repeatUp;
+
+  /// Transpose digital score pitch, chords, and key
+  ///
+  /// In en, this message translates to:
+  /// **'Transpose'**
+  String get scoreTranspose;
+
+  /// Semitone interval for score transpose
+  ///
+  /// In en, this message translates to:
+  /// **'Semitone'**
+  String get semitone;
+
+  /// Decrease transpose by one semitone
+  ///
+  /// In en, this message translates to:
+  /// **'Down a semitone'**
+  String get semitoneDown;
+
+  /// Increase transpose by one semitone
+  ///
+  /// In en, this message translates to:
+  /// **'Up a semitone'**
+  String get semitoneUp;
+
+  /// Chord-based piano accompaniment profile
+  ///
+  /// In en, this message translates to:
+  /// **'Accompaniment'**
+  String get scoreArrangement;
+
+  /// Disable generated piano accompaniment
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get arrangementOff;
+
+  /// Held block-chord accompaniment
+  ///
+  /// In en, this message translates to:
+  /// **'Chord'**
+  String get arrangementBlock;
+
+  /// Per-beat repeated chord accompaniment
+  ///
+  /// In en, this message translates to:
+  /// **'Beat'**
+  String get arrangementPulse;
+
+  /// Arpeggiated accompaniment
+  ///
+  /// In en, this message translates to:
+  /// **'Arpeggio'**
+  String get arrangementBroken;
+
+  /// Editable digital score project export
+  ///
+  /// In en, this message translates to:
+  /// **'Project'**
+  String get scoreProject;
+
+  /// Digital score tools menu for transpose, playback order, and accompaniment
+  ///
+  /// In en, this message translates to:
+  /// **'Tools'**
+  String get scoreTools;
+
+  /// Digital score playback could not start
+  ///
+  /// In en, this message translates to:
+  /// **'Can\'t play'**
+  String get playFailed;
 }
 
 class _AppLocalizationsDelegate

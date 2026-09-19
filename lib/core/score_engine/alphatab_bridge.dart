@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-/// Flutter → alphaTab 메시지.
 sealed class AlphaTabCommand {
   const AlphaTabCommand();
 
@@ -8,7 +7,6 @@ sealed class AlphaTabCommand {
   Map<String, Object?> get params;
 }
 
-/// MusicXML을 alphaTab에 로드.
 class LoadScoreCommand extends AlphaTabCommand {
   const LoadScoreCommand({required this.xmlContent});
 
@@ -20,11 +18,9 @@ class LoadScoreCommand extends AlphaTabCommand {
   @override
   Map<String, Object?> get params => {'xmlContent': xmlContent};
 
-  /// JavaScript 호출 문자열.
   String toJsCall() => 'bridgeLoadScore(${jsonEncode(xmlContent)})';
 }
 
-/// 특정 마디로 이동.
 class GoToMeasureCommand extends AlphaTabCommand {
   const GoToMeasureCommand({required this.measureNumber});
 
@@ -39,7 +35,6 @@ class GoToMeasureCommand extends AlphaTabCommand {
   String toJsCall() => 'bridgeGoToMeasure($measureNumber)';
 }
 
-/// Bar/Beat 커서 위치 설정.
 class SetCursorCommand extends AlphaTabCommand {
   const SetCursorCommand({required this.measureNumber, this.beatIndex = 0});
 
@@ -58,11 +53,9 @@ class SetCursorCommand extends AlphaTabCommand {
   String toJsCall() => 'bridgeSetCursor($measureNumber, $beatIndex)';
 }
 
-/// 악보 확대/축소 배율 변경.
 class SetZoomCommand extends AlphaTabCommand {
   const SetZoomCommand({required this.scale});
 
-  /// 0.5~2.0 범위 권장.
   final double scale;
 
   @override
@@ -74,7 +67,6 @@ class SetZoomCommand extends AlphaTabCommand {
   String toJsCall() => 'bridgeSetZoom($scale)';
 }
 
-/// A-B Loop 구간 설정.
 class SetLoopRangeCommand extends AlphaTabCommand {
   const SetLoopRangeCommand({
     required this.startMeasure,
@@ -96,7 +88,6 @@ class SetLoopRangeCommand extends AlphaTabCommand {
   String toJsCall() => 'bridgeSetLoopRange($startMeasure, $endMeasure)';
 }
 
-/// 드럼 파트 필터 옵션과 함께 악보 로드.
 class LoadScoreWithFilterCommand extends AlphaTabCommand {
   const LoadScoreWithFilterCommand({
     required this.xmlContent,
@@ -119,7 +110,6 @@ class LoadScoreWithFilterCommand extends AlphaTabCommand {
       'bridgeLoadScoreWithFilter(${jsonEncode(xmlContent)}, $drumOnly)';
 }
 
-/// 커서(하이라이트) 제거.
 class ClearCursorCommand extends AlphaTabCommand {
   const ClearCursorCommand();
 
@@ -132,7 +122,6 @@ class ClearCursorCommand extends AlphaTabCommand {
   String toJsCall() => 'bridgeClearCursor()';
 }
 
-/// 컨테이너 너비에 맞춰 자동 스케일.
 class AutoScaleCommand extends AlphaTabCommand {
   const AutoScaleCommand({required this.containerWidth});
 
@@ -147,7 +136,158 @@ class AutoScaleCommand extends AlphaTabCommand {
   String toJsCall() => 'bridgeAutoScale($containerWidth)';
 }
 
-/// alphaTab → Flutter 이벤트.
+class SetViewportWidthCommand extends AlphaTabCommand {
+  const SetViewportWidthCommand({required this.width, this.height});
+
+  final double width;
+  final double? height;
+
+  @override
+  String get name => 'setViewportWidth';
+
+  @override
+  Map<String, Object?> get params => {
+    'width': width,
+    if (height != null) 'height': height,
+  };
+
+  String toJsCall() => height == null
+      ? 'bridgeSetViewportWidth($width)'
+      : 'bridgeSetViewport($width, $height)';
+}
+
+class PlayPauseScoreCommand extends AlphaTabCommand {
+  const PlayPauseScoreCommand();
+
+  @override
+  String get name => 'playPauseScore';
+
+  @override
+  Map<String, Object?> get params => const {};
+
+  String toJsCall() => 'bridgePlayPause()';
+}
+
+class PauseScorePlaybackCommand extends AlphaTabCommand {
+  const PauseScorePlaybackCommand();
+
+  @override
+  String get name => 'pauseScorePlayback';
+
+  @override
+  Map<String, Object?> get params => const {};
+
+  String toJsCall() => 'bridgePausePlayback()';
+}
+
+class StopScorePlaybackCommand extends AlphaTabCommand {
+  const StopScorePlaybackCommand();
+
+  @override
+  String get name => 'stopScorePlayback';
+
+  @override
+  Map<String, Object?> get params => const {};
+
+  String toJsCall() => 'bridgeStopPlayback()';
+}
+
+class SeekScorePlaybackCommand extends AlphaTabCommand {
+  const SeekScorePlaybackCommand({required this.positionMs});
+
+  final double positionMs;
+
+  @override
+  String get name => 'seekScorePlayback';
+
+  @override
+  Map<String, Object?> get params => {'positionMs': positionMs};
+
+  String toJsCall() => 'bridgeSeekPlayback($positionMs)';
+}
+
+class RefreshPlaybackCommand extends AlphaTabCommand {
+  const RefreshPlaybackCommand();
+
+  @override
+  String get name => 'refreshPlayback';
+
+  @override
+  Map<String, Object?> get params => const {};
+
+  String toJsCall() => 'bridgeRefreshPlayback()';
+}
+
+class SetPlaybackVisibleCommand extends AlphaTabCommand {
+  const SetPlaybackVisibleCommand({required this.visible});
+
+  final bool visible;
+
+  @override
+  String get name => 'setPlaybackVisible';
+
+  @override
+  Map<String, Object?> get params => {'visible': visible};
+
+  String toJsCall() => 'bridgeSetPlaybackVisible($visible)';
+}
+
+class SetScorePlaybackSpeedCommand extends AlphaTabCommand {
+  const SetScorePlaybackSpeedCommand({required this.speed});
+
+  final double speed;
+
+  @override
+  String get name => 'setScorePlaybackSpeed';
+
+  @override
+  Map<String, Object?> get params => {'speed': speed};
+
+  String toJsCall() => 'bridgeSetPlaybackSpeed($speed)';
+}
+
+class HighlightMeasureCommand extends AlphaTabCommand {
+  const HighlightMeasureCommand({this.measureIndex});
+
+  final int? measureIndex;
+
+  @override
+  String get name => 'highlightMeasure';
+
+  @override
+  Map<String, Object?> get params => {'measureIndex': measureIndex};
+
+  String toJsCall() => 'bridgeHighlightMeasure(${measureIndex ?? -1})';
+}
+
+class SetMeasureKeysCommand extends AlphaTabCommand {
+  const SetMeasureKeysCommand({required this.fifths});
+
+  final List<int> fifths;
+
+  @override
+  String get name => 'setMeasureKeys';
+
+  @override
+  Map<String, Object?> get params => {'fifths': fifths};
+
+  String toJsCall() => 'bridgeSetMeasureKeys(${jsonEncode(fifths)})';
+}
+
+class SetMeasureSectionsCommand extends AlphaTabCommand {
+  const SetMeasureSectionsCommand({required this.labels});
+
+  final List<String> labels;
+
+  @override
+  String get name => 'setMeasureSections';
+
+  @override
+  Map<String, Object?> get params => {'labels': labels};
+
+  String toJsCall() => 'bridgeSetMeasureSections(${jsonEncode(labels)})';
+}
+
 sealed class AlphaTabEvent {
   const AlphaTabEvent();
 
@@ -158,11 +298,23 @@ sealed class AlphaTabEvent {
         ? Map<String, dynamic>.from(rawData)
         : <String, dynamic>{};
     return switch (type) {
-      'ready' => const AlphaTabReadyEvent(),
+      'ready' => AlphaTabReadyEvent.fromJson(data),
       'scoreLoaded' => ScoreLoadedEvent.fromJson(data),
+      'renderStarted' => const AlphaTabRenderStartedEvent(),
+      'renderFinished' => AlphaTabRenderedEvent.fromJson(data),
       'currentBarChanged' => CurrentBarChangedEvent.fromJson(data),
       'currentBeatChanged' => CurrentBeatChangedEvent.fromJson(data),
       'scoreTapped' => ScoreTappedEvent.fromJson(data),
+      'scoreSystems' => ScoreSystemsEvent.fromJson(data),
+      'noteTapped' => AlphaTabNoteTappedEvent.fromJson(data),
+      'staffTapped' => AlphaTabStaffTappedEvent.fromJson(data),
+      'noteDragged' => AlphaTabNoteDraggedEvent.fromJson(data),
+      'playerReady' => AlphaTabPlayerReadyEvent.fromJson(data),
+      'playerIssue' => AlphaTabPlayerIssueEvent.fromJson(data),
+      'playerStateChanged' => AlphaTabPlayerStateEvent.fromJson(data),
+      'playerPositionChanged' => AlphaTabPlayerPositionEvent.fromJson(data),
+      'playedBeatChanged' => AlphaTabPlayedBeatEvent.fromJson(data),
+      'playerFinished' => const AlphaTabPlayerFinishedEvent(),
       'loopRangeSet' => LoopRangeSetEvent.fromJson(data),
       'error' => AlphaTabErrorEvent.fromJson(data),
       _ => UnknownAlphaTabEvent(type: type ?? 'unknown'),
@@ -170,12 +322,16 @@ sealed class AlphaTabEvent {
   }
 }
 
-/// alphaTab WebView가 준비 완료.
 class AlphaTabReadyEvent extends AlphaTabEvent {
-  const AlphaTabReadyEvent();
+  const AlphaTabReadyEvent({this.version});
+
+  factory AlphaTabReadyEvent.fromJson(Map<String, dynamic> json) {
+    return AlphaTabReadyEvent(version: json['version'] as String?);
+  }
+
+  final String? version;
 }
 
-/// 악보 로드 완료.
 class ScoreLoadedEvent extends AlphaTabEvent {
   const ScoreLoadedEvent({
     required this.title,
@@ -189,9 +345,9 @@ class ScoreLoadedEvent extends AlphaTabEvent {
     return ScoreLoadedEvent(
       title: json['title'] as String? ?? '',
       artist: json['artist'] as String? ?? '',
-      tempo: json['tempo'] as int? ?? 120,
-      partCount: json['partCount'] as int? ?? 0,
-      measureCount: json['measureCount'] as int? ?? 0,
+      tempo: _readInt(json['tempo'], fallback: 120),
+      partCount: _readInt(json['partCount']),
+      measureCount: _readInt(json['measureCount']),
     );
   }
 
@@ -202,18 +358,37 @@ class ScoreLoadedEvent extends AlphaTabEvent {
   final int measureCount;
 }
 
-/// 현재 마디 변경.
+class AlphaTabRenderStartedEvent extends AlphaTabEvent {
+  const AlphaTabRenderStartedEvent();
+}
+
+class AlphaTabRenderedEvent extends AlphaTabEvent {
+  const AlphaTabRenderedEvent({
+    required this.contentHeight,
+    required this.scale,
+  });
+
+  factory AlphaTabRenderedEvent.fromJson(Map<String, dynamic> json) {
+    return AlphaTabRenderedEvent(
+      contentHeight: _readDouble(json['contentHeight']),
+      scale: _readDouble(json['scale'], fallback: 1),
+    );
+  }
+
+  final double contentHeight;
+  final double scale;
+}
+
 class CurrentBarChangedEvent extends AlphaTabEvent {
   const CurrentBarChangedEvent({required this.measureNumber});
 
   factory CurrentBarChangedEvent.fromJson(Map<String, dynamic> json) {
-    return CurrentBarChangedEvent(measureNumber: json['measure'] as int? ?? 0);
+    return CurrentBarChangedEvent(measureNumber: _readInt(json['measure']));
   }
 
   final int measureNumber;
 }
 
-/// 현재 Beat 변경.
 class CurrentBeatChangedEvent extends AlphaTabEvent {
   const CurrentBeatChangedEvent({
     required this.measureNumber,
@@ -222,8 +397,8 @@ class CurrentBeatChangedEvent extends AlphaTabEvent {
 
   factory CurrentBeatChangedEvent.fromJson(Map<String, dynamic> json) {
     return CurrentBeatChangedEvent(
-      measureNumber: json['measure'] as int? ?? 0,
-      beatIndex: json['beatIndex'] as int? ?? 0,
+      measureNumber: _readInt(json['measure']),
+      beatIndex: _readInt(json['beatIndex']),
     );
   }
 
@@ -231,18 +406,218 @@ class CurrentBeatChangedEvent extends AlphaTabEvent {
   final int beatIndex;
 }
 
-/// 사용자가 악보를 탭.
+class ScoreSystemsEvent extends AlphaTabEvent {
+  const ScoreSystemsEvent({required this.systems});
+
+  factory ScoreSystemsEvent.fromJson(Map<String, dynamic> json) {
+    final raw = json['systems'];
+    if (raw is! List) return const ScoreSystemsEvent(systems: []);
+    return ScoreSystemsEvent(
+      systems: [
+        for (final item in raw)
+          if (item is Map)
+            (
+              start: _readInt(item['start']),
+              end: _readInt(item['end']),
+            ),
+      ],
+    );
+  }
+
+  final List<({int start, int end})> systems;
+}
+
 class ScoreTappedEvent extends AlphaTabEvent {
   const ScoreTappedEvent({required this.measure});
 
   factory ScoreTappedEvent.fromJson(Map<String, dynamic> json) {
-    return ScoreTappedEvent(measure: json['measure'] as int? ?? 0);
+    return ScoreTappedEvent(measure: _readInt(json['measure']));
   }
 
   final int measure;
 }
 
-/// Loop 구간 설정 완료.
+class AlphaTabNoteTappedEvent extends AlphaTabEvent {
+  const AlphaTabNoteTappedEvent({
+    required this.partIndex,
+    required this.measureIndex,
+    required this.staff,
+    required this.voiceIndex,
+    required this.onsetTicks,
+    required this.midi,
+    required this.noteIndex,
+  });
+
+  factory AlphaTabNoteTappedEvent.fromJson(Map<String, dynamic> json) {
+    return AlphaTabNoteTappedEvent(
+      partIndex: _readInt(json['partIndex']),
+      measureIndex: _readInt(json['measureIndex']),
+      staff: _readInt(json['staff'], fallback: 1),
+      voiceIndex: _readInt(json['voiceIndex']),
+      onsetTicks: _readInt(json['onsetTicks']),
+      midi: _readInt(json['midi']),
+      noteIndex: _readInt(json['noteIndex']),
+    );
+  }
+
+  final int partIndex;
+  final int measureIndex;
+  final int staff;
+  final int voiceIndex;
+  final int onsetTicks;
+  final int midi;
+  final int noteIndex;
+}
+
+class AlphaTabStaffTappedEvent extends AlphaTabEvent {
+  const AlphaTabStaffTappedEvent({
+    required this.partIndex,
+    required this.measureIndex,
+    required this.staff,
+    required this.onsetTicks,
+    required this.midi,
+  });
+
+  factory AlphaTabStaffTappedEvent.fromJson(Map<String, dynamic> json) {
+    return AlphaTabStaffTappedEvent(
+      partIndex: _readInt(json['partIndex']),
+      measureIndex: _readInt(json['measureIndex']),
+      staff: _readInt(json['staff'], fallback: 1),
+      onsetTicks: _readInt(json['onsetTicks']),
+      midi: _readInt(json['midi'], fallback: 67),
+    );
+  }
+
+  final int partIndex;
+  final int measureIndex;
+  final int staff;
+  final int onsetTicks;
+  final int midi;
+}
+
+class AlphaTabNoteDraggedEvent extends AlphaTabEvent {
+  const AlphaTabNoteDraggedEvent({
+    required this.partIndex,
+    required this.measureIndex,
+    required this.staff,
+    required this.onsetTicks,
+    required this.originalMidi,
+    required this.midi,
+  });
+
+  factory AlphaTabNoteDraggedEvent.fromJson(Map<String, dynamic> json) {
+    return AlphaTabNoteDraggedEvent(
+      partIndex: _readInt(json['partIndex']),
+      measureIndex: _readInt(json['measureIndex']),
+      staff: _readInt(json['staff'], fallback: 1),
+      onsetTicks: _readInt(json['onsetTicks']),
+      originalMidi: _readInt(json['originalMidi']),
+      midi: _readInt(json['midi']),
+    );
+  }
+
+  final int partIndex;
+  final int measureIndex;
+  final int staff;
+  final int onsetTicks;
+  final int originalMidi;
+  final int midi;
+}
+
+class AlphaTabPlayerReadyEvent extends AlphaTabEvent {
+  const AlphaTabPlayerReadyEvent({
+    required this.durationMs,
+    required this.endTick,
+    this.readyForPlayback = false,
+  });
+
+  factory AlphaTabPlayerReadyEvent.fromJson(Map<String, dynamic> json) {
+    return AlphaTabPlayerReadyEvent(
+      durationMs: _readDouble(json['durationMs']),
+      endTick: _readInt(json['endTick']),
+      readyForPlayback: _readBool(json['readyForPlayback']),
+    );
+  }
+
+  final double durationMs;
+  final int endTick;
+  final bool readyForPlayback;
+}
+
+class AlphaTabPlayerStateEvent extends AlphaTabEvent {
+  const AlphaTabPlayerStateEvent({
+    required this.playing,
+    required this.stopped,
+  });
+
+  factory AlphaTabPlayerStateEvent.fromJson(Map<String, dynamic> json) {
+    return AlphaTabPlayerStateEvent(
+      playing: _readBool(json['playing']),
+      stopped: _readBool(json['stopped']),
+    );
+  }
+
+  final bool playing;
+  final bool stopped;
+}
+
+class AlphaTabPlayerPositionEvent extends AlphaTabEvent {
+  const AlphaTabPlayerPositionEvent({
+    required this.currentTimeMs,
+    required this.durationMs,
+    required this.currentTick,
+    required this.endTick,
+  });
+
+  factory AlphaTabPlayerPositionEvent.fromJson(Map<String, dynamic> json) {
+    return AlphaTabPlayerPositionEvent(
+      currentTimeMs: _readDouble(json['currentTimeMs']),
+      durationMs: _readDouble(json['durationMs']),
+      currentTick: _readInt(json['currentTick']),
+      endTick: _readInt(json['endTick']),
+    );
+  }
+
+  final double currentTimeMs;
+  final double durationMs;
+  final int currentTick;
+  final int endTick;
+}
+
+class AlphaTabPlayedBeatEvent extends AlphaTabEvent {
+  const AlphaTabPlayedBeatEvent({
+    required this.partIndex,
+    required this.measureIndex,
+    required this.beatIndex,
+  });
+
+  factory AlphaTabPlayedBeatEvent.fromJson(Map<String, dynamic> json) {
+    return AlphaTabPlayedBeatEvent(
+      partIndex: _readInt(json['partIndex']),
+      measureIndex: _readInt(json['measureIndex']),
+      beatIndex: _readInt(json['beatIndex']),
+    );
+  }
+
+  final int partIndex;
+  final int measureIndex;
+  final int beatIndex;
+}
+
+class AlphaTabPlayerFinishedEvent extends AlphaTabEvent {
+  const AlphaTabPlayerFinishedEvent();
+}
+
+class AlphaTabPlayerIssueEvent extends AlphaTabEvent {
+  const AlphaTabPlayerIssueEvent({required this.message});
+
+  factory AlphaTabPlayerIssueEvent.fromJson(Map<String, dynamic> json) {
+    return AlphaTabPlayerIssueEvent(message: json['message'] as String? ?? '');
+  }
+
+  final String message;
+}
+
 class LoopRangeSetEvent extends AlphaTabEvent {
   const LoopRangeSetEvent({
     required this.startMeasure,
@@ -251,8 +626,8 @@ class LoopRangeSetEvent extends AlphaTabEvent {
 
   factory LoopRangeSetEvent.fromJson(Map<String, dynamic> json) {
     return LoopRangeSetEvent(
-      startMeasure: json['startMeasure'] as int? ?? 0,
-      endMeasure: json['endMeasure'] as int? ?? 0,
+      startMeasure: _readInt(json['startMeasure']),
+      endMeasure: _readInt(json['endMeasure']),
     );
   }
 
@@ -260,7 +635,6 @@ class LoopRangeSetEvent extends AlphaTabEvent {
   final int endMeasure;
 }
 
-/// alphaTab 오류.
 class AlphaTabErrorEvent extends AlphaTabEvent {
   const AlphaTabErrorEvent({required this.message});
 
@@ -273,9 +647,37 @@ class AlphaTabErrorEvent extends AlphaTabEvent {
   final String message;
 }
 
-/// 알 수 없는 이벤트.
 class UnknownAlphaTabEvent extends AlphaTabEvent {
   const UnknownAlphaTabEvent({required this.type});
 
   final String type;
+}
+
+int _readInt(Object? value, {int fallback = 0}) {
+  return switch (value) {
+    final num number => number.round(),
+    final String text => num.tryParse(text)?.round() ?? fallback,
+    _ => fallback,
+  };
+}
+
+double _readDouble(Object? value, {double fallback = 0}) {
+  return switch (value) {
+    final num number => number.toDouble(),
+    final String text => double.tryParse(text) ?? fallback,
+    _ => fallback,
+  };
+}
+
+bool _readBool(Object? value, {bool fallback = false}) {
+  return switch (value) {
+    final bool boolean => boolean,
+    final num number => number != 0,
+    final String text => switch (text.toLowerCase()) {
+      'true' || '1' => true,
+      'false' || '0' => false,
+      _ => fallback,
+    },
+    _ => fallback,
+  };
 }

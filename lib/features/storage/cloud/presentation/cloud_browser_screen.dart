@@ -4,6 +4,8 @@ import 'package:page_a_diddle/app/icons/brand_marks.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
 import 'package:page_a_diddle/core/storage/storage_provider.dart';
+import 'package:page_a_diddle/features/digital_score/data/music_xml_import_service.dart';
+import 'package:page_a_diddle/features/library/domain/score_file_filter.dart';
 import 'package:page_a_diddle/features/library/presentation/import_score_sheet.dart';
 import 'package:page_a_diddle/features/storage/cloud/data/cloud_storage.dart';
 import 'package:page_a_diddle/features/storage/cloud/domain/cloud_models.dart';
@@ -12,11 +14,13 @@ class CloudBrowserScreen extends ConsumerStatefulWidget {
   const CloudBrowserScreen({
     required this.kind,
     this.importFolderId,
+    this.fileFilter = ScoreFileFilter.pdf,
     super.key,
   });
 
   final CloudKind kind;
   final String? importFolderId;
+  final ScoreFileFilter fileFilter;
 
   @override
   ConsumerState<CloudBrowserScreen> createState() => _CloudBrowserScreenState();
@@ -56,6 +60,7 @@ class _CloudBrowserScreenState extends ConsumerState<CloudBrowserScreen> {
         _kind,
         folderId: frame.folderId,
         folderPath: frame.folderPath,
+        filter: widget.fileFilter,
       );
       if (!mounted) return;
       setState(() {
@@ -114,11 +119,34 @@ class _CloudBrowserScreenState extends ConsumerState<CloudBrowserScreen> {
         CloudKind.googleDrive => StorageProvider.googleDrive,
         CloudKind.dropbox => StorageProvider.dropbox,
       };
+      final kind = switch (widget.fileFilter) {
+        ScoreFileFilter.pdf => ScoreImportKind.pdf,
+        ScoreFileFilter.musicXml => ScoreImportKind.musicXml,
+      };
+      var initialTitle = file.name;
+      String? initialArtist;
+      int? initialTempo;
+      if (kind == ScoreImportKind.musicXml) {
+        final score = await ref
+            .read(musicXmlImportServiceProvider)
+            .inspect(file);
+        if (!mounted) return;
+        initialTitle = score.title ?? file.name;
+        initialArtist = score.composer;
+        final tempo = score.tempoBpm?.round();
+        initialTempo = tempo != null && tempo >= 40 && tempo <= 240
+            ? tempo
+            : null;
+      }
       final imported = await showImportScoreSheet(
         context,
         file: file,
         sourceProvider: provider,
         folderId: widget.importFolderId,
+        kind: kind,
+        initialTitle: kind == ScoreImportKind.musicXml ? initialTitle : null,
+        initialArtist: initialArtist,
+        initialTempo: initialTempo,
       );
       if (imported != null && mounted) {
         // Close the whole browser (all folder levels) back to Library.
@@ -126,6 +154,12 @@ class _CloudBrowserScreenState extends ConsumerState<CloudBrowserScreen> {
           context,
         ).pop(CloudImportResult(songId: imported, title: entry.name));
         return;
+      }
+    } on FormatException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
       }
     } on CloudAuthException catch (error) {
       if (mounted) {
@@ -252,7 +286,9 @@ class _CloudBrowserScreenState extends ConsumerState<CloudBrowserScreen> {
                     leading: Icon(
                       entry.isFolder
                           ? Icons.folder_rounded
-                          : Icons.picture_as_pdf_outlined,
+                          : widget.fileFilter == ScoreFileFilter.musicXml
+                      ? Icons.music_note_rounded
+                      : Icons.picture_as_pdf_outlined,
                       color: entry.isFolder
                           ? AppColors.accent
                           : colors.onSurfaceVariant,
@@ -305,6 +341,7 @@ Future<CloudImportResult?> openCloudBrowser(
   WidgetRef ref, {
   required CloudKind kind,
   String? importFolderId,
+  ScoreFileFilter fileFilter = ScoreFileFilter.pdf,
 }) async {
   final l10n = context.l10n;
   final cloud = ref.read(cloudStorageProvider);
@@ -337,8 +374,11 @@ Future<CloudImportResult?> openCloudBrowser(
     if (!context.mounted) return null;
     final added = await Navigator.of(context).push<CloudImportResult>(
       MaterialPageRoute<CloudImportResult>(
-        builder: (_) =>
-            CloudBrowserScreen(kind: kind, importFolderId: importFolderId),
+        builder: (_) => CloudBrowserScreen(
+          kind: kind,
+          importFolderId: importFolderId,
+          fileFilter: fileFilter,
+        ),
       ),
     );
     if (added != null && context.mounted) {

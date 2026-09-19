@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -23,6 +24,7 @@ import 'package:page_a_diddle/features/library/data/song_repository.dart';
 import 'package:page_a_diddle/features/library/presentation/edit_song_sheet.dart';
 import 'package:page_a_diddle/features/practice/data/practice_session_repository.dart';
 import 'package:page_a_diddle/features/practice/domain/practice_stats.dart';
+import 'package:page_a_diddle/features/score_viewer/data/annotated_pdf_exporter.dart';
 import 'package:page_a_diddle/features/score_viewer/data/score_viewer_data.dart';
 import 'package:page_a_diddle/features/score_viewer/data/viewer_prefs_store.dart';
 import 'package:page_a_diddle/features/score_viewer/domain/annotation_stroke.dart';
@@ -223,6 +225,7 @@ class _PdfScoreViewerState extends ConsumerState<_PdfScoreViewer> {
   _PdfViewMode _viewMode = _PdfViewMode.fit;
   bool _annotationsVisible = true;
   bool _annotationMode = false;
+  bool _exportingAnnotatedPdf = false;
   final Map<int, List<AnnotationStroke>> _annotationStrokes = {};
 
   /// Chronological undo stack — last stroke drawn, any page / pen.
@@ -2457,6 +2460,56 @@ class _PdfScoreViewerState extends ConsumerState<_PdfScoreViewer> {
     );
   }
 
+  Future<void> _exportAnnotatedPdf() async {
+    if (_exportingAnnotatedPdf || _annotationStrokes.isEmpty) {
+      return;
+    }
+    setState(() => _exportingAnnotatedPdf = true);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(l10n.exportingAnnotatedPdf),
+        duration: const Duration(days: 1),
+      ),
+    );
+
+    try {
+      final bytes = await ref
+          .read(annotatedPdfExporterProvider)
+          .export(
+            sourcePath: widget.data.file.path,
+            title: widget.data.song.title,
+            annotations: {
+              for (final entry in _annotationStrokes.entries)
+                entry.key: List<AnnotationStroke>.unmodifiable(entry.value),
+            },
+          );
+      if (!mounted) return;
+      messenger.hideCurrentSnackBar();
+      final savedPath = await FilePicker.saveFile(
+        dialogTitle: l10n.exportAnnotatedPdf,
+        fileName: annotatedPdfFileName(widget.data.song.title),
+        type: FileType.custom,
+        allowedExtensions: const ['pdf'],
+        bytes: bytes,
+      );
+      if (!mounted || savedPath == null) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.annotatedPdfExported)),
+      );
+    } on Object {
+      if (!mounted) return;
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.annotatedPdfExportFailed)),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _exportingAnnotatedPdf = false);
+      }
+    }
+  }
+
   void _finishAnnotation() {
     final page = _draftAnnotationPage;
     final draft = _draftAnnotation;
@@ -3699,6 +3752,7 @@ class _PdfScoreViewerState extends ConsumerState<_PdfScoreViewer> {
                                 annotationsVisible: _annotationsVisible,
                                 hasAnnotationStrokes:
                                     _annotationStrokes.isNotEmpty,
+                                exportingAnnotations: _exportingAnnotatedPdf,
                                 statusBarVisible: _statusBarVisible,
                                 annotationMode: _annotationMode,
                                 canAnnotate: _allowsEditing,
@@ -3838,6 +3892,12 @@ class _PdfScoreViewerState extends ConsumerState<_PdfScoreViewer> {
                                 onAnnotationsVisible: (value) {
                                   update(() => _annotationsVisible = value);
                                   unawaited(_persistViewerPrefs());
+                                },
+                                onExportAnnotations: () {
+                                  Navigator.pop(sheetContext);
+                                  _afterSettingsClosed(
+                                    () => unawaited(_exportAnnotatedPdf()),
+                                  );
                                 },
                                 onClearAnnotations: () {
                                   _clearAnnotations();

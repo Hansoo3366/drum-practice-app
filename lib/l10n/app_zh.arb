@@ -139,6 +139,7 @@
   "smartThumb": "电子",
   "newSetlist": "新建歌单",
   "create": "创建",
+  "createScore": "创建乐谱",
   "createFailed": "创建失败",
   "createSetlist": "创建歌单",
   "setlist": "歌单",

@@ -2,6 +2,977 @@
 
 최신 작업을 문서 상단에 추가한다. 기존 기록은 수정하거나 삭제하지 않는다.
 
+## 2026-09-20 00:45 KST — 구간 표기 빌드를 폰에 설치
+
+- 작업자: Cursor Grok 4.6
+- 목표: 너비 맞춤·핀치 줌·줄 앞 구간 표기가 들어간 debug APK를 SM-S937N에 넣는다
+- 관련 로드맵: M8-06 보완, B-017
+- 변경 파일:
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - `flutter build apk --debug --no-pub --dart-define-from-file=dart_defines.json --target-platform android-arm64`로 `app-debug.apk` 239MB를 만들었다.
+  - `adb install -r` Success 후 MainActivity를 실행했다.
+- 검증:
+  - 기기 `R5CY43JMZ7N` / SM-S937N, PID 14015, SHA-256 `92ee122effabf2e1fbde32c51ecf2bfed97bca6dd334542c0b52aee91a1647c6`
+  - `versionName=1.0.0`, `lastUpdateTime=2026-09-20 00:44:54`
+- 남은 일:
+  - 폰에서 구간 표기, 너비 맞춤, 핀치 줌을 확인한다.
+
+## 2026-09-20 00:44 KST — 구간 표기를 붙인 줄만
+
+- 작업자: Cursor Grok 4.6
+- 목표: 구간 이름이 높은음자리표에 빨갛게 반복되지 않게 한다
+- 관련 로드맵: M8-06 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/domain/playback_sequence.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `assets/alphatab/index.html`
+  - `test/features/digital_score/domain/playback_sequence_test.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 구간 이름은 실제로 붙인 마디에만 네모로 올린다.
+  - 줄이 이어져도 다음 마디·다음 줄에 같은 글을 반복하지 않는다.
+- 검증:
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json` 연주 순서·렌더러·조판: 11개 통과
+- 남은 일:
+  - 폰에서 붙인 줄 앞에만 구간 표기가 있는지 확인한다.
+
+## 2026-09-20 00:42 KST — 너비 맞춤과 핀치 줌
+
+- 작업자: Cursor Grok 4.6
+- 목표: 전자악보를 화면 너비에 맞춰 줄이고, 흰 배경에서 핀치로 확대·이동한다
+- 관련 로드맵: M8-06 보완, B-017
+- 변경 파일:
+  - `assets/alphatab/index.html`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `test/features/score_viewer/alphatab_bridge_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - A4 폭으로 그린 뒤 화면 너비 비율로 줄인다.
+  - 배경을 흰색으로 고정했다.
+  - 핀치로 1~4배 확대하고 끌어 이동한다.
+- 검증:
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json` 렌더러 자산·bridge·조판: 27개 통과
+- 남은 일:
+  - 폰에서 너비 맞춤, 흰 배경, 핀치 줌을 확인한다.
+
+## 2026-09-20 00:36 KST — 조옮김 빌드를 폰에 설치
+
+- 작업자: Cursor Grok 4.6
+- 목표: 조옮김·A4 조판이 들어간 debug APK를 SM-S937N에 넣는다
+- 관련 로드맵: M8-07 보완, B-017
+- 변경 파일:
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - `flutter build apk --debug --no-pub --dart-define-from-file=dart_defines.json --target-platform android-arm64`로 `app-debug.apk` 239MB를 만들었다.
+  - `adb install -r` Success 후 MainActivity를 실행했다.
+- 검증:
+  - 기기 `R5CY43JMZ7N` / SM-S937N, PID 9209, SHA-256 `cdfe10fe8130faba89664266b28387804f03c6979c62dc263444b18f775c095d`
+  - `versionName=1.0.0`, `lastUpdateTime=2026-09-20 00:36:17`
+- 남은 일:
+  - 폰에서 조옮김 버튼, A4 조판, 줄 주황 박스를 확인한다.
+
+## 2026-09-20 00:34 KST — 이조를 조옮김으로
+
+- 작업자: Cursor Grok 4.6
+- 목표: 화면에 보이는 용어를 조옮김으로 통일한다
+- 관련 로드맵: M8-07 보완
+- 변경 파일:
+  - `lib/l10n/app_ko.arb`
+  - `lib/l10n/app_localizations_ko.dart`
+  - `test/features/digital_score/presentation/score_transpose_panel_test.dart`
+  - `test/features/digital_score/presentation/score_playback_bar_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 앱바·시트 문구를 `조옮김`으로 바꿨다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json` 조옮김 시트·재생 막대: 7개 통과
+- 남은 일:
+  - 폰에서 조옮김 버튼을 확인한다.
+
+## 2026-09-20 00:32 KST — A4 폭 조판과 줄 단위 구간
+
+- 작업자: Cursor Grok 4.6
+- 목표: 4마디 고정을 빼고 A4처럼 조판한 뒤 폰에 맞춘다
+- 관련 로드맵: M8-06 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/domain/score_layout.dart`
+  - `lib/features/digital_score/domain/score_editor.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `assets/alphatab/index.html`
+  - `test/features/digital_score/domain/score_layout_test.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `test/features/score_viewer/alphatab_bridge_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 악보는 A4 폭으로 그리고 화면 너비에 맞게 줄인다.
+  - 구간은 렌더된 한 줄의 첫 마디에 붙인다.
+- 검증:
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 273개 통과
+- 남은 일:
+  - 폰에서 A4 조판과 줄 구간을 확인한다.
+
+## 2026-09-20 00:28 KST — 4마디 한 줄과 줄 선택
+
+- 작업자: Cursor Grok 4.6
+- 목표: 한 줄을 4마디로 맞추고, 구간을 줄 단위로 붙이며, 주황 박스가 실제로 뜨게 한다
+- 관련 로드맵: M8-06 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/domain/score_layout.dart`
+  - `lib/features/digital_score/domain/score_editor.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `assets/alphatab/index.html`
+  - `test/features/digital_score/domain/score_layout_test.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 조판을 한 줄 4마디로 고정했다.
+  - 구간은 그 줄의 첫 마디에만 붙인다.
+  - 연주 순서에서 오선 탭은 WebView가 삼키지 않고, 줄 전체에 주황 박스를 그린다.
+  - alphaTab 좌표는 `findMasterBarByIndex`와 staff system bounds를 쓴다.
+- 검증:
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 273개 통과
+- 남은 일:
+  - 폰에서 4마디 한 줄, 줄 선택 박스, 줄 구간을 확인한다.
+
+## 2026-09-20 00:23 KST — 마디 박스 빌드를 폰에 설치
+
+- 작업자: Cursor Grok 4.6
+- 목표: 마디 전체 주황 박스가 들어간 debug APK를 SM-S937N에 넣는다
+- 관련 로드맵: M8-06 보완, B-017
+- 변경 파일:
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - `flutter build apk --debug --no-pub --dart-define-from-file=dart_defines.json --target-platform android-arm64`로 `app-debug.apk` 239MB를 만들었다.
+  - `adb install -r` Success 후 MainActivity를 실행했다.
+- 검증:
+  - 기기 `R5CY43JMZ7N` / SM-S937N, PID 30126, SHA-256 `4c6237574c05f6b5c776e655adf50c9c071e2d2296e026933ea1fd0854befcdd`
+  - `versionName=1.0.0`, `lastUpdateTime=2026-09-20 00:23:46`
+- 남은 일:
+  - 폰에서 마디를 눌렀을 때 주황 박스가 뜨는지 확인한다.
+
+## 2026-09-20 00:22 KST — 선택 마디에 떠 있는 색 박스
+
+- 작업자: Cursor Grok 4.6
+- 목표: 마디를 누르면 그 칸 전체에 변경 중인 박스가 바로 보이게 한다
+- 관련 로드맵: M8-06 보완, B-017
+- 변경 파일:
+  - `assets/alphatab/index.html`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 오선·음표를 누르면 Flutter를 기다리지 않고 그 마디 전체를 주황 박스가 감싼다.
+  - 높은·낮은음자리표를 한 칸으로 묶고, 좌표가 비면 다시 그린다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 271개 통과
+- 남은 일:
+  - 폰에서 마디를 눌렀을 때 박스가 뜨는지 확인한다.
+
+## 2026-09-20 00:20 KST — 구간을 악보에 표시하고 마디 추가
+
+- 작업자: Cursor Grok 4.6
+- 목표: 구간 이름이 오선에 보이게 하고, 다음 마디 추가가 실제로 되게 한다
+- 관련 로드맵: M8-06 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/domain/playback_sequence.dart`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `lib/features/digital_score/data/music_xml_codec.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `lib/features/digital_score/presentation/playback_sequence_panel.dart`
+  - `lib/features/digital_score/presentation/score_editor_panel.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `assets/alphatab/index.html`
+  - `test/features/digital_score/domain/playback_sequence_test.dart`
+  - `test/features/digital_score/presentation/playback_sequence_panel_test.dart`
+  - `test/features/digital_score/presentation/score_editor_panel_test.dart`
+  - `test/features/score_viewer/alphatab_bridge_test.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 붙은 구간은 오선 위 각 마디에 벌스·코러스로 올린다.
+  - 연주 순서와 쓰기 팔레트에 `다음 마디 추가`를 다시 넣었다.
+- 검증:
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 271개 통과
+- 남은 일:
+  - 폰에서 구간 표시와 마디 추가를 확인한다.
+
+## 2026-09-20 00:12 KST — 마디별 조 표시 빌드를 폰에 설치
+
+- 작업자: Cursor Grok 4.6
+- 목표: 각 마디 위 조 이름이 들어간 debug APK를 SM-S937N에 넣는다
+- 관련 로드맵: M8-07 보완, B-017
+- 변경 파일:
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - `flutter build apk --debug --no-pub --dart-define-from-file=dart_defines.json --target-platform android-arm64`로 `app-debug.apk` 239MB를 만들었다.
+  - `adb install -r` Success 후 MainActivity를 실행했다.
+- 검증:
+  - 기기 `R5CY43JMZ7N` / SM-S937N, PID 26411, SHA-256 `1174219853a7f5c9423ab8dd60dbe1ca29ade75838fe2297353e7a389e4ba946`
+  - `versionName=1.0.0`, `lastUpdateTime=2026-09-20 00:11:58`
+- 남은 일:
+  - 폰에서 각 마디 위 조 이름과 이조 뒤 갱신을 확인한다.
+
+## 2026-09-20 00:50 KST — 마디마다 조를 악보에 표시
+
+- 작업자: Cursor Grok 4.6
+- 목표: 이조 뒤에도 각 마디의 조가 오선 위에서 보이게 한다
+- 관련 로드맵: M8-07 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/domain/score_transpose.dart`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `assets/alphatab/index.html`
+  - `test/features/digital_score/domain/score_transpose_test.dart`
+  - `test/features/score_viewer/alphatab_bridge_test.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 각 마디의 조 fifths를 렌더 좌표에 C·G·B♭ 같은 으뜸음으로 올린다.
+  - 저장된 MusicXML에는 가짜 가사를 넣지 않는다.
+- 검증:
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 271개 통과
+- 남은 일:
+  - 폰에서 각 마디 위 조 이름과 이조 뒤 갱신을 확인한다.
+
+## 2026-09-20 00:35 KST — 마디 활성화를 악보 탭으로
+
+- 작업자: Cursor Grok 4.6
+- 목표: 연주 순서 옵션 색칠을 빼고, 오선을 누르면 그 마디가 악보에서 켜지게 한다
+- 관련 로드맵: M8-06 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/presentation/playback_sequence_panel.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `assets/alphatab/index.html`
+  - `test/features/digital_score/presentation/playback_sequence_panel_test.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 구간·반복 줄의 주황 테두리를 제거했다.
+  - 오선 탭은 렌더 좌표로 마디를 찾고, 그 마디를 악보 위에 표시한다.
+- 검증:
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 270개 통과
+- 남은 일:
+  - 폰에서 오선을 눌렀을 때 그 마디가 켜지는지 확인한다.
+
+## 2026-09-20 00:30 KST — 원곡 조 빌드를 폰에 설치
+
+- 작업자: Cursor Grok 4.6
+- 목표: 원곡 조·선택 마디 강조가 들어간 debug APK를 SM-S937N에 넣는다
+- 관련 로드맵: M8-06·M8-07 보완, B-017
+- 변경 파일:
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - `flutter build apk --debug --no-pub --dart-define-from-file=dart_defines.json --target-platform android-arm64`로 `app-debug.apk` 239MB를 만들었다.
+  - `adb install -r` Success 후 MainActivity를 실행했다.
+- 검증:
+  - 기기 `R5CY43JMZ7N` / SM-S937N, PID 22424, SHA-256 `c03b0e161bc1d7fbefcb5d0202827649c0d8a48491d97b5cdf040964d34c5428`
+  - `versionName=1.0.0`, `lastUpdateTime=2026-09-20 00:02:35`
+- 남은 일:
+  - 폰에서 원곡 조와 연주 순서 선택 마디를 확인한다.
+
+## 2026-09-20 00:25 KST — 원곡 조와 선택 구간 표시
+
+- 작업자: Cursor Grok 4.6
+- 목표: 이조 뒤에도 원곡 조를 남기고, 연주 순서에서 고른 마디와 구간을 구분한다
+- 관련 로드맵: M8-06·M8-07 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/presentation/score_transpose_panel.dart`
+  - `lib/features/digital_score/presentation/playback_sequence_panel.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/data/digital_score_data.dart`
+  - `lib/features/digital_score/data/digital_score_editor_service.dart`
+  - `lib/core/storage/song_file_storage.dart`
+  - `lib/features/library/data/song_repository.dart`
+  - `assets/alphatab/index.html`
+  - `lib/l10n/app_ko.arb`, `lib/l10n/app_en.arb`
+  - `test/features/digital_score/presentation/score_transpose_panel_test.dart`
+  - `test/features/digital_score/presentation/playback_sequence_panel_test.dart`
+  - `test/features/digital_score/data/digital_score_editor_service_test.dart`
+  - `test/core/storage/song_file_storage_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 이조 시트에 원곡 조를 고정하고, 처음 연 조의 fifths를 sidecar에 한 번만 저장한다.
+  - 연주 순서는 고른 마디 번호를 주황 칸으로 보여주고, 그 마디의 구간 행과 악보 위 선택 마디를 같은 색으로 강조한다.
+- 검증:
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 271개 통과
+- 남은 일:
+  - 폰에서 원곡 조와 선택 마디 구분을 확인한다.
+
+## 2026-09-20 00:15 KST — YDP 피아노 빌드를 폰에 설치
+
+- 작업자: Cursor Grok 4.6
+- 목표: 그랜드 피아노 음색이 들어간 최신 debug APK를 SM-S937N에 넣는다
+- 관련 로드맵: M8-05 보완, B-017
+- 변경 파일:
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - `flutter build apk --debug --no-pub --dart-define-from-file=dart_defines.json --target-platform android-arm64`로 `app-debug.apk` 239MB를 만들었다.
+  - USB가 한번 끊긴 뒤 `adb install -r` Success, MainActivity를 실행했다.
+- 검증:
+  - 기기 `R5CY43JMZ7N` / SM-S937N, PID 18564, SHA-256 `fa101a472f46dbe7fb5501993f33abcc615a6dd2ecf2a9ad19bedd9f4b2c0bb5`
+  - `versionName=1.0.0`, `lastUpdateTime=2026-09-19 23:52:53`
+- 남은 일:
+  - 폰에서 피아노 음색과, 악보를 나갈 때 재생이 멈추는지 확인한다.
+
+## 2026-09-20 00:10 KST — 재생 음색을 그랜드 피아노 샘플로
+
+- 작업자: Cursor Grok 4.6
+- 목표: 기계음처럼 들리던 SONiVOX 합성음을 실제 피아노 샘플로 바꾼다
+- 관련 로드맵: M8-05 보완, B-017
+- 변경 파일:
+  - `assets/alphatab/vendor/soundfont/ydp-grand-piano.sf2`
+  - `assets/alphatab/vendor/soundfont/YDP-GrandPiano-NOTICE.txt`
+  - `assets/alphatab/vendor/soundfont/CC-BY-3.0.txt`
+  - `assets/alphatab/vendor/soundfont/README.md`
+  - `assets/alphatab/index.html`
+  - `assets/alphatab/THIRD_PARTY_NOTICES.md`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `test/features/digital_score/data/alphatab_asset_server_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 1.3MB SONiVOX EAS를 제거하고 FreePats YDP Grand Piano(Yamaha Disklavier Pro 샘플, CC BY 3.0)를 앱 자산으로 넣는다.
+  - 재생 엔진은 그대로 alphaTab 합성기이며, SoundFont 경로만 바꾼다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 267개 통과
+  - SoundFont는 RIFF/`sfbk` 헤더와 CC BY 3.0 고지를 확인했다.
+- 남은 일:
+  - 폰에서 피아노 음색과 첫 재생 준비 시간을 확인한다.
+
+## 2026-09-19 23:59 KST — 연주 순서·이조·나가면 정지
+
+- 작업자: Cursor Grok 4.6
+- 목표: 연주 순서를 역할·반복만 남기고, 이조를 단독 메뉴로 두며, 악보를 나가면 재생을 멈춘다
+- 관련 로드맵: M8-06·M8-07 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/presentation/playback_sequence_panel.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `lib/l10n/app_ko.arb`, `lib/l10n/app_en.arb`
+  - `test/features/digital_score/presentation/playback_sequence_panel_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 연주 순서는 오선에서 고른 마디에 벌스·코러스를 붙이고, 그 역할의 반복 횟수만 바꾼다.
+  - 마디 번호·추가·순서·조표·박자와 반주 메뉴는 화면에서 뺀다.
+  - 이조는 앱바 단독 버튼이다.
+  - 악보 화면을 닫을 때 재생을 멈춘다.
+- 검증:
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 267개 통과
+- 남은 일:
+  - 폰에서 나가면 정지, 연주 순서, 이조 버튼을 확인한다.
+
+## 2026-09-19 23:55 KST — 재생 버튼은 되고 소리는 안 남
+
+- 작업자: Cursor Grok 4.6
+- 목표: 길이는 보이지만 재생·탐색이 안 되던 문제를 고친다
+- 관련 로드맵: M8-05 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/data/alphatab_asset_server.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `assets/alphatab/index.html`
+  - `android/app/src/main/AndroidManifest.xml`
+  - `android/app/src/main/res/xml/network_security_config.xml`
+  - `test/features/digital_score/data/alphatab_asset_server_test.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `test/features/score_viewer/alphatab_bridge_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - Flutter 자산 로더는 워커/SoundFont fetch를 막아서, `127.0.0.1` 로컬 서버로 index·스크립트·sf2를 제공한다.
+  - 재생은 출력 장치를 연 뒤 토글하고, 탐색은 엔진이 받은 위치를 Flutter 상태에 남긴다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 266개 통과
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - SM-S937N에 debug APK `adb install -r` Success, PID 13225, SHA-256 `2c8637846bf9b12f39023ced749660ad7821936acfc523819791d93613d393d8`
+- 남은 일:
+  - 폰에서 재생 소리와 탐색이 유지되는지 확인한다.
+
+## 2026-09-19 23:50 KST — 전자악보 재생 0초 고정
+
+- 작업자: Cursor Grok 4.6
+- 목표: 재생이 안 되고 길이가 0:00으로만 보이던 문제를 고친다
+- 관련 로드맵: M8-05 보완, B-017
+- 변경 파일:
+  - `assets/alphatab/index.html`
+  - `lib/features/digital_score/domain/score_playback.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `test/features/digital_score/domain/score_playback_test.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - WebView 워커가 `importScripts`로 alphaTab을 다시 받지 못해 합성기가 안 뜨는 경로를, 메인에서 받은 스크립트 블롭 워커로 바꿨다.
+  - 길이는 `endTime`·틱·악보 템포/박자 추정으로 채우고, 재생을 켤 때 오디오 잠금을 연다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 264개 통과
+  - SM-S937N에 debug APK `adb install -r` Success, PID 11355, SHA-256 `76f0b36afda26010f7f610c78154041048d0a2e0941b68d72538b7bbf81fc752`
+- 남은 일:
+  - 폰에서 재생을 켠 뒤 길이와 소리를 확인한다.
+
+## 2026-09-19 23:45 KST — 마디 설정을 연주 순서로 분리
+
+- 작업자: Cursor Grok 4.6
+- 목표: 쓰기 메뉴에서 마디 설정·개수·순서를 빼고 연주 순서에서 다루며 바꿀 마디를 강조한다
+- 관련 로드맵: M8-04·M8-06 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`, `score_editor_panel.dart`, `playback_sequence_panel.dart`, `piano_score_view.dart`
+  - `lib/features/digital_score/domain/score_editor.dart`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `assets/alphatab/index.html`
+  - `lib/l10n/app_ko.arb`, `lib/l10n/app_en.arb`
+  - `test/features/digital_score/presentation/score_editor_panel_test.dart`, `playback_sequence_panel_test.dart`, `alphatab_asset_test.dart`
+  - `test/features/digital_score/domain/score_editor_test.dart`
+  - `test/features/score_viewer/alphatab_bridge_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 쓰기 팔레트는 음가·쉼표·임시표와 실행 취소·삭제만 남겼다.
+  - 연주 순서 패널에서 마디 번호·추가·순서 변경·삭제, 구간·조표·박자, 반복 순서를 바꾼다.
+  - 선택한 마디는 번호 칩과 악보 주황 박스로 표시한다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 263개 통과
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+- 남은 일:
+  - 폰에서 연주 순서 강조와 쓰기 메뉴가 음표만인지 확인한다.
+
+## 2026-09-19 23:25 KST — 재생 길이 0초 고정 수정
+
+- 작업자: Cursor Grok 4.6
+- 목표: 재생을 켜도 시간이 0:00으로만 보이던 문제를 고친다
+- 관련 로드맵: M8-05 보완, B-017
+- 변경 파일:
+  - `assets/alphatab/index.html`
+  - `lib/features/digital_score/domain/score_playback.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `test/features/digital_score/domain/score_playback_test.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `test/features/score_viewer/alphatab_bridge_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - SoundFont 준비 직후 `endTime`이 0이어도 악보 MIDI가 생긴 뒤 길이를 다시 읽는다.
+  - 0초 이벤트가 이미 아는 길이를 덮지 않는다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 263개 통과
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - SM-S937N에 `adb install -r` Success, PID 1735, SHA-256 `851a9c55e9876e54ecab748070598ca7594d44d425d966b7b9688c46ad818367`
+- 남은 일:
+  - 폰에서 재생을 켠 뒤 길이가 0:00이 아닌지 확인한다.
+
+## 2026-09-19 23:20 KST — 구간·반복 분리와 선택 재생
+
+- 작업자: Cursor Grok 4.6
+- 목표: 벌스·코러스는 악보 수정에서, 반복은 별도 메뉴에서 다루고 재생 커서를 선택으로 만든다
+- 관련 로드맵: M8-04·M8-05·M8-06 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/domain/performance_score.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`, `score_editor_panel.dart`, `piano_score_view.dart`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `assets/alphatab/index.html`
+  - `test/features/digital_score/domain/playback_sequence_test.dart`
+  - `test/features/digital_score/presentation/score_editor_panel_test.dart`, `alphatab_asset_test.dart`
+  - `test/features/score_viewer/alphatab_bridge_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 쓰기 팔레트에서 현재 마디에 구간을 붙인다. 마디 설정에서는 구간을 뺐다.
+  - 연주 순서 버튼에서만 반복 횟수와 순서를 바꾼다.
+  - 재생은 기본 꺼짐이다. 켜야 재생 막대가 나오고, 실제로 재생 중일 때만 커서가 보이며 펼친 악보를 보여 준다.
+  - 이조·코드·마디는 쓰기 중 도구, 반주는 연주 도구로 남겼다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 262개 통과
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - SM-S937N에 `adb install -r` Success, PID 32128, SHA-256 `92290649ef20a4183fb6315b88bb9350827d5f2335fa6e333418f5ed96bbfc10`
+- 남은 일:
+  - 폰에서 구간→반복→재생 켜기 순서를 확인한다.
+
+## 2026-09-19 23:10 KST — 전자악보 재생 수정과 기능 분리
+
+- 작업자: Cursor Grok 4.6
+- 목표: 실기기 재생을 살리고 편집 UX를 재생/쓰기/도구로 나눈다
+- 관련 로드맵: M8-04·M8-05 보완, B-017
+- 변경 파일:
+  - `assets/alphatab/index.html`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`, `piano_score_view.dart`, `score_editor_panel.dart`
+  - `android/app/src/main/AndroidManifest.xml`
+  - `lib/l10n/app_ko.arb`, `lib/l10n/app_en.arb`
+  - `test/features/digital_score/presentation/score_editor_panel_test.dart`, `alphatab_asset_test.dart`, `score_playback_bar_test.dart`
+  - `test/features/score_viewer/alphatab_bridge_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 재생 막대는 재생·정지·탐색만 남겼다.
+  - 쓰기 모드는 음가·쉼표·임시표와 삭제·마디 추가만 두고 오선을 눌러 넣는다.
+  - 이조·연주 순서·반주·코드·마디 설정은 도구 메뉴로 옮겼다.
+  - alphaTab 출력을 `WebAudioScriptProcessor`로 바꿔 Android WebView AudioWorklet 실패를 피한다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 261개 통과
+  - `flutter analyze --no-pub` 대상 변경 Dart 파일: 문제 없음
+  - SM-S937N(R5CY43JMZ7N)에 `adb install -r` Success, MainActivity PID 31157, SHA-256 `77473528902a136855669f075ffdbaf7f4877a9e9b36ba8533d3c854a03f77d5`
+- 남은 일:
+  - 폰에서 재생과 오선 입력을 확인한다.
+
+## 2026-09-19 22:53 KST — SM-S937N 최신 release 재설치
+
+- 작업자: Cursor Grok 4.6
+- 목표: 꺼져 있던 폰이 다시 켜진 뒤 오선 입력·재생·MXL 출처 선택이 들어간 APK를 넣는다
+- 관련 로드맵: B-017
+- 변경 파일:
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - `flutter build apk --release --dart-define-from-file=dart_defines.json --target-platform android-arm64`로 만든 `app-release.apk`(SHA-256 `6fa2daaf6a18c0c480e1dddc5136fd34bcb6dafb253636fc510285879b532571`, 75MB)를 SM-S937N(R5CY43JMZ7N)에 `adb install -r`로 넣었다.
+  - MainActivity PID 26424, versionCode 2, lastUpdateTime 2026-09-19 22:52:41.
+- 검증:
+  - `adb install -r` Success, `am start` Success, `pidof` 26424
+- 남은 일:
+  - 폰에서 MusicXML 출처 선택, 오선 입력, 재생, 완료 여백, 내보내기·재열기를 확인한다.
+
+## 2026-09-20 00:30 KST — MusicXML 가져오기 출처를 PDF와 맞춤
+
+- 작업자: Cursor Grok 4.6
+- 목표: MXL도 PDF처럼 기기·드라이브·Dropbox·WebDAV에서 고른다
+- 관련 로드맵: M8-02 보완, M4-01·M4-02
+- 변경 파일:
+  - `lib/features/library/domain/score_file_filter.dart`
+  - `lib/features/library/presentation/library_screen.dart`
+  - `lib/features/storage/cloud/data/google_drive_service.dart`, `dropbox_service.dart`, `cloud_storage.dart`
+  - `lib/features/storage/cloud/domain/cloud_models.dart`
+  - `lib/features/storage/cloud/presentation/cloud_browser_screen.dart`
+  - `lib/features/storage/data/webdav_connection.dart`
+  - `lib/features/storage/presentation/webdav_browser_screen.dart`
+  - `lib/app/router/app_router.dart`
+  - `test/features/library/domain/score_file_filter_test.dart`
+  - `test/features/storage/webdav_connection_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - Library에서 MusicXML을 고르면 PDF와 같은 출처 시트가 열린다.
+  - Google Drive·Dropbox·WebDAV는 `.musicxml`·`.mxl`·`.xml`만 보여 준다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 261개 통과
+  - `flutter analyze --no-pub` 대상 변경 파일: 문제 없음
+- 남은 일:
+  - 폰에 다시 설치해야 출처 선택이 보인다.
+
+## 2026-09-20 00:10 KST — 전자악보 편집·재생·안내·여백
+
+- 작업자: Cursor Grok 4.6
+- 목표: 오선 직접 입력, 재생, 연주 순서/반주 안내, 완료 버튼 가림을 고친다
+- 관련 로드맵: M8-04·M8-05·M8-06·M8-08 보완, B-017
+- 변경 파일:
+  - `assets/alphatab/index.html`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `lib/app/widgets/sheet_insets.dart`
+  - `lib/features/digital_score/domain/staff_note_input.dart`, `score_playback.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`, `piano_score_view.dart`, `score_editor_panel.dart`, `score_playback_bar.dart`, `arrangement_panel.dart`, `playback_sequence_panel.dart`, `score_transpose_panel.dart`
+  - `lib/features/library/presentation/create_music_xml_sheet.dart`, `library_screen.dart`
+  - `lib/l10n/app_en.arb`, `app_ko.arb`, 생성된 `app_localizations*.dart`
+  - `test/features/digital_score/domain/staff_note_input_test.dart` 및 관련 패널·bridge·자산 테스트
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 음가·쉼표·임시표를 고른 뒤 오선을 누르면 음표가 바로 들어가고, 끌어 높이를 바꾼다.
+  - 악보를 누르면 Web Audio를 열고, SoundFont가 늦어도 재생을 이어 받는다.
+  - 벌스·코러스는 편집 줄의 구간에서 지정한다. 코드가 없으면 반주는 `코드 없음`이다.
+  - 완료/저장 버튼은 시스템 뒤로·홈·최근앱 위에 뜨도록 하단 여백을 넣었다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 259개 통과
+  - `flutter analyze --no-pub` 대상 변경 파일: 문제 없음
+- 남은 일:
+  - 폰에 다시 설치해야 네 가지 수정이 보인다.
+
+## 2026-09-19 23:55 KST — 빈 피아노 악보 만들기
+
+- 작업자: Cursor Grok 4.6
+- 목표: 가져온 XML 없이 Library에서 전자악보를 직접 만든다
+- 관련 로드맵: M8-04 보완
+- 변경 파일:
+  - `lib/features/digital_score/domain/blank_piano_score.dart`
+  - `lib/features/digital_score/data/music_xml_import_service.dart`
+  - `lib/features/library/presentation/create_music_xml_sheet.dart`, `library_screen.dart`
+  - `lib/l10n/app_en.arb`, `app_ko.arb`, `app_ja.arb`, `app_zh.arb`, `app_la.arb`, 생성된 `app_localizations*.dart`
+  - `test/features/digital_score/domain/blank_piano_score_test.dart`
+  - `test/features/digital_score/data/music_xml_import_service_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - Library `+` → `악보 만들기`에서 곡명·아티스트·BPM을 넣고 빈 피아노 Grand Staff 한 마디를 저장한다.
+  - 저장 후 편집 화면을 연다. 가져오기는 그대로다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 254개 통과
+  - `flutter analyze --no-pub` 대상 생성 파일: 문제 없음
+- 남은 일:
+  - 폰에 다시 설치해야 `악보 만들기`가 보인다.
+
+## 2026-09-19 23:45 KST — OpenLyrics 가사 XML 거부 안내
+
+- 작업자: Cursor Grok 4.6
+- 목표: `.xml`이 MusicXML이 아닐 때 기술 오류 대신 원인을 한 줄로 알린다
+- 관련 로드맵: M8-02 보완
+- 변경 파일:
+  - `lib/features/digital_score/data/music_xml_codec.dart`
+  - `test/features/digital_score/data/music_xml_codec_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - `21세기 새찬송가 - 괴로움과 고통을.xml`은 갓피플 OpenLyrics 가사다. 음표·보표가 없어 Score Document로 바꾸지 않는다.
+  - OpenLyrics는 `가사 파일입니다`, score-timewise는 `이 악보 형식은 열 수 없습니다`, 그 밖은 `악보가 아닙니다`.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 252개 통과
+  - `flutter analyze --no-pub` 대상 코덱: 문제 없음
+- 남은 일:
+  - 폰에 다시 설치해야 새 안내가 보인다.
+
+## 2026-09-19 23:35 KST — SM-S937N release 설치
+
+- 작업자: Cursor Grok 4.6
+- 목표: 연결된 폰에 최신 앱을 설치한다
+- 관련 로드맵: B-017 설치 진행, smoke 대기
+- 변경 파일:
+  - `android/build.gradle.kts`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - pdfium CMake가 Android 타깃에서 심볼릭 링크를 쓰다 실패해서, Windows 호스트는 junction/복사로 우회했다.
+  - `flutter build apk --release --dart-define-from-file=dart_defines.json --target-platform android-arm64` 성공. APK 74.4MB, SHA-256 `1299bd3c8998de5c229fac87f498118521aa21fb160e74b5d70601d1e9777c87`.
+  - 서명 불일치로 기존 `com.hansookim.pageadiddle`을 지운 뒤 SM-S937N(R5CY43JMZ7N)에 설치하고 MainActivity(PID 9696)를 실행했다.
+- 검증:
+  - `adb install` Success, `am start` Success, `pidof` 9696
+  - 가져오기·재생·내보내기 화면 확인은 하지 않았다
+- 남은 일:
+  - 같은 폰에서 MVP 8 전체 경로와 주석 PDF 재열기를 확인한다.
+
+## 2026-09-19 23:15 KST — 클라우드 OAuth 키를 빌드 기본값으로 고정
+
+- 작업자: Cursor Grok 4.6
+- 목표: Google Drive·Dropbox 클라이언트 ID를 빌드마다 빠지지 않게 넣는다
+- 관련 로드맵: M4-01·M4-02 보완, D-124, B-017 검증 대기
+- 변경 파일:
+  - `lib/features/storage/cloud/data/cloud_oauth_config.dart`
+  - `dart_defines.json`
+  - `.vscode/settings.json`, `.vscode/launch.json`
+  - `.github/workflows/flutter_ci.yml`
+  - `test/features/storage/cloud/cloud_oauth_config_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 제품 기본 키를 소스에 두고, 빈 `--dart-define`이 있어도 OAuth를 끄지 않는다.
+  - Cursor/VS Code 실행과 CI 테스트는 `dart_defines.json`을 항상 넘긴다.
+  - `flutter build apk`에 플래그를 안 넣어도 소스 기본값으로 Drive·Dropbox 로그인을 연다.
+  - 사용자는 이전에 실계정 다운로드가 된다고 확인했다.
+- 검증:
+  - `flutter test --no-pub -j 1 --dart-define-from-file=dart_defines.json`: 전체 251개 통과
+  - `flutter analyze --no-pub` 대상 OAuth 설정: 문제 없음
+- 남은 일:
+  - B-017 해결 뒤 APK 재빌드에서 키 문자열과 실기기 가져오기를 다시 본다.
+
+## 2026-09-19 22:50 KST — 구형 MusicXML `.xml` 내보내기
+
+- 작업자: Cursor Grok 4.6
+- 목표: 기획서의 `.musicxml`·구형 `.xml`·`.mxl` 읽기/쓰기 중 빠져 있던 `.xml` 내보내기를 맞춘다
+- 관련 로드맵: M8-09 보완, B-017 검증 대기
+- 변경 파일:
+  - `lib/features/digital_score/data/score_export_service.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `test/features/digital_score/data/score_export_service_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 내려받기 메뉴에 `.xml`을 넣었다. 바이트는 `.musicxml`과 같고 파일 이름만 다르다.
+  - 가져오기는 이미 `musicxml|mxl|xml`을 허용한다.
+- 검증:
+  - `flutter test --no-pub -j 1`: 전체 250개 통과
+  - `flutter analyze --no-pub` 대상 내보내기 파일: 문제 없음
+  - `.xml`과 `.musicxml` 바이트가 같고 `<score-partwise version="4.0">`를 포함하며 다시 읽힌다.
+- 남은 일:
+  - B-017 해결 뒤 Android에서 내보내기·재열기·재생 전체 경로를 수동 검증한다.
+
+## 2026-09-19 22:40 KST — 재구성 MusicXML·MIDI·PDF·프로젝트 내보내기
+
+- 작업자: Cursor Grok 4.6
+- 목표: M8-09에서 화면과 같은 이조·연주 순서·반주 결과를 새 파일로 내보낸다
+- 관련 로드맵: M8-09 완료, B-017 검증 대기
+- 변경 파일:
+  - `lib/features/digital_score/domain/performance_score.dart`
+  - `lib/features/digital_score/data/score_export_service.dart`, `midi_codec.dart`, `score_pdf_exporter.dart`, `score_project_codec.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/l10n/app_en.arb`, `app_ko.arb`, 생성된 `app_localizations*.dart`
+  - `test/features/digital_score/data/score_export_service_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - `.musicxml` `.mxl` `.mid` `.pdf`는 현재 편집본에 연주 순서와 반주를 펼친 점수를 쓴다.
+  - PDF는 A4 가로 Grand Staff를 벡터로 조판하고 12마디마다 쪽을 나눈다.
+  - 프로젝트 zip은 원본 MusicXML과 Sequence·반주 JSON만 담아 다시 열 수 있게 한다.
+  - 모두 사용자가 고른 새 경로에 저장하며 앱 내부 원본은 덮어쓰지 않는다. 취소·실패 때도 원본은 그대로다.
+- 검증:
+  - `flutter test --no-pub -j 1`: 전체 249개 통과
+  - `flutter analyze --no-pub` 대상 내보내기 파일: 문제 없음
+  - INTRO×4→VERSE×2→CHORUS×1 MusicXML 7마디·반주 보존, SMF C4, 13마디 PDF 2쪽 이상, 프로젝트 왕복을 테스트했다.
+  - Android에서 내보낸 PDF를 앱·일반 Viewer로 재여는 확인은 B-017로 남아 있다.
+- 남은 일:
+  - B-017 해결 뒤 Android에서 내보내기·재열기·재생 전체 경로를 수동 검증한다.
+  - Future 서버 기능은 사용자가 순서를 바꾸기 전까지 시작하지 않는다.
+
+## 2026-09-19 22:25 KST — 코드 기반 피아노 반주 프로필
+
+- 작업자: Cursor Grok 4.6
+- 목표: M8-08에서 코드 진행으로 기본 피아노 반주를 만들고 원본은 덮어쓰지 않는다
+- 관련 로드맵: M8-08 완료, M8-09 진행 시작
+- 변경 파일:
+  - `lib/features/digital_score/domain/arrangement_profile.dart`
+  - `lib/features/digital_score/data/digital_score_data.dart`, `digital_score_editor_service.dart`
+  - `lib/features/digital_score/presentation/arrangement_panel.dart`, `digital_score_screen.dart`, `score_playback_bar.dart`
+  - `lib/core/storage/song_file_storage.dart`, `lib/features/library/data/song_repository.dart`
+  - `lib/l10n/app_en.arb`, `app_ko.arb`, 생성된 `app_localizations*.dart`
+  - `test/features/digital_score/**`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 끔/블록/박/분산 프로필만 `arrangement_profiles/<songId>.json`에 저장한다. MusicXML 음표는 바꾸지 않는다.
+  - 코드 심벌에서 베이스와 화음을 만들고, 슬래시 베이스와 장·단·7·sus 간격을 규칙으로 처리한다.
+  - 편집 화면은 원본을 보여 주고, 편집이 꺼져 있을 때만 Sequence를 펼친 뒤 반주를 올려 Grand Staff와 재생에 연결한다.
+  - 곡 삭제·복제 시 sidecar도 함께 정리하거나 복사한다.
+- 검증:
+  - `flutter test --no-pub -j 1`: 전체 244개 통과
+  - `flutter analyze --no-pub` 대상 digital_score 파일: 문제 없음
+  - 블록 멜로디 보존, 박 4회, 분산 8분음, Am/C, JSON·sidecar, 시트·재생 막대를 테스트했다.
+  - Android에서 반주 렌더·재생은 B-017로 남아 있다.
+- 남은 일:
+  - M8-09에서 이조·반주·Playback Sequence를 반영한 MusicXML·MIDI·PDF를 새 파일로 내보낸다.
+  - B-017 해결 뒤 Android에서 반주 저장·재생·재열기를 수동 검증한다.
+
+## 2026-09-19 22:10 KST — 음표·코드·조표 이조
+
+- 작업자: Cursor Grok 4.6
+- 목표: M8-07에서 반음 또는 목표 조로 음표·코드·조표를 이조하고 화면에 바로 반영한다
+- 관련 로드맵: M8-07 완료, M8-08 진행 시작
+- 변경 파일:
+  - `lib/features/digital_score/domain/score_transpose.dart`, `music_score.dart`, `score_editor.dart`
+  - `lib/features/digital_score/presentation/score_transpose_panel.dart`, `score_playback_bar.dart`, `digital_score_screen.dart`
+  - `lib/l10n/app_en.arb`, `app_ko.arb`, 생성된 `app_localizations*.dart`
+  - `test/features/digital_score/domain/score_transpose_test.dart`, `presentation/score_transpose_panel_test.dart`, `presentation/score_playback_bar_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - `TransposeScoreCommand`가 모든 파트의 음표 pitch, harmony root/bass, 마디 keyFifths를 같은 간격으로 옮긴다. 쉼표와 구간 표식은 그대로 둔다.
+  - 조표는 5도권으로 옮긴 뒤 -7~7에 맞추고, 음이름은 각 마디의 도착 조표를 따른다. 같은 반음에서 C♯과 D♭를 구분할 수 있다.
+  - 옥타브만 옮기면 조표는 유지한다. MIDI 0~127을 벗어나면 거부한다.
+  - 재생 막대에서 반음 스테퍼와 목표 조를 고르면 undo 가능한 편집본과 Grand Staff·재생 타임라인이 바로 바뀐다.
+- 검증:
+  - `flutter test --no-pub -j 1`: 전체 234개 통과
+  - `flutter analyze --no-pub lib/features/digital_score/domain/score_transpose.dart ...`: 문제 없음
+  - C→D, C→D♭, C♯ 표기, +12 옥타브, 마디별 전조, undo, 범위 거부, 시트·재생 막대를 테스트했다.
+  - Android에서 이조 후 렌더·재생은 B-017로 남아 있다.
+- 남은 일:
+  - M8-08에서 코드 진행 기반 기본 피아노 반주와 로컬 편곡 프로필을 구현한다.
+  - B-017 해결 뒤 Android에서 이조·저장·재열기·재생을 수동 검증한다.
+  - M8-09에서 이조·편곡·Playback Sequence를 반영한 전자악보 PDF를 내보낸다.
+
+## 2026-09-19 21:55 KST — Playback Sequence와 펼친 재생 타임라인
+
+- 작업자: Cursor Grok 4.6
+- 목표: M8-06에서 Section 반복 횟수와 순서를 원본과 분리해 저장하고 재생 때 펼친다
+- 관련 로드맵: M8-06 완료, M8-07 진행 시작
+- 변경 파일:
+  - `lib/features/digital_score/domain/playback_sequence.dart`, `music_score.dart`, `score_editor.dart`
+  - `lib/features/digital_score/data/digital_score_data.dart`, `digital_score_editor_service.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`, `playback_sequence_panel.dart`, `score_editor_panel.dart`, `score_playback_bar.dart`
+  - `lib/core/storage/song_file_storage.dart`, `lib/features/library/data/song_repository.dart`
+  - `lib/l10n/app_en.arb`, `app_ko.arb`, 생성된 `app_localizations*.dart`
+  - `test/features/digital_score/**`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 마디 rehearsal 표식에서 INTRO/VERSE/PRE/CHORUS/BRIDGE/OUTRO 구간을 찾고, 순서와 1~16회 반복만 `playback_sequences/<songId>.json`에 저장한다.
+  - 원본 MusicXML 마디는 복제하지 않는다. 편집 화면은 원본을 보여 주고, 편집이 꺼져 있을 때만 펼친 선형 악보를 alphaTab 재생과 Cursor에 올린다.
+  - 마디 설정에서 구간을 지정하고, 재생 막대의 연주 순서 시트에서 항목을 추가·위아래 이동·횟수 변경·삭제한다.
+  - 곡 삭제·복제 시 sidecar도 함께 정리하거나 복사한다.
+- 검증:
+  - `flutter test --no-pub -j 1`: 전체 223개 통과
+  - `flutter analyze --no-pub lib/features/digital_score ...`: 문제 없음
+  - `INTRO × 4 → VERSE × 2 → CHORUS × 1` 펼치기, 원본 불변, JSON 왕복, 알 수 없는 구간·256마디 초과 거부, sidecar 저장, 시트 편집을 테스트했다.
+  - Android에서 펼친 악보 재생·Cursor는 B-017로 남아 있다.
+- 남은 일:
+  - M8-07에서 목표 조 또는 반음 단위 이조를 음표·코드·조표에 적용한다.
+  - B-017 해결 뒤 Android에서 Sequence 저장·펼친 재생·재열기를 수동 검증한다.
+  - M8-09에서 펼친 선형 Grand Staff PDF 내보내기를 구현한다.
+
+## 2026-09-19 21:45 KST — 로컬 피아노 재생과 Bar/Beat Cursor
+
+- 작업자: Cursor Grok 4.6
+- 목표: M8-05에서 확정한 alphaTab MIDI 합성기 + SONiVOX SoundFont 경로를 구현하고 재생 위치와 Cursor를 하나의 타임라인으로 묶는다
+- 관련 로드맵: M8-05 완료, M8-06 진행 시작
+- 변경 파일:
+  - `assets/alphatab/index.html`, `assets/alphatab/vendor/soundfont/**`, `assets/alphatab/THIRD_PARTY_NOTICES.md`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `lib/features/digital_score/domain/score_playback.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`, `score_playback_bar.dart`, `digital_score_screen.dart`
+  - `pubspec.yaml`
+  - `test/features/digital_score/**`, `test/features/score_viewer/alphatab_bridge_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 기존 flutter_soloud 메트로놈/PDF 오디오와 별도 Dart 음원 타이머를 쓰지 않고, alphaTab 1.8.4 플레이어와 공식 SONiVOX `sonivox.sf2`를 로컬 자산으로 고정했다.
+  - 재생·일시정지·정지·탐색 명령을 bridge로 보내고, `playerReady`·위치·`playedBeatChanged`로 같은 타임라인의 마디/박을 받는다.
+  - alphaTab `enableCursor`로 실제 렌더 Bar/Beat Cursor를 표시하고, 전자악보 화면에 아이콘 재생 막대를 연결했다.
+  - Android WebView는 사용자 제스처 없이 미디어 재생을 허용하고 Flutter asset 호스트만 탐색한다. SoundFont·폰트·렌더러 하위 경로를 `pubspec.yaml`에 명시했다.
+- 검증:
+  - `flutter test --no-pub -j 1`: 전체 215개 통과
+  - `flutter analyze --no-pub lib/features/digital_score lib/core/score_engine/alphatab_bridge.dart`: 문제 없음
+  - SoundFont 존재·라이선스, 로컬 player 설정, 재생 bridge 이벤트, 재생 막대 활성/비활성·탐색 위젯 테스트를 확인했다.
+  - Android WebView 실제 청취와 Cursor 추적은 B-017로 남아 있다.
+- 남은 일:
+  - M8-06에서 Section 반복 횟수와 순서를 Playback Sequence로 저장하고 재생 타임라인에 펼친다.
+  - B-017 해결 뒤 Android에서 MusicXML 재생·Cursor·편집·저장·재열기를 수동 검증한다.
+  - M8-09에서 Playback Sequence·이조·반주 결과까지 펼친 전자악보 PDF 내보내기를 구현한다.
+
+## 2026-09-19 20:07 KST — 피아노 전자악보 작성·수정과 undo/redo
+
+- 작업자: Codex
+- 목표: M8-04 내부 Score Document를 Android 앱에서 직접 작성·수정하고 안전하게 저장
+- 관련 로드맵: M8-04 완료, M8-05 진행 시작
+- 변경 파일:
+  - `lib/features/digital_score/domain/music_score.dart`, `score_editor.dart`
+  - `lib/features/digital_score/data/digital_score_editor_service.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`, `piano_score_view.dart`, `score_editor_panel.dart`
+  - `lib/core/score_engine/alphatab_bridge.dart`, `lib/core/storage/song_file_storage.dart`
+  - `assets/alphatab/index.html`
+  - `lib/l10n/app_en.arb`, `app_ko.arb`, 생성된 `app_localizations*.dart`
+  - `test/features/digital_score/**`, `test/features/score_viewer/alphatab_bridge_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - Score Document의 parts·measures·events 컬렉션을 외부에서 바꿀 수 없는 불변 모델로 만들고 삽입·교체·삭제·조표/박자표·마디 추가/삭제 명령을 구현했다.
+  - 전체 Score Document 스냅샷을 최대 100단계 보관해 undo/redo, 저장 지점 dirty 판정과 분기 이력 제거를 처리한다.
+  - 같은 성부·위치의 음표를 MusicXML chord로 자동 정규화하고 같은 성부에서 쉼표가 다른 이벤트와 겹치는 입력, 마디 길이를 넘는 음표, 기존 음표가 들어가지 않는 짧은 박자표 변경을 거부한다.
+  - alphaTab note bounds의 `noteMouseDown`을 part·measure·staff·onset·MIDI 정보로 전달해 렌더링된 음표를 직접 선택한다. 쉼표와 코드 심벌을 포함한 마디 이벤트는 악보 아래 가로 목록에서도 선택한다.
+  - 음표/쉼표의 음높이·임시표·옥타브·음가·위치·보표·성부, 코드 심벌의 root·종류·위치, 마디의 조표·박자표를 입력·수정하는 시트를 추가했다.
+  - 편집 변경마다 현재 Score Document를 MusicXML로 다시 직렬화해 Grand Staff를 즉시 재조판하고, 저장 전 이탈 시 저장·버리기·취소를 선택한다.
+  - 가져온 앱 내부 `.musicxml`/`.mxl` 형식을 유지해 코덱 왕복 검증 후 같은 디렉터리 임시 파일과 백업으로 원자 교체한다. 실패하면 기존 파일을 복원하고 MusicXML/MXL 내보내기는 저장 여부와 관계없이 현재 편집본을 사용한다.
+- 검증:
+  - `flutter test --no-pub -j 1`: 전체 207개 통과
+  - `flutter analyze lib/features/digital_score lib/core/score_engine/alphatab_bridge.dart lib/core/storage/song_file_storage.dart`: 문제 없음
+  - `flutter analyze --no-pub`: 신규 오류·경고 없음. 기존 ScoreViewer 미사용 private method 4건과 Setlist `onReorder` deprecation 1건만 남음
+  - MusicXML/MXL 형식 유지 저장·재검증·빈 교체 거부, 불변 컬렉션·undo/redo·다중 파트 마디·동시음 chord·겹침 방어·렌더 음표 주소 매핑, 편집 패널·쉼표 시트를 자동 테스트했다.
+- 남은 일:
+  - M8-05에서 로컬 피아노 재생 타임라인과 실제 Bar/Beat Cursor를 구현한다.
+  - B-017 해결 뒤 Android WebView에서 음표 직접 선택, 편집·회전 재조판, MusicXML/MXL 저장·앱 재실행 후 재열기를 수동 검증한다.
+  - M8-09에서 Playback Sequence·이조·반주 결과까지 펼친 전자악보 PDF 내보내기를 구현한다.
+
+## 2026-09-19 19:41 KST — 오프라인 피아노 Grand Staff 렌더링
+
+- 작업자: Codex
+- 목표: M8-03 내부 Score Document를 Android 전자악보 화면에서 피아노 Grand Staff로 표시하고 화면 폭에 맞춰 재배치
+- 관련 로드맵: M8-03 완료, M8-04 진행 시작
+- 변경 파일:
+  - `assets/alphatab/index.html`, `assets/alphatab/THIRD_PARTY_NOTICES.md`, `assets/alphatab/vendor/**`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`, `piano_score_view.dart`
+  - `test/features/score_viewer/alphatab_bridge_test.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - `@coderline/alphatab` 1.8.4의 브라우저 SVG 렌더러와 Bravura WOFF2·WOFF·OTF를 앱 자산으로 고정하고 MPL-2.0·OFL-1.1 라이선스를 포함했다.
+  - 기존 `@latest` CDN 의존성과 드럼 트랙 필터를 제거했다. 렌더러는 `file://` Flutter asset만 사용하고 worker와 재생 사운드폰트는 M8-05 전까지 포함하지 않는다.
+  - 내부 Score Document를 정규화 MusicXML로 직렬화해 alphaTab에 전달하고, 한 피아노 파트의 두 staff뿐 아니라 파일의 모든 part를 렌더링한다.
+  - page layout·자동 bars-per-row와 480dp/840dp 폭 경계 스케일을 적용해 모바일·태블릿 크기 변경 때 악보 시스템을 다시 조판한다.
+  - 전자악보 화면의 메타데이터 요약을 실제 악보 우선 화면으로 바꾸고 WebView 준비·렌더 완료·오류·재시도 상태를 연결했다.
+  - JavaScript 숫자가 int 또는 double로 전달돼도 안전하게 읽고 렌더 시작·완료·viewport width 이벤트를 처리하도록 bridge를 보강했다.
+- 검증:
+  - headless Chrome `file://` runtime smoke: alphaTab 준비, MusicXML 수용, score surface 1개와 SVG 3개 생성 확인
+  - runtime 캡처에서 피아노 중괄호, 높은음자리표·낮은음자리표와 양손 Grand Staff 표시 확인 후 임시 프로필·캡처 삭제
+  - `flutter test`: 전체 193개 통과
+  - `flutter analyze`: 신규 오류·경고 없음. 기존 ScoreViewer 미사용 private method 4건과 Setlist `onReorder` deprecation 1건만 남음
+  - 로컬 자산·버전 고정·라이선스·CDN 부재·반응형 설정과 bridge 회귀 테스트 19개 통과
+- 남은 일:
+  - M8-04에서 선택 가능한 음표·쉼표·마디 편집 모델과 undo/redo 명령을 구현한다.
+  - Windows 개발자 모드 또는 심볼릭 링크 권한 환경에서 APK를 빌드하고 Android 실기기 MusicXML 열기·회전 재배치·스크롤을 확인한다(B-017).
+  - M8-05에서 사운드폰트 또는 MIDI 재생 방식을 결정하고 Bar/Beat Cursor를 실제 렌더 위치와 연결한다.
+
+## 2026-09-19 19:19 KST — MusicXML/MXL 내부 악보 모델과 로컬 가져오기·내보내기
+
+- 작업자: Codex
+- 목표: M8-02 피아노 전자악보의 내부 Score Document를 만들고 MusicXML/MXL 파일을 Library에서 가져와 다시 내보내는 Android 로컬 흐름 구현
+- 관련 로드맵: M8-02 완료, M8-03 진행 시작
+- 변경 파일:
+  - `lib/features/digital_score/**`
+  - `lib/features/library/domain/score_type.dart`
+  - `lib/features/library/data/song_repository.dart`
+  - `lib/features/library/presentation/import_score_sheet.dart`, `library_screen.dart`, `score_thumbnail.dart`
+  - `lib/core/storage/song_file_storage.dart`, `lib/app/router/app_router.dart`
+  - `test/features/digital_score/**`, `test/core/storage/song_file_storage_test.dart`, `test/features/library/song_repository_test.dart`
+  - `pubspec.yaml`, `pubspec.lock`
+  - `드럼 악보 앱 기획서 v4.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - MusicXML 4.0 `score-partwise`를 피아노 중심 내부 모델로 정규화했다. part·measure·attributes·staff·voice·onset·duration·pitch·rest·chord·grace·tie·tempo·rehearsal·harmony를 표현한다.
+  - MusicXML의 `backup`·`forward`를 보이스별 절대 onset으로 읽고, 내보낼 때 다시 유효한 다중 보이스 순서로 직렬화한다.
+  - `.musicxml`·`.xml`과 표준 `.mxl`을 읽고 쓴다. MXL은 첫 `mimetype` 엔트리를 비압축으로 두고 `META-INF/container.xml` rootfile을 사용한다.
+  - MXL 엔트리 수·압축 해제 크기·rootfile 크기를 제한하고 절대 경로·상위 경로·Windows drive 경로를 거부한다.
+  - Library `+`에서 PDF와 MusicXML을 선택하고, MusicXML의 곡명·작곡가·템포를 등록 폼에 자동 채우도록 연결했다.
+  - Songs의 `scoreType=musicxml`을 보존하고 메타데이터 수정·복제에서 PDF로 덮어쓰지 않도록 저장소를 수정했다.
+  - 공통 `/score/:songId` 진입점에서 PDF Viewer와 전자악보 화면을 유형별로 분기하고, 전자악보 화면에서 정규화 결과 확인과 `.musicxml`·`.mxl` 저장을 지원한다.
+  - Library 썸네일에서 전자악보를 XML 유형으로 구분한다.
+- 검증:
+  - `flutter test`: 전체 191개 통과
+  - MusicXML/MXL 코덱 6개, import 서비스 2개, 저장소·scoreType 회귀 테스트 통과
+  - `flutter analyze`: 이번 변경 오류·신규 경고 없음. 기존 ScoreViewer 미사용 private method 4건과 Setlist `onReorder` deprecation 1건만 남음
+  - 공식 W3C MusicXML 4.0의 score-partwise 구조, 다중 staff·voice의 backup/forward, MXL container·mimetype 규격을 구현 기준으로 확인
+- 남은 일:
+  - M8-03에서 내부 Score Document를 실제 피아노 Grand Staff로 렌더링하고 화면 너비별 시스템 재배치를 구현한다.
+  - Windows 개발자 모드 또는 심볼릭 링크 권한 환경에서 Android APK를 빌드하고 MusicXML 가져오기·열기·두 형식 저장 smoke를 수행한다(B-017).
+  - score-timewise·unpitched는 현재 피아노 범위 밖이며, 빔·슬러·아티큘레이션·tuplets의 정밀 표기는 M8-03~04 렌더링·편집 범위에서 확장한다.
+
+## 2026-09-19 18:45 KST — 재구성 전자악보 PDF 내보내기 요구사항 확정
+
+- 작업자: Codex
+- 목표: 이조·편곡·반복 순서를 적용해 재구성한 전자악보를 Android에서 PDF로 내보내는 요구사항을 MVP 8 완료 조건에 반영
+- 변경 파일:
+  - `드럼 악보 앱 기획서 v4.md`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 기존 PDF에 펜 주석을 합성하는 M8-01과 전자악보 음표 데이터를 다시 조판하는 M8-09를 별도 기능으로 구분했다.
+  - M8-09 PDF에 작성·수정 내용, 현재 조·이조, 반주·편곡 프로필과 Playback Sequence의 Section 순서·반복 횟수를 반영하도록 확정했다.
+  - `INTRO × 4 → VERSE × 2 → CHORUS × 1`은 반복 기호만 추가하지 않고 마디를 해당 순서대로 실제 펼친 선형 Grand Staff PDF로 생성하도록 완료 조건을 추가했다.
+  - Android 앱 내부 오프라인 처리, 새 파일 저장, 원본 Score Document 보존, 앱·일반 PDF Viewer 재열기와 다중 페이지 조판 검증을 명시했다. iOS는 계속 범위에서 제외한다.
+- 검증:
+  - 문서 전용 변경으로 코드 테스트는 재실행하지 않았다.
+  - ROADMAP 완료/전체 수는 72/101로 변동 없다.
+- 남은 일:
+  - M8-02 Score Document에서 Section 반복·이조·편곡 상태를 손실 없이 표현해 이후 M8-09 PDF 조판의 단일 입력으로 사용한다.
+
+## 2026-09-19 18:37 KST — 로컬 피아노 전자악보 기획 재개와 주석 PDF 내보내기
+
+- 작업자: Codex
+- 목표: 서버 기능은 후순위로 분리하고 앱 내부 피아노 전자악보 개발 계획을 확정한 뒤, PDF 펜 주석을 포함한 비파괴 내보내기를 첫 기능으로 구현
+- 변경 파일:
+  - `드럼 악보 앱 기획서 v4.md`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+  - `lib/features/score_viewer/data/annotated_pdf_exporter.dart`
+  - `lib/features/score_viewer/presentation/score_viewer_screen.dart`
+  - `lib/features/score_viewer/presentation/viewer_settings_sheet.dart`
+  - `lib/l10n/app_en.arb`, `lib/l10n/app_ko.arb`, `lib/l10n/app_localizations*.dart`
+  - `pubspec.yaml`, `pubspec.lock`
+  - `test/features/score_viewer/annotated_pdf_exporter_test.dart`
+  - `test/core/storage/song_file_storage_test.dart`
+  - `android/gradle.properties`, `lib/app/theme/app_theme.dart`
+- 완료 내용:
+  - MusicXML/MXL을 전자악보 교환 기준으로 두고 작성·수정·재생·Section 반복 순서·이조·기본 피아노 반주·MusicXML/MIDI/PDF/앱 프로젝트 내보내기를 MVP 8 로컬 우선 항목으로 재구성했다.
+  - PDF→MusicXML OMR, 스트링·오르간·브라스 고급 AI 편곡, 레퍼런스 영상 분석과 음색 조합 추천은 서버 기반 Future로 분리했다.
+  - Viewer 설정에 `주석 포함 PDF 내보내기`를 추가했다. 원본 PDF 페이지를 렌더링하고 저장된 정규화 펜 stroke를 합성해 새 PDF를 만들며, 원본 PDF와 편집 가능한 주석 JSON은 변경하지 않는다.
+  - 지우개는 주석 전용 투명 레이어에만 적용해 원본 악보 인쇄 내용을 지우지 않도록 했다. 긴 문서는 페이지별 최대 렌더 크기를 제한하고 파일 저장 중 중복 요청을 막는다.
+  - Flutter 3.44 자동 Android 마이그레이션 플래그와 Cupertino 전환 import를 반영하고, Windows에서도 기존 저장소 테스트가 경로 구분자에 의존하지 않도록 보정했다.
+- 검증:
+  - `flutter test --no-pub -j 1`: 전체 181개 통과
+  - `flutter analyze --no-pub`: 오류 없음. 기존 ScoreViewer 미사용 private method 경고 4건과 Flutter 3.44에서 표시된 Setlist `onReorder` deprecation 1건
+  - `dart format`: 변경 Dart 파일 형식 통과
+  - 주석 합성 테스트: 안전한 파일명, 색상 펜, 지우개가 원본을 보존하는 동작, 잘못된 BGRA 크기 거부 통과
+  - `flutter build apk --debug --no-pub`: Google Sign-In Kotlin 증분 산출물은 재생성했으나 `pdfium_flutter` CMake가 Windows 심볼릭 링크 권한 부족으로 `.lib/latest`를 만들지 못해 중단
+- 남은 일:
+  - B-017 환경에서 Android debug APK를 다시 빌드하고 실기기 파일 저장·재열기 smoke를 수행한다.
+  - M8-02에서 피아노 Grand Staff 최소 범위의 내부 Score Document 모델과 MusicXML/MXL 왕복 parser를 구현한다.
+
 ## 2026-08-31 11:01 KST — 메트로놈·주석 경계 검수와 Android 설치
 
 - 작업자: Codex

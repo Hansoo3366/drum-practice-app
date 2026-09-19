@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
+import 'package:page_a_diddle/features/library/domain/score_file_filter.dart';
 import 'package:page_a_diddle/features/storage/cloud/data/cloud_oauth_config.dart';
 import 'package:page_a_diddle/features/storage/cloud/data/cloud_token_store.dart';
 import 'package:page_a_diddle/features/storage/cloud/data/dropbox_service.dart';
@@ -37,9 +38,10 @@ class CloudStorageFacade {
     CloudKind kind, {
     String? folderId,
     String? folderPath,
+    ScoreFileFilter filter = ScoreFileFilter.pdf,
   }) => switch (kind) {
-    CloudKind.googleDrive => _google.list(folderId: folderId),
-    CloudKind.dropbox => _dropbox.list(folderPath: folderPath),
+    CloudKind.googleDrive => _google.list(folderId: folderId, filter: filter),
+    CloudKind.dropbox => _dropbox.list(folderPath: folderPath, filter: filter),
   };
 
   Future<PickedLocalFile> download(CloudKind kind, CloudEntry entry) =>

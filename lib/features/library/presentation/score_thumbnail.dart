@@ -7,6 +7,7 @@ import 'package:page_a_diddle/app/icons/app_icons.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
 import 'package:page_a_diddle/core/database/app_database.dart';
 import 'package:page_a_diddle/core/storage/song_file_storage.dart';
+import 'package:page_a_diddle/features/library/domain/score_type.dart';
 import 'package:pdfrx/pdfrx.dart';
 
 /// Renders the first PDF page as a compact cover, with type-icon fallback.
@@ -40,7 +41,8 @@ class _ScoreThumbnailState extends ConsumerState<ScoreThumbnail> {
   void didUpdateWidget(covariant ScoreThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.song.id != widget.song.id ||
-        oldWidget.song.sourcePath != widget.song.sourcePath) {
+        oldWidget.song.sourcePath != widget.song.sourcePath ||
+        oldWidget.song.scoreType != widget.song.scoreType) {
       _image?.dispose();
       _image = null;
       _failed = false;
@@ -56,7 +58,10 @@ class _ScoreThumbnailState extends ConsumerState<ScoreThumbnail> {
 
   Future<void> _load() async {
     final song = widget.song;
-    if (song.scoreType != 'pdf' || !song.offlineAvailable) {
+    if (ScoreType.fromKey(song.scoreType) != ScoreType.pdf) {
+      return;
+    }
+    if (!song.offlineAvailable) {
       if (mounted) setState(() => _failed = true);
       return;
     }
@@ -140,18 +145,21 @@ class _FallbackCover extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isMusicXml = ScoreType.fromKey(song.scoreType) == ScoreType.musicXml;
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Icon(
-          AppIcons.scorePdf,
+          isMusicXml ? Icons.music_note_rounded : AppIcons.scorePdf,
           size: 18,
-          color: failed ? AppColors.stageMuted : AppColors.accent,
+          color: failed && !isMusicXml
+              ? AppColors.stageMuted
+              : AppColors.accent,
         ),
         const SizedBox(height: 4),
-        const Text(
-          'PDF',
-          style: TextStyle(
+        Text(
+          isMusicXml ? 'XML' : 'PDF',
+          style: const TextStyle(
             color: Colors.white70,
             fontSize: 10,
             fontWeight: FontWeight.w700,

@@ -46,14 +46,17 @@ dependencies:
   path: ^1.9.1
   uuid: ^4.6.0
   pdfrx: ^2.2.24
+  pdf: ^3.12.0
   flutter_soloud: 3.5.4
   flutter_secure_storage: ^10.3.1
   shared_preferences: ^2.5.3
   xml: ^6.6.1
+  archive: ^4.0.9
   wakelock_plus: ^1.4.0
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.4.0
   webview_flutter: ^4.10.0
+  webview_flutter_android: ^4.12.0
   url_launcher: ^6.3.2
   package_info_plus: ^9.0.1
   flutter_svg: ^2.3.0
@@ -111,6 +114,9 @@ flutter:
     - assets/fonts/LICENSE-SUIT.txt
     - assets/fonts/LICENSE-JetBrainsMono.txt
     - assets/alphatab/
+    - assets/alphatab/vendor/
+    - assets/alphatab/vendor/font/
+    - assets/alphatab/vendor/soundfont/
     - assets/sounds/
     - assets/brands/
     - assets/icons/

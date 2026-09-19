@@ -3,17 +3,41 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
 import 'package:page_a_diddle/core/database/app_database.dart';
+import 'package:page_a_diddle/core/storage/storage_provider.dart';
+import 'package:page_a_diddle/features/digital_score/data/music_xml_import_service.dart';
 import 'package:page_a_diddle/features/library/data/song_repository.dart';
+import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
+import 'package:page_a_diddle/features/library/domain/score_file_filter.dart';
+import 'package:page_a_diddle/features/library/presentation/import_score_sheet.dart';
 import 'package:page_a_diddle/features/storage/data/remote_score_service.dart';
 import 'package:page_a_diddle/features/storage/data/webdav_connection.dart';
 import 'package:page_a_diddle/features/storage/domain/sync_status.dart';
 
+class WebDavBrowseArgs {
+  const WebDavBrowseArgs({
+    this.fileFilter = ScoreFileFilter.pdf,
+    this.importFolderId,
+    this.selectOnly = false,
+  });
+
+  final ScoreFileFilter fileFilter;
+  final String? importFolderId;
+  final bool selectOnly;
+}
+
 class WebDavBrowserScreen extends ConsumerStatefulWidget {
-  const WebDavBrowserScreen({this.selectOnly = false, super.key});
+  const WebDavBrowserScreen({
+    this.selectOnly = false,
+    this.fileFilter = ScoreFileFilter.pdf,
+    this.importFolderId,
+    super.key,
+  });
 
   /// In Jam, return the selected Library song instead of staying in the
   /// browser so the caller can bind it to a shared setlist entry.
   final bool selectOnly;
+  final ScoreFileFilter fileFilter;
+  final String? importFolderId;
 
   @override
   ConsumerState<WebDavBrowserScreen> createState() =>
@@ -74,12 +98,14 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
     try {
       final entries = await ref
           .read(webDavConnectionProvider)
-          .list(_credentials!, directory);
+          .list(_credentials!, directory, filter: widget.fileFilter);
       final repository = ref.read(songRepositoryProvider);
-      await repository.reconcileWebDavDirectory(
-        directory: directory,
-        entries: entries,
-      );
+      if (widget.fileFilter == ScoreFileFilter.pdf) {
+        await repository.reconcileWebDavDirectory(
+          directory: directory,
+          entries: entries,
+        );
+      }
       final songsByUri = await repository.getSongsByRemoteUris(
         entries.where((entry) => !entry.isDirectory).map((entry) => entry.uri),
       );
@@ -126,6 +152,52 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
     final rootSegments = _root!.pathSegments.where((part) => part.isNotEmpty);
     if (segments.length < rootSegments.length) return;
     _open(_directory!.replace(pathSegments: segments));
+  }
+
+  Future<void> _importMusicXml(WebDavEntry entry) async {
+    if (_registeringUri != null) return;
+    final credentials = _credentials;
+    if (credentials == null) return;
+    setState(() => _registeringUri = entry.uri.toString());
+    try {
+      final result = await ref
+          .read(webDavConnectionProvider)
+          .download(credentials, entry.uri, filter: ScoreFileFilter.musicXml);
+      if (!mounted) return;
+      final file = PickedLocalFile(name: entry.name, bytes: result.bytes);
+      final score = await ref.read(musicXmlImportServiceProvider).inspect(file);
+      if (!mounted) return;
+      final tempo = score.tempoBpm?.round();
+      final imported = await showImportScoreSheet(
+        context,
+        file: file,
+        sourceProvider: StorageProvider.webDav,
+        folderId: widget.importFolderId,
+        kind: ScoreImportKind.musicXml,
+        initialTitle: score.title,
+        initialArtist: score.composer,
+        initialTempo: tempo != null && tempo >= 40 && tempo <= 240
+            ? tempo
+            : null,
+      );
+      if (imported != null && mounted) {
+        Navigator.of(context).pop(imported);
+      }
+    } on FormatException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } on Object {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(context.l10n.importFailed)));
+      }
+    } finally {
+      if (mounted) setState(() => _registeringUri = null);
+    }
   }
 
   Future<void> _register(WebDavEntry entry) async {
@@ -291,9 +363,14 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
                               entry: entry,
                               status: status,
                               registered: song != null,
+                              musicXml:
+                                  widget.fileFilter == ScoreFileFilter.musicXml,
                               loading: _registeringUri == entry.uri.toString(),
                               onTap: entry.isDirectory
                                   ? () => _open(entry.uri)
+                                  : widget.fileFilter ==
+                                        ScoreFileFilter.musicXml
+                                  ? () => _importMusicXml(entry)
                                   : song == null
                                   ? () => _register(entry)
                                   : widget.selectOnly
@@ -318,12 +395,14 @@ class _EntryCard extends StatelessWidget {
     required this.registered,
     required this.loading,
     required this.onTap,
+    this.musicXml = false,
     this.status,
   });
 
   final WebDavEntry entry;
   final SyncStatus? status;
   final bool registered;
+  final bool musicXml;
   final bool loading;
   final VoidCallback? onTap;
 
@@ -354,6 +433,8 @@ class _EntryCard extends StatelessWidget {
                 child: Icon(
                   entry.isDirectory
                       ? Icons.folder_rounded
+                      : musicXml
+                      ? Icons.music_note_rounded
                       : Icons.picture_as_pdf_outlined,
                   size: 20,
                   color: entry.isDirectory

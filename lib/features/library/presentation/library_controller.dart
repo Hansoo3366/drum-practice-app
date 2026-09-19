@@ -94,8 +94,7 @@ final librarySongsProvider = StreamProvider<List<Song>>((ref) {
       .watchSongs(
         query: query,
         filter: filter,
-        folderId: folderKey == null ||
-                folderKey == unfiledFolderFilterKey
+        folderId: folderKey == null || folderKey == unfiledFolderFilterKey
             ? null
             : folderKey,
         unfiledOnly: false,

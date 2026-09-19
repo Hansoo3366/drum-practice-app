@@ -484,6 +484,9 @@ class AppLocalizationsKo extends AppLocalizations {
   String get create => '만들기';
 
   @override
+  String get createScore => '악보 만들기';
+
+  @override
   String get createFailed => '만들지 못했어요';
 
   @override
@@ -1471,4 +1474,161 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get sectionOutro => '아웃트로';
+
+  @override
+  String get exportAnnotatedPdf => '주석 포함 PDF 내보내기';
+
+  @override
+  String get exportAnnotatedPdfSubtitle => '원본은 그대로 두고 새 PDF로 저장';
+
+  @override
+  String get exportingAnnotatedPdf => '주석을 PDF에 합치는 중…';
+
+  @override
+  String get annotatedPdfExported => '주석 포함 PDF를 저장했어요';
+
+  @override
+  String get annotatedPdfExportFailed => 'PDF를 내보내지 못했어요';
+
+  @override
+  String get scoreEdit => '악보 편집';
+
+  @override
+  String get note => '음표';
+
+  @override
+  String get rest => '쉼표';
+
+  @override
+  String get chordSymbol => '코드';
+
+  @override
+  String get addNote => '음표 추가';
+
+  @override
+  String get addRest => '쉼표 추가';
+
+  @override
+  String get addChordSymbol => '코드 추가';
+
+  @override
+  String get editSelected => '선택 항목 수정';
+
+  @override
+  String get deleteSelectedEvent => '선택 항목 삭제';
+
+  @override
+  String get measureSettings => '마디 설정';
+
+  @override
+  String get insertMeasureAfter => '다음 마디 추가';
+
+  @override
+  String get redo => '다시 실행';
+
+  @override
+  String get pitch => '음높이';
+
+  @override
+  String get octave => '옥타브';
+
+  @override
+  String get noteValue => '음가';
+
+  @override
+  String get staff => '보표';
+
+  @override
+  String get voice => '성부';
+
+  @override
+  String get position => '위치';
+
+  @override
+  String get keySignature => '조표';
+
+  @override
+  String get sourceKey => '원곡';
+
+  @override
+  String get part => '파트';
+
+  @override
+  String get selectScoreEvent => '오선을 누르세요';
+
+  @override
+  String get unsavedChangesTitle => '저장하지 않은 악보';
+
+  @override
+  String get unsavedChangesBody => '나가기 전에 수정한 악보를 저장할까요?';
+
+  @override
+  String get discardChanges => '버리기';
+
+  @override
+  String get scoreSaved => '악보를 저장했어요';
+
+  @override
+  String get scoreSection => '구간';
+
+  @override
+  String get playbackSequence => '연주 순서';
+
+  @override
+  String get playbackSequenceHelp =>
+      '오선에서 마디를 누르고 벌스·코러스를 붙입니다. 아래에서 그 구간을 몇 번 반복할지 정합니다.';
+
+  @override
+  String get moveMeasureEarlier => '마디 앞으로';
+
+  @override
+  String get moveMeasureLater => '마디 뒤로';
+
+  @override
+  String get noSections => '먼저 이 마디에 구간을 붙이세요';
+
+  @override
+  String get noHarmony => '코드 없음';
+
+  @override
+  String get repeatDown => '횟수 줄이기';
+
+  @override
+  String get repeatUp => '횟수 늘리기';
+
+  @override
+  String get scoreTranspose => '조옮김';
+
+  @override
+  String get semitone => '반음';
+
+  @override
+  String get semitoneDown => '반음 내리기';
+
+  @override
+  String get semitoneUp => '반음 올리기';
+
+  @override
+  String get scoreArrangement => '반주';
+
+  @override
+  String get arrangementOff => '끔';
+
+  @override
+  String get arrangementBlock => '코드';
+
+  @override
+  String get arrangementPulse => '박마다';
+
+  @override
+  String get arrangementBroken => '하나씩';
+
+  @override
+  String get scoreProject => '프로젝트';
+
+  @override
+  String get scoreTools => '도구';
+
+  @override
+  String get playFailed => '재생할 수 없습니다';
 }

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/router/app_transitions.dart';
 import 'package:page_a_diddle/app/widgets/app_shell.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/score_entry_screen.dart';
 import 'package:page_a_diddle/features/home/presentation/home_screen.dart';
 import 'package:page_a_diddle/features/jam/presentation/jam_hub_screen.dart';
 import 'package:page_a_diddle/features/jam/presentation/jam_session_screen.dart';
@@ -12,7 +13,6 @@ import 'package:page_a_diddle/features/library/presentation/library_screen.dart'
 import 'package:page_a_diddle/features/onboarding/data/onboarding_controller.dart';
 import 'package:page_a_diddle/features/onboarding/presentation/boot_screen.dart';
 import 'package:page_a_diddle/features/onboarding/presentation/onboarding_screen.dart';
-import 'package:page_a_diddle/features/score_viewer/presentation/score_viewer_screen.dart';
 import 'package:page_a_diddle/features/setlists/presentation/setlist_detail_screen.dart';
 import 'package:page_a_diddle/features/setlists/presentation/setlists_screen.dart';
 import 'package:page_a_diddle/features/settings/presentation/legal_document_screen.dart';
@@ -163,10 +163,20 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                       GoRoute(
                         path: 'files',
                         parentNavigatorKey: _rootNavigatorKey,
-                        pageBuilder: (context, state) => sharedAxisPage(
-                          key: state.pageKey,
-                          child: const WebDavBrowserScreen(),
-                        ),
+                        pageBuilder: (context, state) {
+                          final extra = state.extra;
+                          final args = extra is WebDavBrowseArgs
+                              ? extra
+                              : const WebDavBrowseArgs();
+                          return sharedAxisPage(
+                            key: state.pageKey,
+                            child: WebDavBrowserScreen(
+                              selectOnly: args.selectOnly,
+                              fileFilter: args.fileFilter,
+                              importFolderId: args.importFolderId,
+                            ),
+                          );
+                        },
                       ),
                     ],
                   ),
@@ -238,7 +248,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           // by its resolved location so setlist replacement reloads the score.
           key: ValueKey<String>(state.uri.toString()),
           duration: const Duration(milliseconds: 340),
-          child: ScoreViewerScreen(
+          child: ScoreEntryScreen(
             songId: state.pathParameters['songId']!,
             setlistId: state.uri.queryParameters['setlistId'],
             startJam: state.uri.queryParameters['startJam'] == 'true',

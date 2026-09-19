@@ -2,101 +2,720 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Page-a-Diddle Native Score</title>
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+  >
+  <title>Page-a-Diddle Piano Score</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body {
-      width: 100%; height: 100%;
-      background: #1a1a2e;
+    :root {
+      color-scheme: light;
+      --canvas: #ffffff;
+      --ink: #000000;
+      --accent: #ff4800;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      color: var(--ink);
       overflow: hidden;
+      overscroll-behavior: none;
       -webkit-user-select: none;
       user-select: none;
-      touch-action: pan-y;
+      touch-action: none;
     }
+
+    #alphaTab-viewport {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #ffffff;
+      touch-action: none;
+    }
+
+    #alphaTab-frame {
+      position: relative;
+      width: 794px;
+      background: #ffffff;
+      transform-origin: top left;
+    }
+
     #alphaTab-container {
-      width: 100%; height: 100%;
-      overflow: auto;
-      -webkit-overflow-scrolling: touch;
+      position: relative;
+      width: 794px;
+      padding: 16px 24px 32px;
+      background: #ffffff;
     }
-    .at-surface svg { display: block; max-width: 100%; }
-    .at-cursor-bar {
-      background: rgba(66, 133, 244, 0.15);
+
+    .pad-measure-highlight {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(255, 72, 0, 0.16);
+      border: 3px solid #ff4800;
+      border-radius: 8px;
+      box-shadow: 0 8px 20px rgba(255, 72, 0, 0.28);
+      z-index: 4;
     }
-    .at-cursor-beat {
-      background: rgba(66, 133, 244, 0.7);
-      width: 3px;
+
+    .pad-measure-key,
+    .pad-measure-section {
+      position: absolute;
+      pointer-events: none;
+      z-index: 2;
+      padding: 1px 4px;
+      color: #5d5d5d;
+      font: 700 11px/16px ui-monospace, monospace;
     }
+
+    .pad-measure-section {
+      color: #000000;
+      background: #ffffff;
+      border: 1px solid #000000;
+      border-radius: 2px;
+    }
+
+    .pad-measure-highlight[data-measure]::after {
+      content: attr(data-measure);
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      min-width: 18px;
+      padding: 1px 5px;
+      border-radius: 2px;
+      background: #ff4800;
+      color: #fff;
+      font: 700 11px/16px ui-monospace, monospace;
+    }
+
+    .at-surface {
+      position: relative;
+      margin: 0 auto;
+    }
+
+    .at-surface svg {
+      display: block;
+    }
+
     .at-highlight {
-      fill: #4285f4;
+      fill: var(--accent);
+    }
+
+    .at-cursor-bar {
+      background: rgba(255, 72, 0, 0.08);
+      pointer-events: none;
+    }
+
+    .at-cursor-beat {
+      width: 3px;
+      background: var(--accent);
+      pointer-events: none;
+    }
+
+    .at-selection div {
+      background: rgba(255, 72, 0, 0.08);
+    }
+
+    .at-highlight * {
+      fill: var(--accent) !important;
+      stroke: var(--accent) !important;
+    }
+
+    body.playback-off .at-cursor-bar,
+    body.playback-off .at-cursor-beat,
+    body.playback-off .at-highlight,
+    body:not(.playback-playing) .at-cursor-bar,
+    body:not(.playback-playing) .at-cursor-beat,
+    body:not(.playback-playing) .at-highlight {
+      display: none !important;
     }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/alphaTab.min.js"></script>
+  <script src="./vendor/alphaTab.min.js"></script>
 </head>
-<body>
-  <div id="alphaTab-container"></div>
+<body class="playback-off">
+  <div id="alphaTab-viewport">
+    <main id="alphaTab-frame" aria-label="피아노 악보">
+      <div id="alphaTab-container"></div>
+    </main>
+  </div>
   <script>
-    (function() {
+    (function () {
       'use strict';
 
       var api = null;
-      var container = document.getElementById('alphaTab-container');
-      var drumOnly = true;
       var lastScore = null;
+      var currentScale = null;
+      var lastPositionPostedAt = 0;
+      var pendingPlay = false;
+      var pointer = { x: 0, y: 0 };
+      var ignoreNextBeat = false;
+      var dragNote = null;
+      var highlightedMeasure = -1;
+      var ignoreNextMeasureClick = false;
+      var measureKeyFifthsList = [];
+      var measureSectionLabels = [];
+      var pageFit = 1;
+      var userZoom = 1;
+      var panX = 0;
+      var panY = 0;
+      var viewportWidthPx = 0;
+      var viewportHeightPx = 0;
+      var oneFingerPan = true;
+      var A4_WIDTH = 794;
+      var MIN_ZOOM = 1;
+      var MAX_ZOOM = 4;
+      var viewport = document.getElementById('alphaTab-viewport');
+      var frame = document.getElementById('alphaTab-frame');
+      var container = document.getElementById('alphaTab-container');
+      var activePointers = {};
+      var viewGesture = null;
+      var KEY_TONICS = {
+        '-7': 'C♭', '-6': 'G♭', '-5': 'D♭', '-4': 'A♭', '-3': 'E♭',
+        '-2': 'B♭', '-1': 'F', '0': 'C', '1': 'G', '2': 'D', '3': 'A',
+        '4': 'E', '5': 'B', '6': 'F♯', '7': 'C♯'
+      };
+
+      function viewSize() {
+        return {
+          w: viewportWidthPx || (viewport && viewport.clientWidth) || window.innerWidth,
+          h: viewportHeightPx || (viewport && viewport.clientHeight) || window.innerHeight
+        };
+      }
+
+      function resetView() {
+        userZoom = 1;
+        panX = 0;
+        panY = 0;
+        activePointers = {};
+        viewGesture = null;
+        applyPageFit();
+      }
+
+      function clampPan() {
+        var view = viewSize();
+        var rawH = (container && (container.scrollHeight || container.offsetHeight)) || 0;
+        var scale = pageFit * userZoom;
+        var contentW = A4_WIDTH * scale;
+        var contentH = rawH * scale;
+        if (!(contentW > view.w)) {
+          panX = 0;
+        } else {
+          panX = Math.max(Math.min(0, view.w - contentW), Math.min(0, panX));
+        }
+        if (!(contentH > view.h)) {
+          panY = 0;
+        } else {
+          panY = Math.max(Math.min(0, view.h - contentH), Math.min(0, panY));
+        }
+      }
+
+      function applyPageFit() {
+        var view = viewSize();
+        pageFit = view.w > 0 ? view.w / A4_WIDTH : 1;
+        if (!Number.isFinite(pageFit) || pageFit <= 0) pageFit = 1;
+        userZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, userZoom));
+        clampPan();
+        if (container) container.style.width = A4_WIDTH + 'px';
+        if (frame) {
+          frame.style.width = A4_WIDTH + 'px';
+          frame.style.transformOrigin = 'top left';
+          frame.style.transform =
+            'translate(' + panX + 'px,' + panY + 'px) scale(' + (pageFit * userZoom) + ')';
+        }
+        return pageFit;
+      }
+
+      function postToFlutter(type, data) {
+        if (!window.FlutterBridge || !window.FlutterBridge.postMessage) return;
+        window.FlutterBridge.postMessage(JSON.stringify({
+          type: type,
+          data: data || {}
+        }));
+      }
+
+      function errorMessage(error) {
+        if (!error) return '악보를 표시할 수 없습니다.';
+        return error.message || error.toString();
+      }
+
+      function updateScale(width, height) {
+        if (Number(width) > 0) viewportWidthPx = Number(width);
+        if (Number(height) > 0) viewportHeightPx = Number(height);
+        applyPageFit();
+        return true;
+      }
+
+      function pointerList() {
+        return Object.keys(activePointers).map(function (id) {
+          return activePointers[id];
+        });
+      }
+
+      function shouldCapturePointers(count) {
+        return count >= 2 || (count === 1 && oneFingerPan);
+      }
+
+      function startPinchGesture() {
+        var pts = pointerList();
+        if (pts.length < 2) return null;
+        var dx = pts[0].x - pts[1].x;
+        var dy = pts[0].y - pts[1].y;
+        return {
+          type: 'pinch',
+          dist: Math.hypot(dx, dy) || 1,
+          zoom: userZoom,
+          panX: panX,
+          panY: panY,
+          midX: (pts[0].x + pts[1].x) / 2,
+          midY: (pts[0].y + pts[1].y) / 2
+        };
+      }
+
+      function applyPinchGesture() {
+        if (!viewGesture || viewGesture.type !== 'pinch') return;
+        var pts = pointerList();
+        if (pts.length < 2) return;
+        var dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+        var midX = (pts[0].x + pts[1].x) / 2;
+        var midY = (pts[0].y + pts[1].y) / 2;
+        var nextZoom = Math.max(
+          MIN_ZOOM,
+          Math.min(MAX_ZOOM, viewGesture.zoom * (dist / viewGesture.dist))
+        );
+        var oldScale = pageFit * viewGesture.zoom;
+        var newScale = pageFit * nextZoom;
+        userZoom = nextZoom;
+        if (oldScale > 0) {
+          panX = midX - (viewGesture.midX - viewGesture.panX) * (newScale / oldScale);
+          panY = midY - (viewGesture.midY - viewGesture.panY) * (newScale / oldScale);
+        }
+        applyPageFit();
+      }
+
+      function handleViewPointer(phase, id, x, y) {
+        if (phase === 'down') {
+          activePointers[id] = { x: x, y: y };
+          if (pointerList().length >= 2) {
+            viewGesture = startPinchGesture();
+          } else if (oneFingerPan) {
+            viewGesture = { type: 'pan', x: x, y: y, panX: panX, panY: panY };
+          } else {
+            viewGesture = null;
+          }
+          return;
+        }
+        if (phase === 'move') {
+          if (!activePointers[id]) return;
+          activePointers[id] = { x: x, y: y };
+          if (pointerList().length >= 2) {
+            if (!viewGesture || viewGesture.type !== 'pinch') {
+              viewGesture = startPinchGesture();
+            }
+            applyPinchGesture();
+          } else if (viewGesture && viewGesture.type === 'pan' && oneFingerPan) {
+            panX = viewGesture.panX + (x - viewGesture.x);
+            panY = viewGesture.panY + (y - viewGesture.y);
+            applyPageFit();
+          }
+          return;
+        }
+        delete activePointers[id];
+        if (pointerList().length >= 2) {
+          viewGesture = startPinchGesture();
+        } else if (pointerList().length === 1 && oneFingerPan) {
+          var leftover = pointerList()[0];
+          viewGesture = {
+            type: 'pan',
+            x: leftover.x,
+            y: leftover.y,
+            panX: panX,
+            panY: panY
+          };
+        } else {
+          viewGesture = null;
+        }
+      }
+
+      function installViewGestures() {
+        if (!viewport || viewport.dataset.padViewGestures === '1') return;
+        viewport.dataset.padViewGestures = '1';
+        function localTouch(touch) {
+          var rect = viewport.getBoundingClientRect();
+          return {
+            x: touch.clientX - rect.left,
+            y: touch.clientY - rect.top
+          };
+        }
+        viewport.addEventListener('touchstart', function (event) {
+          for (var i = 0; i < event.changedTouches.length; i++) {
+            var touch = event.changedTouches[i];
+            var local = localTouch(touch);
+            handleViewPointer('down', touch.identifier, local.x, local.y);
+          }
+          if (shouldCapturePointers(event.touches.length)) event.preventDefault();
+        }, { passive: false });
+        viewport.addEventListener('touchmove', function (event) {
+          for (var i = 0; i < event.changedTouches.length; i++) {
+            var touch = event.changedTouches[i];
+            var local = localTouch(touch);
+            handleViewPointer('move', touch.identifier, local.x, local.y);
+          }
+          if (shouldCapturePointers(event.touches.length)) event.preventDefault();
+        }, { passive: false });
+        function endTouches(event) {
+          for (var i = 0; i < event.changedTouches.length; i++) {
+            handleViewPointer('up', event.changedTouches[i].identifier, 0, 0);
+          }
+        }
+        viewport.addEventListener('touchend', endTouches, { passive: true });
+        viewport.addEventListener('touchcancel', endTouches, { passive: true });
+      }
+
+      function postScoreSystems() {
+        var lookup = boundsLookup();
+        var systems = [];
+        if (lookup && lookup.staffSystems) {
+          for (var s = 0; s < lookup.staffSystems.length; s++) {
+            var bars = lookup.staffSystems[s].bars || [];
+            if (!bars.length) continue;
+            systems.push({
+              start: bars[0].index,
+              end: bars[bars.length - 1].index
+            });
+          }
+        }
+        postToFlutter('scoreSystems', { systems: systems });
+      }
+
+      function boxSize(box) {
+        if (!box) return null;
+        var w = Number(box.w != null ? box.w : box.width);
+        var h = Number(box.h != null ? box.h : box.height);
+        var x = Number(box.x);
+        var y = Number(box.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !(w > 0) || !(h > 0)) {
+          return null;
+        }
+        return { x: x, y: y, w: w, h: h };
+      }
+
+      function masterBarBounds(measureIndex) {
+        var lookup = boundsLookup();
+        if (!lookup) return null;
+        if (typeof lookup.findMasterBarByIndex === 'function') {
+          return lookup.findMasterBarByIndex(measureIndex) || null;
+        }
+        if (typeof lookup.getMasterBarBounds === 'function') {
+          return lookup.getMasterBarBounds(measureIndex) || null;
+        }
+        return null;
+      }
+
+      function measureBoxes(measureIndex) {
+        var master = masterBarBounds(measureIndex);
+        if (!master) return [];
+        var boxes = [];
+        if (master.bars && master.bars.length) {
+          for (var i = 0; i < master.bars.length; i++) {
+            var barBox = boxSize(
+              master.bars[i].visualBounds || master.bars[i].realBounds
+            );
+            if (barBox) boxes.push(barBox);
+          }
+        }
+        if (!boxes.length) {
+          var box = boxSize(master.visualBounds || master.realBounds);
+          if (box) boxes.push(box);
+        }
+        return boxes;
+      }
+
+      function measureUnion(measureIndex) {
+        var boxes = measureBoxes(measureIndex);
+        if (!boxes.length) return null;
+        var x1 = boxes[0].x;
+        var y1 = boxes[0].y;
+        var x2 = boxes[0].x + boxes[0].w;
+        var y2 = boxes[0].y + boxes[0].h;
+        for (var i = 1; i < boxes.length; i++) {
+          x1 = Math.min(x1, boxes[i].x);
+          y1 = Math.min(y1, boxes[i].y);
+          x2 = Math.max(x2, boxes[i].x + boxes[i].w);
+          y2 = Math.max(y2, boxes[i].y + boxes[i].h);
+        }
+        var pad = 8;
+        return {
+          x: x1 - pad,
+          y: y1 - pad,
+          w: x2 - x1 + pad * 2,
+          h: y2 - y1 + pad * 2
+        };
+      }
+
+      function measureAtPoint(clientX, clientY) {
+        var lookup = boundsLookup();
+        var point = toLocalPoint(clientX, clientY);
+        if (lookup) {
+          var beat = null;
+          if (typeof lookup.getBeatAtPos === 'function') {
+            beat = lookup.getBeatAtPos(point.x, point.y);
+          } else if (typeof lookup.findBeatAtPos === 'function') {
+            beat = lookup.findBeatAtPos(point.x, point.y);
+          }
+          if (beat && beat.voice && beat.voice.bar) {
+            return beat.voice.bar.index;
+          }
+        }
+        var count = lastScore && lastScore.masterBars
+          ? lastScore.masterBars.length
+          : 0;
+        for (var i = 0; i < count; i++) {
+          var boxes = measureBoxes(i);
+          for (var j = 0; j < boxes.length; j++) {
+            var box = boxes[j];
+            if (point.x >= box.x && point.x <= box.x + box.w &&
+                point.y >= box.y && point.y <= box.y + box.h) {
+              return i;
+            }
+          }
+        }
+        return null;
+      }
+
+      function systemBox(measureIndex) {
+        var lookup = boundsLookup();
+        if (lookup && lookup.staffSystems && lookup.staffSystems.length) {
+          for (var s = 0; s < lookup.staffSystems.length; s++) {
+            var system = lookup.staffSystems[s];
+            var bars = system.bars || [];
+            for (var i = 0; i < bars.length; i++) {
+              if (bars[i].index === measureIndex) {
+                return boxSize(system.visualBounds || system.realBounds);
+              }
+            }
+          }
+        }
+        var master = masterBarBounds(measureIndex);
+        if (master) {
+          return boxSize(
+            master.lineAlignedBounds || master.visualBounds || master.realBounds
+          );
+        }
+        return measureUnion(measureIndex);
+      }
+
+      function highlightMeasure(measureIndex, attempt) {
+        highlightedMeasure = Number(measureIndex);
+        var old = container.querySelectorAll('.pad-measure-highlight');
+        for (var i = 0; i < old.length; i++) old[i].remove();
+        if (!Number.isFinite(highlightedMeasure) || highlightedMeasure < 0) {
+          return false;
+        }
+        var box = systemBox(highlightedMeasure);
+        if (!box) {
+          if ((attempt || 0) < 10) {
+            window.setTimeout(function () {
+              highlightMeasure(measureIndex, (attempt || 0) + 1);
+            }, 40);
+          }
+          return false;
+        }
+        var surface = container.querySelector('.at-surface') || container;
+        var overlay = document.createElement('div');
+        overlay.className = 'pad-measure-highlight';
+        overlay.setAttribute('aria-hidden', 'true');
+        overlay.setAttribute('data-measure', String(highlightedMeasure + 1));
+        overlay.style.left = box.x + 'px';
+        overlay.style.top = box.y + 'px';
+        overlay.style.width = box.w + 'px';
+        overlay.style.height = box.h + 'px';
+        surface.appendChild(overlay);
+        return true;
+      }
+
+      function drawMeasureKeys() {
+        var old = container.querySelectorAll('.pad-measure-key');
+        for (var i = 0; i < old.length; i++) old[i].remove();
+        if (!measureKeyFifthsList.length) return;
+        var surface = container.querySelector('.at-surface') || container;
+        for (var i = 0; i < measureKeyFifthsList.length; i++) {
+          var boxes = measureBoxes(i);
+          if (!boxes.length) continue;
+          var label = KEY_TONICS[String(measureKeyFifthsList[i])] || '';
+          if (!label) continue;
+          var overlay = document.createElement('div');
+          overlay.className = 'pad-measure-key';
+          overlay.setAttribute('aria-hidden', 'true');
+          overlay.textContent = label;
+          overlay.style.left = Math.max(0, boxes[0].x + boxes[0].w - 22) + 'px';
+          overlay.style.top = Math.max(0, boxes[0].y - 16) + 'px';
+          surface.appendChild(overlay);
+        }
+      }
+
+      function hideNativeRehearsals() {
+        var texts = container.querySelectorAll('text');
+        for (var i = 0; i < texts.length; i++) {
+          var value = (texts[i].textContent || '').trim();
+          if (!/^(INTRO|VERSE|PRE|CHORUS|BRIDGE|OUTRO)$/.test(value)) continue;
+          texts[i].style.display = 'none';
+          var sibling = texts[i].previousElementSibling;
+          if (sibling && sibling.tagName === 'rect') sibling.style.display = 'none';
+          sibling = texts[i].nextElementSibling;
+          if (sibling && sibling.tagName === 'rect') sibling.style.display = 'none';
+        }
+      }
+
+      function sectionMarkX(measureIndex, box) {
+        var lookup = boundsLookup();
+        if (lookup && lookup.staffSystems) {
+          for (var s = 0; s < lookup.staffSystems.length; s++) {
+            var bars = lookup.staffSystems[s].bars || [];
+            if (bars.length && bars[0].index === measureIndex) {
+              return box.x + 72;
+            }
+          }
+        }
+        return box.x + 4;
+      }
+
+      function drawMeasureSections() {
+        var old = container.querySelectorAll('.pad-measure-section');
+        for (var i = 0; i < old.length; i++) old[i].remove();
+        hideNativeRehearsals();
+        if (!measureSectionLabels.length) return;
+        var surface = container.querySelector('.at-surface') || container;
+        for (var i = 0; i < measureSectionLabels.length; i++) {
+          var boxes = measureBoxes(i);
+          if (!boxes.length) continue;
+          var label = measureSectionLabels[i];
+          if (!label) continue;
+          var overlay = document.createElement('div');
+          overlay.className = 'pad-measure-section';
+          overlay.setAttribute('aria-hidden', 'true');
+          overlay.textContent = label;
+          overlay.style.left = sectionMarkX(i, boxes[0]) + 'px';
+          overlay.style.top = Math.max(0, boxes[0].y - 20) + 'px';
+          surface.appendChild(overlay);
+        }
+      }
+
+      function notifyRendered() {
+        if (!lastScore) return;
+        window.requestAnimationFrame(function () {
+          applyPageFit();
+          postScoreSystems();
+          postToFlutter('renderFinished', {
+            contentHeight: Math.ceil((frame && frame.offsetHeight) || document.documentElement.scrollHeight),
+            scale: pageFit
+          });
+          postPlaybackTimeline(0);
+          if (highlightedMeasure >= 0) highlightMeasure(highlightedMeasure);
+          drawMeasureKeys();
+          drawMeasureSections();
+        });
+      }
+
+      function playbackDurationMs() {
+        var endTime = Number(api && api.endTime) || 0;
+        if (endTime > 0) return endTime;
+        var endTick = Number(api && api.endTick) || 0;
+        var tempo = 120;
+        try {
+          if (api.score && api.score.tempo) {
+            tempo = Number(api.score.tempo) || 120;
+          }
+        } catch (_) {}
+        if (endTick > 0) return (endTick / 960) * (60000 / tempo);
+        return 0;
+      }
+
+      function postPlaybackTimeline(attempt) {
+        attempt = attempt || 0;
+        if (!api) return;
+        var durationMs = playbackDurationMs();
+        var endTick = Number(api.endTick) || 0;
+        if (durationMs > 0 || attempt >= 30) {
+          postToFlutter('playerReady', {
+            durationMs: durationMs,
+            endTick: endTick,
+            readyForPlayback: !!api.isReadyForPlayback
+          });
+          if (pendingPlay && api.isReadyForPlayback) {
+            pendingPlay = false;
+            unlockAudio();
+            try { api.play(); } catch (_) {}
+          }
+        }
+        if ((durationMs <= 0 || !api.isReadyForPlayback) && attempt < 30) {
+          setTimeout(function () {
+            postPlaybackTimeline(attempt + 1);
+          }, 200);
+        }
+      }
+
+      function installInlineSynthWorker(source) {
+        var workerUrl = URL.createObjectURL(
+          new Blob([source], { type: 'application/javascript' })
+        );
+        alphaTab.Environment.createAlphaSynthWebWorker = function () {
+          return new Worker(workerUrl);
+        };
+      }
 
       function initAlphaTab() {
-        var baseWidth = container.clientWidth || window.innerWidth;
-        var scale = Math.min(1.0, baseWidth / 800);
+        currentScale = 1;
+        resetView();
+        installViewGestures();
+        var scriptFile = new URL('./vendor/alphaTab.min.js', document.baseURI).href;
 
-        var settings = {
+        api = new alphaTab.AlphaTabApi(container, {
           core: {
             engine: 'svg',
-            enableWorker: false,
-            includeNoteBounds: true
+            useWorkers: false,
+            includeNoteBounds: true,
+            fontDirectory: './vendor/font/',
+            scriptFile: scriptFile
           },
           display: {
-            scale: scale,
-            layout: 'page',
-            staveProfile: 'scorelist',
-            stretchForce: 0.8,
+            scale: 1,
+            layoutMode: 'page',
+            staveProfile: 'score',
+            barsPerRow: -1,
+            stretchForce: 0.82,
+            padding: [16, 12, 16, 24],
             resources: {
-              mainGlyphColor: '#e0e0e0',
-              secondaryGlyphColor: '#a0a0a0',
-              staffLineColor: '#555555',
-              barSeparatorColor: '#444444',
-              barNumberColor: '#888888',
-              fingeringColor: '#e0e0e0',
-              markerColor: '#4285f4'
+              mainGlyphColor: '#000000',
+              secondaryGlyphColor: '#303033',
+              staffLineColor: '#000000',
+              barSeparatorColor: '#000000',
+              barNumberColor: '#5d5d5d',
+              fingeringColor: '#000000',
+              markerColor: '#ff4800'
             }
           },
           player: {
-            enablePlayer: false
-          },
-          notation: {
-            rhythmMode: 'show',
-            elements: {
-              scoreTitle: { hideIfEmpty: true },
-              partNames: { hideIfEmpty: true }
-            }
+            enablePlayer: true,
+            enableCursor: true,
+            enableAnimatedBeatCursor: true,
+            enableElementHighlighting: true,
+            outputMode: playerOutputMode(),
+            soundFont: './vendor/soundfont/ydp-grand-piano.sf2',
+            scrollElement: document.documentElement
           }
-        };
+        });
 
-        api = new alphaTab.AlphaTabApi(container, settings);
-
-        // Bar cursor highlight overlay
-        var cursorBarEl = document.createElement('div');
-        cursorBarEl.className = 'at-cursor-bar';
-        cursorBarEl.style.cssText =
-          'position:absolute;pointer-events:none;display:none;z-index:10;' +
-          'transition:left 0.08s linear,width 0.08s linear;';
-        container.style.position = 'relative';
-        container.appendChild(cursorBarEl);
-
-        api.scoreLoaded.on(function(score) {
+        api.scoreLoaded.on(function (score) {
           lastScore = score;
-          if (drumOnly && score.tracks.length > 0) {
-            filterDrumTracks(score);
-          }
           postToFlutter('scoreLoaded', {
             title: score.title || '',
             artist: score.artist || '',
@@ -106,203 +725,464 @@
           });
         });
 
-        api.renderStarted.on(function() {
-          container.scrollTop = 0;
+        api.renderStarted.on(function () {
+          postToFlutter('renderStarted', {});
         });
 
-        api.renderFinished.on(function() {
-          setupBarClickHandlers();
+        api.postRenderFinished.on(notifyRendered);
+
+        api.playerReady.on(function () {
+          postPlaybackTimeline(0);
+        });
+
+        if (api.midiLoaded) {
+          api.midiLoaded.on(function () {
+            postPlaybackTimeline(0);
+            if (pendingPlay && api.isReadyForPlayback) {
+              pendingPlay = false;
+              unlockAudio();
+              try { api.play(); } catch (_) {}
+            }
+          });
+        }
+
+        if (api.soundFontLoadFailed) {
+          api.soundFontLoadFailed.on(function (error) {
+            postToFlutter('playerIssue', { message: errorMessage(error) });
+          });
+        }
+
+        api.playerStateChanged.on(function (args) {
+          var playing = args.state === alphaTab.synth.PlayerState.Playing;
+          document.body.classList.toggle('playback-playing', playing);
+          postToFlutter('playerStateChanged', {
+            playing: playing,
+            stopped: !!args.stopped
+          });
+        });
+
+        api.playerPositionChanged.on(function (args) {
+          var now = performance.now();
+          if (!args.isSeek && args.currentTime < args.endTime &&
+              now - lastPositionPostedAt < 80) {
+            return;
+          }
+          lastPositionPostedAt = now;
+          postToFlutter('playerPositionChanged', {
+            currentTimeMs: args.currentTime,
+            durationMs: args.endTime || playbackDurationMs(),
+            currentTick: args.currentTick,
+            endTick: args.endTick
+          });
+        });
+
+        api.playedBeatChanged.on(function (beat) {
+          try {
+            var voice = beat.voice;
+            var bar = voice.bar;
+            postToFlutter('playedBeatChanged', {
+              partIndex: bar.staff.track.index,
+              measureIndex: bar.index,
+              beatIndex: beat.index
+            });
+          } catch (_) {
+            // A playback position update will still keep time controls current.
+          }
+        });
+
+        api.playerFinished.on(function () {
+          postToFlutter('playerFinished', {});
+        });
+
+        api.noteMouseDown.on(function (note) {
+          try {
+            if (note.isRest) return;
+            ignoreNextBeat = true;
+            ignoreNextMeasureClick = true;
+            var bar = note.beat && note.beat.voice && note.beat.voice.bar;
+            if (bar) {
+              highlightMeasure(bar.masterBar ? bar.masterBar.index : bar.index);
+            }
+            dragNote = {
+              note: note,
+              originalMidi: note.realValue
+            };
+            postNoteHit('noteTapped', note, note.realValue);
+          } catch (error) {
+            postToFlutter('error', { message: errorMessage(error) });
+          }
+        });
+
+        if (api.beatMouseDown) {
+          api.beatMouseDown.on(function (beat) {
+            try {
+              var bar = beat.voice && beat.voice.bar;
+              if (bar) {
+                highlightMeasure(bar.masterBar ? bar.masterBar.index : bar.index);
+              }
+              if (ignoreNextBeat) {
+                ignoreNextBeat = false;
+                return;
+              }
+              ignoreNextMeasureClick = true;
+              postStaffTap(beat, midiAtBeat(beat, pointer.x, pointer.y));
+            } catch (error) {
+              postToFlutter('error', { message: errorMessage(error) });
+            }
+          });
+        }
+
+        container.addEventListener('pointerdown', function (event) {
+          pointer.x = event.clientX;
+          pointer.y = event.clientY;
+          unlockAudio();
+        }, { passive: true });
+
+        container.addEventListener('click', function (event) {
+          if (ignoreNextMeasureClick) {
+            ignoreNextMeasureClick = false;
+            return;
+          }
+          var measure = measureAtPoint(event.clientX, event.clientY);
+          if (measure == null) return;
+          highlightMeasure(measure);
+          postToFlutter('scoreTapped', { measure: measure + 1 });
+        });
+
+        container.addEventListener('pointerup', function (event) {
+          if (!dragNote) return;
+          try {
+            var midi = midiAtBeat(dragNote.note.beat, event.clientX, event.clientY);
+            if (Number.isFinite(midi) && midi !== dragNote.originalMidi) {
+              postNoteHit('noteDragged', dragNote.note, midi, dragNote.originalMidi);
+            }
+          } catch (_) {}
+          dragNote = null;
+        }, { passive: true });
+
+        api.error.on(function (error) {
+          postToFlutter('error', { message: errorMessage(error) });
+        });
+
+        api.resize.on(function (args) {
+          args.settings.display.scale = 1;
+          args.settings.display.barsPerRow = -1;
+          window.requestAnimationFrame(applyPageFit);
         });
 
         window._alphaTabReady = true;
-        postToFlutter('ready', {});
+        postToFlutter('ready', { version: '1.8.4' });
       }
 
-      function filterDrumTracks(score) {
-        var drumTracks = [];
-        var drumKeywords = ['drum', 'perc', 'kit', 'drums', 'percussion'];
-
-        for (var i = 0; i < score.tracks.length; i++) {
-          var track = score.tracks[i];
-          var name = (track.name || '').toLowerCase();
-          var isDrum = false;
-
-          for (var k = 0; k < drumKeywords.length; k++) {
-            if (name.indexOf(drumKeywords[k]) !== -1) {
-              isDrum = true;
-              break;
-            }
-          }
-
-          if (!isDrum && track.staves.length > 0) {
-            var staff = track.staves[0];
-            if (staff.showStandardNotation === false ||
-                staff.isPercussion === true) {
-              isDrum = true;
-            }
-            for (var b = 0; b < staff.bars.length && !isDrum; b++) {
-              var bar = staff.bars[b];
-              if (bar && bar.voices) {
-                for (var v = 0; v < bar.voices.length; v++) {
-                  var voice = bar.voices[v];
-                  if (voice && voice.beats) {
-                    for (var bt = 0; bt < voice.beats.length; bt++) {
-                      var beat = voice.beats[bt];
-                      if (beat && beat.notes) {
-                        for (var n = 0; n < beat.notes.length; n++) {
-                          if (beat.notes[n].isPercussion) {
-                            isDrum = true;
-                            break;
-                          }
-                        }
-                      }
-                      if (isDrum) break;
-                    }
-                  }
-                  if (isDrum) break;
-                }
-              }
-            }
-          }
-
-          if (isDrum) {
-            drumTracks.push(track);
-          }
+      function boundsLookup() {
+        if (api && api.renderer && api.renderer.boundsLookup) {
+          return api.renderer.boundsLookup;
         }
-
-        if (drumTracks.length > 0) {
-          score.tracks = drumTracks;
-        }
+        return api && api.boundsLookup ? api.boundsLookup : null;
       }
 
-      function setupBarClickHandlers() {
-        var barElements = container.querySelectorAll('[data-bar-id]');
-        barElements.forEach(function(el) {
-          el.style.cursor = 'pointer';
-          el.addEventListener('click', function(e) {
-            var barId = parseInt(el.getAttribute('data-bar-id'));
-            if (!isNaN(barId)) {
-              postToFlutter('scoreTapped', { measure: barId + 1 });
-            }
-          });
+      function toLocalPoint(clientX, clientY) {
+        var surface = container.querySelector('.at-surface') || container;
+        var rect = surface.getBoundingClientRect();
+        var sx = rect.width > 0 ? surface.offsetWidth / rect.width : 1;
+        var sy = rect.height > 0 ? surface.offsetHeight / rect.height : 1;
+        return {
+          x: (clientX - rect.left) * sx,
+          y: (clientY - rect.top) * sy
+        };
+      }
+
+      function diatonicFromBottom(bottomMidi, steps) {
+        var naturals = [0, 2, 4, 5, 7, 9, 11];
+        var pc = ((bottomMidi % 12) + 12) % 12;
+        var naturalIndex = naturals.indexOf(pc);
+        if (naturalIndex < 0) naturalIndex = 0;
+        var idx = naturalIndex + steps;
+        var oct = Math.floor(bottomMidi / 12) + Math.floor(idx / 7);
+        var rem = ((idx % 7) + 7) % 7;
+        return oct * 12 + naturals[rem];
+      }
+
+      function midiAtBeat(beat, clientX, clientY) {
+        var lookup = boundsLookup();
+        var beatBounds = lookup && lookup.findBeat ? lookup.findBeat(beat) : null;
+        var box = beatBounds && beatBounds.barBounds && beatBounds.barBounds.visualBounds
+          ? beatBounds.barBounds.visualBounds
+          : (beatBounds && beatBounds.visualBounds);
+        var clef = beat.voice.bar.clef;
+        var isBass = !!(alphaTab.model && alphaTab.model.Clef &&
+          clef === alphaTab.model.Clef.F4);
+        var bottomMidi = isBass ? 43 : 64;
+        if (!box || !box.h) return isBass ? 55 : 67;
+        var point = toLocalPoint(clientX, clientY);
+        var steps = Math.round((box.y + box.h - point.y) / (box.h / 8));
+        var midi = diatonicFromBottom(bottomMidi, steps);
+        return Math.max(21, Math.min(108, midi));
+      }
+
+      function postStaffTap(beat, midi) {
+        var voice = beat.voice;
+        var bar = voice.bar;
+        var staff = bar.staff;
+        postToFlutter('staffTapped', {
+          partIndex: staff.track.index,
+          measureIndex: bar.index,
+          staff: staff.index + 1,
+          onsetTicks: beat.displayStart,
+          midi: midi
         });
       }
 
-      // Flutter → alphaTab bridge handlers
-      window.bridgeLoadScore = function(xmlContent) {
+      function postNoteHit(type, note, midi, originalMidi) {
+        var beat = note.beat;
+        var voice = beat.voice;
+        var bar = voice.bar;
+        var staff = bar.staff;
+        var payload = {
+          partIndex: staff.track.index,
+          measureIndex: bar.index,
+          staff: staff.index + 1,
+          voiceIndex: voice.index,
+          onsetTicks: beat.displayStart,
+          midi: midi,
+          noteIndex: note.index
+        };
+        if (originalMidi != null) payload.originalMidi = originalMidi;
+        postToFlutter(type, payload);
+      }
+
+      function playerOutputMode() {
+        try {
+          return alphaTab.synth.PlayerOutputMode.WebAudioScriptProcessor;
+        } catch (_) {
+          return 1;
+        }
+      }
+
+      function unlockAudio() {
+        try {
+          var Ctx = window.AudioContext || window.webkitAudioContext;
+          if (Ctx) {
+            if (!window._padAudioCtx) window._padAudioCtx = new Ctx();
+            if (window._padAudioCtx.state === 'suspended') {
+              window._padAudioCtx.resume();
+            }
+          }
+          if (api && api.player && api.player.output && api.player.output.activate) {
+            api.player.output.activate();
+          }
+        } catch (_) {}
+      }
+
+      window.bridgeLoadScore = function (xmlContent) {
         if (!api) return false;
         try {
+          resetView();
           var bytes = new TextEncoder().encode(xmlContent);
-          var score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes);
-          api.tex = '';
-          api.renderScore(score);
+          if (typeof api.load === 'function') {
+            lastScore = null;
+            api.load(bytes);
+            postPlaybackTimeline(0);
+            return true;
+          }
+          var score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(
+            bytes,
+            api.settings
+          );
+          var trackIndexes = score.tracks.map(function (_, index) {
+            return index;
+          });
+          lastScore = score;
+          api.renderScore(score, trackIndexes);
           return true;
-        } catch (e) {
-          postToFlutter('error', { message: e.toString() });
+        } catch (error) {
+          postToFlutter('error', { message: errorMessage(error) });
           return false;
         }
       };
 
-      window.bridgeLoadScoreWithFilter = function(xmlContent, drumOnlyFlag) {
-        if (!api) return false;
-        drumOnly = drumOnlyFlag !== false;
+      window.bridgeLoadScoreWithFilter = function (xmlContent) {
         return window.bridgeLoadScore(xmlContent);
       };
 
-      window.bridgeGoToMeasure = function(measureNumber) {
-        if (!api) return;
-        var score = api.score;
-        if (!score) return;
+      window.bridgeGoToMeasure = function (measureNumber) {
         var barIndex = measureNumber - 1;
-        if (barIndex < 0 || barIndex >= score.masterBars.length) return;
-        var barEl = container.querySelector('[data-bar-id="' + barIndex + '"]');
-        if (barEl) {
-          barEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
+        var bar = container.querySelector('[data-bar-id="' + barIndex + '"]');
+        if (bar) bar.scrollIntoView({ behavior: 'smooth', block: 'start' });
       };
 
-      window.bridgeSetCursor = function(measureNumber, beatIndex) {
-        if (!api || !lastScore) return;
-        var barIndex = measureNumber - 1;
-        if (barIndex < 0 || barIndex >= lastScore.masterBars.length) return;
-        updateCursorOverlay(barIndex);
+      window.bridgeHighlightMeasure = function (measureIndex) {
+        return highlightMeasure(measureIndex);
+      };
+
+      window.bridgeTapAt = function (x, y) {
+        var rect = (viewport || frame).getBoundingClientRect();
+        var measure = measureAtPoint(rect.left + x, rect.top + y);
+        if (measure == null) return -1;
+        highlightMeasure(measure);
+        postToFlutter('scoreTapped', { measure: measure + 1 });
+        return measure;
+      };
+
+      window.bridgeSetViewport = function (width, height) {
+        return updateScale(width, height);
+      };
+
+      window.bridgeSetOneFingerPan = function (enabled) {
+        oneFingerPan = !!enabled;
+        if (!oneFingerPan && viewGesture && viewGesture.type === 'pan') {
+          viewGesture = null;
+        }
+        return oneFingerPan;
+      };
+
+      window.bridgeSetView = function (zoom, nextPanX, nextPanY) {
+        if (Number.isFinite(zoom)) userZoom = zoom;
+        if (Number.isFinite(nextPanX)) panX = nextPanX;
+        if (Number.isFinite(nextPanY)) panY = nextPanY;
+        applyPageFit();
+        return true;
+      };
+
+      window.bridgePointer = function (phase, id, x, y) {
+        handleViewPointer(phase, id, x, y);
+        return true;
+      };
+
+      window.bridgeSetMeasureKeys = function (fifths) {
+        measureKeyFifthsList = Array.isArray(fifths) ? fifths : [];
+        drawMeasureKeys();
+        return measureKeyFifthsList.length;
+      };
+
+      window.bridgeSetMeasureSections = function (labels) {
+        measureSectionLabels = Array.isArray(labels) ? labels : [];
+        drawMeasureSections();
+        return measureSectionLabels.length;
+      };
+
+      window.bridgeSetCursor = function (measureNumber, beatIndex) {
         postToFlutter('currentBarChanged', { measure: measureNumber });
-        if (beatIndex !== undefined && beatIndex !== null) {
-          postToFlutter('currentBeatChanged', {
-            measure: measureNumber,
-            beatIndex: beatIndex,
-          });
-        }
+        postToFlutter('currentBeatChanged', {
+          measure: measureNumber,
+          beatIndex: beatIndex || 0
+        });
       };
 
-      function updateCursorOverlay(barIndex) {
-        var barEl = container.querySelector('[data-bar-id="' + barIndex + '"]');
-        if (!barEl) {
-          cursorBarEl.style.display = 'none';
-          return;
-        }
-        var containerRect = container.getBoundingClientRect();
-        var barRect = barEl.getBoundingClientRect();
-        cursorBarEl.style.display = 'block';
-        cursorBarEl.style.left =
-          (barRect.left - containerRect.left + container.scrollLeft) + 'px';
-        cursorBarEl.style.top =
-          (barRect.top - containerRect.top + container.scrollTop) + 'px';
-        cursorBarEl.style.width = barRect.width + 'px';
-        cursorBarEl.style.height = barRect.height + 'px';
-      }
+      window.bridgeClearCursor = function () {};
 
-      window.bridgeClearCursor = function() {
-        cursorBarEl.style.display = 'none';
-      };
-
-      window.bridgeSetZoom = function(scale) {
-        if (!api) return;
-        api.settings.display.scale = scale;
+      window.bridgeSetZoom = function (scale) {
+        if (!api || !Number.isFinite(scale)) return false;
+        currentScale = Math.max(0.5, Math.min(2.0, scale));
+        api.settings.display.scale = currentScale;
         api.updateSettings();
-        if (api.score) {
-          api.renderScore(api.score);
-        }
+        if (lastScore) api.render();
+        return true;
       };
 
-      window.bridgeSetLoopRange = function(startMeasure, endMeasure) {
+      window.bridgeSetLoopRange = function (startMeasure, endMeasure) {
         postToFlutter('loopRangeSet', {
           startMeasure: startMeasure,
           endMeasure: endMeasure
         });
       };
 
-      window.bridgeAutoScale = function(containerWidth) {
-        if (!api) return;
-        var scale = Math.min(1.0, containerWidth / 800);
-        api.settings.display.scale = scale;
-        api.updateSettings();
-        if (api.score) {
-          api.renderScore(api.score);
+      window.bridgeSetPlaybackVisible = function (visible) {
+        document.body.classList.toggle('playback-off', !visible);
+        if (!visible) {
+          document.body.classList.remove('playback-playing');
+          pendingPlay = false;
+          if (api && api.isReadyForPlayback) {
+            try { api.stop(); } catch (_) {}
+          }
+        } else {
+          unlockAudio();
+          postPlaybackTimeline(0);
         }
-        return scale;
+        return true;
       };
 
-      function postToFlutter(type, data) {
-        if (window.FlutterBridge) {
-          window.FlutterBridge.postMessage(JSON.stringify({
-            type: type,
-            data: data
-          }));
+      window.bridgeRefreshPlayback = function () {
+        postPlaybackTimeline(0);
+        return true;
+      };
+
+      window.bridgePlayPause = function () {
+        if (!api) return false;
+        unlockAudio();
+        try {
+          if (api.player && api.player.output && api.player.output.activate) {
+            api.player.output.activate();
+          }
+        } catch (_) {}
+        if (!api.isReadyForPlayback) {
+          pendingPlay = true;
+          return false;
         }
+        try {
+          api.playPause();
+          return true;
+        } catch (error) {
+          postToFlutter('playerIssue', { message: errorMessage(error) });
+          return false;
+        }
+      };
+
+      window.bridgePausePlayback = function () {
+        if (!api || !api.isReadyForPlayback) return false;
+        api.pause();
+        return true;
+      };
+
+      window.bridgeStopPlayback = function () {
+        pendingPlay = false;
+        if (!api || !api.isReadyForPlayback) return false;
+        api.stop();
+        return true;
+      };
+
+      window.bridgeSeekPlayback = function (positionMs) {
+        if (!api || !api.isReadyForPlayback || !Number.isFinite(positionMs)) {
+          return false;
+        }
+        var duration = playbackDurationMs();
+        var next = Math.max(0, duration > 0 ? Math.min(duration, positionMs) : positionMs);
+        api.timePosition = next;
+        postToFlutter('playerPositionChanged', {
+          currentTimeMs: next,
+          durationMs: duration,
+          currentTick: Number(api.tickPosition) || 0,
+          endTick: Number(api.endTick) || 0
+        });
+        return true;
+      };
+
+      window.bridgeSetPlaybackSpeed = function (speed) {
+        if (!api || !Number.isFinite(speed)) return false;
+        api.playbackSpeed = Math.max(0.5, Math.min(1.5, speed));
+        return true;
+      };
+
+      window.bridgeSetViewportWidth = updateScale;
+      window.bridgeAutoScale = updateScale;
+
+      if (typeof alphaTab === 'undefined') {
+        postToFlutter('error', { message: 'alphaTab library not loaded' });
+        return;
       }
 
-      if (typeof alphaTab !== 'undefined') {
-        initAlphaTab();
-      } else {
-        window.addEventListener('load', function() {
-          if (typeof alphaTab !== 'undefined') {
-            initAlphaTab();
-          } else {
-            postToFlutter('error', { message: 'alphaTab library not loaded' });
-          }
+      fetch(new URL('./vendor/alphaTab.min.js', document.baseURI).href)
+        .then(function (response) {
+          if (!response.ok) throw new Error('worker source');
+          return response.text();
+        })
+        .then(function (source) {
+          installInlineSynthWorker(source);
+          initAlphaTab();
+        })
+        .catch(function () {
+          initAlphaTab();
         });
-      }
     })();
   </script>
 </body>

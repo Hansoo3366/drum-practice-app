@@ -4,6 +4,7 @@ import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sig
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
+import 'package:page_a_diddle/features/library/domain/score_file_filter.dart';
 import 'package:page_a_diddle/features/storage/cloud/data/cloud_oauth_config.dart';
 import 'package:page_a_diddle/features/storage/cloud/data/cloud_token_store.dart';
 import 'package:page_a_diddle/features/storage/cloud/domain/cloud_models.dart';
@@ -122,13 +123,22 @@ class GoogleDriveService {
     return drive.DriveApi(authz.authClient(scopes: _scopes));
   }
 
-  Future<List<CloudEntry>> list({String? folderId}) async {
+  Future<List<CloudEntry>> list({
+    String? folderId,
+    ScoreFileFilter filter = ScoreFileFilter.pdf,
+  }) async {
     final api = await _api();
     final parent = folderId ?? 'root';
+    final fileQuery = switch (filter) {
+      ScoreFileFilter.pdf =>
+        "mimeType = 'application/pdf' or name contains '.pdf'",
+      ScoreFileFilter.musicXml =>
+        "name contains '.musicxml' or name contains '.mxl' or "
+            "name contains '.xml'",
+    };
     final query =
         "'$parent' in parents and trashed = false and "
-        "(mimeType = 'application/vnd.google-apps.folder' or "
-        "mimeType = 'application/pdf' or name contains '.pdf')";
+        "(mimeType = 'application/vnd.google-apps.folder' or $fileQuery)";
     final result = await api.files.list(
       q: query,
       spaces: 'drive',

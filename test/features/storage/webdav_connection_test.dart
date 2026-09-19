@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:page_a_diddle/features/library/domain/score_file_filter.dart';
 import 'package:page_a_diddle/features/storage/data/webdav_connection.dart';
 
 void main() {
@@ -99,6 +100,31 @@ void main() {
     expect(entries.map((entry) => entry.name), ['Practice', 'Zeta.pdf']);
     expect(entries.first.isDirectory, isTrue);
     expect(entries.last.size, 2048);
+  });
+
+  test('MusicXML 가져오기에서는 MXL만 반환한다', () async {
+    final connection = WebDavConnection(
+      request: (_, _, _, _) async => const WebDavResponse(207, '''
+        <d:multistatus xmlns:d="DAV:">
+          <d:response>
+            <d:href>/webdav/song.mxl</d:href>
+            <d:propstat><d:prop><d:displayname>song.mxl</d:displayname></d:prop></d:propstat>
+          </d:response>
+          <d:response>
+            <d:href>/webdav/Zeta.pdf</d:href>
+            <d:propstat><d:prop><d:displayname>Zeta.pdf</d:displayname></d:prop></d:propstat>
+          </d:response>
+        </d:multistatus>
+      '''),
+    );
+
+    final entries = await connection.list(
+      credentials,
+      Uri.parse(credentials.url),
+      filter: ScoreFileFilter.musicXml,
+    );
+
+    expect(entries.map((entry) => entry.name), ['song.mxl']);
   });
 
   test('다른 서버를 가리키는 응답 항목은 제외한다', () async {

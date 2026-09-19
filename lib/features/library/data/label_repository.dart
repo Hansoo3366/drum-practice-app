@@ -80,7 +80,9 @@ class LabelRepository {
     ])..where(_database.labels.name.equals(normalized));
 
     final rows = await query.get();
-    return rows.map((row) => row.readTable(_database.songLabels).songId).toSet();
+    return rows
+        .map((row) => row.readTable(_database.songLabels).songId)
+        .toSet();
   }
 
   Future<Set<String>> songIdsMatchingLabelQuery(String query) async {
@@ -95,7 +97,9 @@ class LabelRepository {
     ])..where(_database.labels.name.like('%$normalized%'));
 
     final rows = await queryBuilder.get();
-    return rows.map((row) => row.readTable(_database.songLabels).songId).toSet();
+    return rows
+        .map((row) => row.readTable(_database.songLabels).songId)
+        .toSet();
   }
 
   Future<Label> _ensureLabel(String rawName) async {

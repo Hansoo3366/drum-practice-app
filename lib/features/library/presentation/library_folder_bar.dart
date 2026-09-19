@@ -29,8 +29,7 @@ class LibraryFolderSelector extends ConsumerWidget {
     final selected = onFolderChanged != null
         ? selectedFolderId
         : ref.watch(libraryFolderFilterProvider);
-    final showingAll =
-        selected == null || selected == unfiledFolderFilterKey;
+    final showingAll = selected == null || selected == unfiledFolderFilterKey;
 
     Folder? current;
     if (!showingAll) {
@@ -117,10 +116,7 @@ Future<void> showLibraryFolderBrowserSheet(
 }
 
 class _FolderBrowserSheet extends ConsumerWidget {
-  const _FolderBrowserSheet({
-    this.selectedFolderId,
-    this.onSelected,
-  });
+  const _FolderBrowserSheet({this.selectedFolderId, this.onSelected});
 
   final String? selectedFolderId;
   final ValueChanged<String?>? onSelected;
@@ -132,8 +128,7 @@ class _FolderBrowserSheet extends ConsumerWidget {
     final selected = onSelected != null
         ? selectedFolderId
         : ref.watch(libraryFolderFilterProvider);
-    final showingAll =
-        selected == null || selected == unfiledFolderFilterKey;
+    final showingAll = selected == null || selected == unfiledFolderFilterKey;
 
     void pick(String? folderId) {
       if (onSelected != null) {
@@ -208,8 +203,7 @@ class LibraryFolderSidebar extends ConsumerWidget {
     final folders = ref.watch(libraryFoldersProvider).asData?.value ?? const [];
     final selected = ref.watch(libraryFolderFilterProvider);
     final colors = Theme.of(context).colorScheme;
-    final showingAll =
-        selected == null || selected == unfiledFolderFilterKey;
+    final showingAll = selected == null || selected == unfiledFolderFilterKey;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -312,7 +306,8 @@ class _SidebarRow extends StatelessWidget {
                 Icon(
                   icon,
                   size: 18,
-                  color: iconColor ??
+                  color:
+                      iconColor ??
                       (selected ? AppColors.ink : colors.onSurfaceVariant),
                 ),
                 const SizedBox(width: 8),
@@ -376,9 +371,9 @@ class _FolderPickerSheet extends ConsumerWidget {
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
             child: Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
           ),
           Expanded(
@@ -389,10 +384,8 @@ class _FolderPickerSheet extends ConsumerWidget {
                   icon: Icons.folder_off_outlined,
                   label: l10n.noFolder,
                   selected: false,
-                  onTap: () => Navigator.pop(
-                    context,
-                    const LibraryFolderPick(null),
-                  ),
+                  onTap: () =>
+                      Navigator.pop(context, const LibraryFolderPick(null)),
                 ),
                 for (final folder in folders)
                   _SidebarRow(
@@ -412,10 +405,7 @@ class _FolderPickerSheet extends ConsumerWidget {
   }
 }
 
-Future<void> showFolderEditorSheet(
-  BuildContext context, {
-  Folder? folder,
-}) {
+Future<void> showFolderEditorSheet(BuildContext context, {Folder? folder}) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -533,9 +523,9 @@ class _FolderEditorSheetState extends ConsumerState<_FolderEditorSheet> {
         children: [
           Text(
             editing ? l10n.editFolder : l10n.newFolder,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -550,9 +540,9 @@ class _FolderEditorSheetState extends ConsumerState<_FolderEditorSheet> {
           const SizedBox(height: 16),
           Text(
             l10n.folderColor,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 10),
           Wrap(

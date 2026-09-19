@@ -257,9 +257,9 @@ class _EditSongSheetState extends ConsumerState<_EditSongSheet> {
               const SizedBox(height: 14),
               Text(
                 l10n.labels,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 8),
               if (!_labelsReady)
