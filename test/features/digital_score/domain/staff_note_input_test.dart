@@ -45,6 +45,8 @@ void main() {
     expect(rest.isRest, isTrue);
     expect(rest.onset, 4);
     expect(rest.duration, 8);
+    expect(rest.voice, '2');
+    expect(rest.staff, 2);
   });
 
   test('applies a selected accidental to a natural staff pitch', () {

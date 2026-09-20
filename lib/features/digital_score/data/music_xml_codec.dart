@@ -172,6 +172,7 @@ class MusicXmlCodec {
             'part',
             attributes: {'id': part.id},
             nest: () {
+              MusicAttributes? previousAttributes;
               for (
                 var measureIndex = 0;
                 measureIndex < part.measures.length;
@@ -187,11 +188,13 @@ class MusicXmlCodec {
                   nest: () => _writeMeasure(
                     builder,
                     measure,
+                    previousAttributes: previousAttributes,
                     fallbackTempo: partIndex == 0 && measureIndex == 0
                         ? score.tempoBpm
                         : null,
                   ),
                 );
+                previousAttributes = measure.attributes;
               }
             },
           );
@@ -334,6 +337,11 @@ class MusicXmlCodec {
         : MusicTimeSignature(
             beats: _requiredInt(timeElement, 'beats'),
             beatType: _requiredInt(timeElement, 'beat-type'),
+            symbol: switch (timeElement.getAttribute('symbol')) {
+              'common' => MusicTimeSymbol.common,
+              'cut' => MusicTimeSymbol.cut,
+              _ => null,
+            },
           );
     final keyElement = _firstChild(element, 'key');
     return MusicAttributes(
@@ -410,9 +418,14 @@ class MusicXmlCodec {
   void _writeMeasure(
     XmlBuilder builder,
     MusicMeasure measure, {
+    MusicAttributes? previousAttributes,
     double? fallbackTempo,
   }) {
-    _writeAttributes(builder, measure.attributes);
+    _writeAttributes(
+      builder,
+      measure.attributes,
+      previous: previousAttributes,
+    );
 
     final directions = measure.events.whereType<MusicDirection>().toList();
     if (fallbackTempo != null &&
@@ -485,50 +498,109 @@ class MusicXmlCodec {
     }
   }
 
-  void _writeAttributes(XmlBuilder builder, MusicAttributes attributes) {
+  void _writeAttributes(
+    XmlBuilder builder,
+    MusicAttributes attributes, {
+    MusicAttributes? previous,
+  }) {
+    final writeDivisions =
+        previous == null || previous.divisions != attributes.divisions;
+    final writeKey =
+        previous == null ||
+        previous.keyFifths != attributes.keyFifths ||
+        previous.keyMode != attributes.keyMode;
+    final writeTime =
+        previous == null || !_sameTime(previous.time, attributes.time);
+    final writeStaves =
+        previous == null || previous.staves != attributes.staves;
+    final writeClefs =
+        previous == null || !_sameClefs(previous.clefs, attributes.clefs);
+    if (!writeDivisions &&
+        !writeKey &&
+        !writeTime &&
+        !writeStaves &&
+        !writeClefs) {
+      return;
+    }
+
     builder.element(
       'attributes',
       nest: () {
-        builder.element('divisions', nest: attributes.divisions.toString());
-        builder.element(
-          'key',
-          nest: () {
-            builder.element('fifths', nest: attributes.keyFifths.toString());
-            if (_nonEmpty(attributes.keyMode) case final mode?) {
-              builder.element('mode', nest: mode);
-            }
-          },
-        );
-        if (attributes.time case final time?) {
-          builder.element(
-            'time',
-            nest: () {
-              builder.element('beats', nest: time.beats.toString());
-              builder.element('beat-type', nest: time.beatType.toString());
-            },
-          );
+        if (writeDivisions) {
+          builder.element('divisions', nest: attributes.divisions.toString());
         }
-        if (attributes.staves > 1) {
-          builder.element('staves', nest: attributes.staves.toString());
-        }
-        for (final entry in attributes.clefs.entries) {
+        if (writeKey) {
           builder.element(
-            'clef',
-            attributes: {if (attributes.staves > 1) 'number': '${entry.key}'},
+            'key',
             nest: () {
-              builder.element('sign', nest: entry.value.sign);
-              builder.element('line', nest: entry.value.line.toString());
-              if (entry.value.octaveChange != 0) {
-                builder.element(
-                  'clef-octave-change',
-                  nest: entry.value.octaveChange.toString(),
-                );
+              builder.element('fifths', nest: attributes.keyFifths.toString());
+              if (_nonEmpty(attributes.keyMode) case final mode?) {
+                builder.element('mode', nest: mode);
               }
             },
           );
         }
+        if (writeTime) {
+          if (attributes.time case final time?) {
+            builder.element(
+              'time',
+              attributes: {
+                if (time.symbol case final symbol?) 'symbol': symbol.name,
+              },
+              nest: () {
+                builder.element('beats', nest: time.beats.toString());
+                builder.element('beat-type', nest: time.beatType.toString());
+              },
+            );
+          }
+        }
+        if (writeStaves && attributes.staves > 1) {
+          builder.element('staves', nest: attributes.staves.toString());
+        }
+        if (writeClefs) {
+          for (final entry in attributes.clefs.entries) {
+            builder.element(
+              'clef',
+              attributes: {
+                if (attributes.staves > 1) 'number': '${entry.key}',
+              },
+              nest: () {
+                builder.element('sign', nest: entry.value.sign);
+                builder.element('line', nest: entry.value.line.toString());
+                if (entry.value.octaveChange != 0) {
+                  builder.element(
+                    'clef-octave-change',
+                    nest: entry.value.octaveChange.toString(),
+                  );
+                }
+              },
+            );
+          }
+        }
       },
     );
+  }
+
+  bool _sameTime(MusicTimeSignature? a, MusicTimeSignature? b) {
+    if (identical(a, b)) return true;
+    if (a == null || b == null) return a == b;
+    return a.beats == b.beats &&
+        a.beatType == b.beatType &&
+        a.symbol == b.symbol;
+  }
+
+  bool _sameClefs(Map<int, MusicClef> a, Map<int, MusicClef> b) {
+    if (a.length != b.length) return false;
+    for (final entry in a.entries) {
+      final other = b[entry.key];
+      if (other == null ||
+          other.sign != entry.value.sign ||
+          other.line != entry.value.line ||
+          other.octaveChange != entry.value.octaveChange) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void _writeDirection(XmlBuilder builder, MusicDirection direction) {

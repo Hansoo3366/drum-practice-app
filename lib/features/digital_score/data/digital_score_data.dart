@@ -6,12 +6,14 @@ import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/domain/arrangement_profile.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
+import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/library/data/song_repository.dart';
 
 class DigitalScoreData {
   const DigitalScoreData({
     required this.song,
     required this.score,
+    this.versionCatalog = ScoreVersionCatalog.empty,
     this.sequence = PlaybackSequence.empty,
     this.arrangement = ArrangementProfile.off,
     this.originalFifths = 0,
@@ -19,6 +21,7 @@ class DigitalScoreData {
 
   final Song song;
   final MusicScore score;
+  final ScoreVersionCatalog versionCatalog;
   final PlaybackSequence sequence;
   final ArrangementProfile arrangement;
   final int originalFifths;
@@ -48,10 +51,12 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
         songId: songId,
         score: score,
       );
+      final versionCatalog = await editor.loadVersionCatalog(songId);
       await repository.markOpened(songId);
       return DigitalScoreData(
         song: song,
         score: score,
+        versionCatalog: versionCatalog,
         sequence: sequence,
         arrangement: arrangement,
         originalFifths: originalFifths,

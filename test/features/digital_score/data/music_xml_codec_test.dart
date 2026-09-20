@@ -64,6 +64,71 @@ void main() {
       );
     });
 
+    test('omits repeated clef key and time on later measures', () {
+      final score = codec.decodeXml('''
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <staves>2</staves>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+        <clef number="2"><sign>F</sign><line>4</line></clef>
+      </attributes>
+      <note><rest/><duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff></note>
+    </measure>
+    <measure number="2">
+      <note><rest/><duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff></note>
+    </measure>
+    <measure number="3">
+      <attributes>
+        <key><fifths>1</fifths></key>
+      </attributes>
+      <note><rest/><duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff></note>
+    </measure>
+  </part>
+</score-partwise>
+''');
+      final xml = utf8.decode(codec.encodeMusicXml(score));
+      final measures = RegExp(
+        r'<measure number="(\d+)">([\s\S]*?)</measure>',
+      ).allMatches(xml).toList();
+      expect(measures, hasLength(3));
+      expect(measures[0].group(2), contains('<clef'));
+      expect(measures[0].group(2), contains('<key>'));
+      expect(measures[0].group(2), contains('<time'));
+      expect(measures[1].group(2), isNot(contains('<clef')));
+      expect(measures[1].group(2), isNot(contains('<key>')));
+      expect(measures[1].group(2), isNot(contains('<time')));
+      expect(measures[1].group(2), isNot(contains('<attributes>')));
+      expect(measures[2].group(2), contains('<key>'));
+      expect(measures[2].group(2), contains('<fifths>1</fifths>'));
+      expect(measures[2].group(2), isNot(contains('<clef')));
+      expect(measures[2].group(2), isNot(contains('<time')));
+    });
+
+    test('preserves alla breve notation separately from numeric 2/2', () {
+      final source = _pianoMusicXml
+          .replaceFirst('<time>', '<time symbol="cut">')
+          .replaceFirst('<beats>4</beats>', '<beats>2</beats>')
+          .replaceFirst('<beat-type>4</beat-type>', '<beat-type>2</beat-type>');
+      final score = codec.decodeXml(source);
+      final time = score.parts.single.measures.single.attributes.time;
+
+      expect(time?.beats, 2);
+      expect(time?.beatType, 2);
+      expect(time?.symbol, MusicTimeSymbol.cut);
+      expect(
+        utf8.decode(codec.encodeMusicXml(score)),
+        contains('<time symbol="cut">'),
+      );
+    });
+
     test('encodes and decodes a standard compressed MXL container', () {
       final score = codec.decodeXml(_pianoMusicXml);
       final encoded = codec.encode(score, MusicXmlFileFormat.mxl);

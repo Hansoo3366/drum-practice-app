@@ -21,6 +21,22 @@
 | 디자인 토큰 적용 | 1/1 | 100% | 완료 |
 | **전체** | **80/101** | **79%** | 진행 중 |
 
+> 2026-09-20 22:45 A4 시스템을 페이지 단위로 넘기도록 고쳤다. Clair에서 페이지 회색 간격 위 ink 0(세로 잘림 없음), 줄마다 가로 scaleX(fill ≈0.87–0.95). SM-S937N 재설치 확인.
+> 2026-09-20 21:18 Fantaisie 캡처로 오선·시스템 가로 미채움을 확인. notemus 왼쪽 정렬 + 오선이 글리프까지만 그려지던 것이 원인. Transform 가로 스케일(최소 1.2) + 오선 오버레이로 세로줄 간격 ~7%·오선 끝 ~96%까지 채움(verify10). Allegro 중복·상단 inset·이음줄 넘침은 남음.
+> 2026-09-20 11:57 전자악보 배경을 794×1123 A4 용지 단위로 쌓고, SVG에 중복 적용되던 좌우 48px 패딩을 제거해 오선이 종이 폭을 넘지 않게 했다.
+> 2026-09-20 12:44 `Claire de lune`와 `Fantaisie-Impromptu in C♯ Minor` MXL을 기본 악보로 추가했다. 기존 같은 제목은 중복하지 않는다. SM-S937N에서 목록·A4 시스템 넘김·회색 종이 사이·확대·주황 선택 박스를 확인했다.
+> 2026-09-20 13:03 MusicXML의 `time symbol="cut"`을 보존해 2/2 숫자와 알라 브레베(¢) 표기를 구분한다. Fantaisie-Impromptu 첫 마디에서 ¢ 렌더를 확인했다.
+> 2026-09-20 13:10 재생 중 현재 오선이 화면 안전 영역을 벗어나면 다음 시스템으로 부드럽게 자동 이동한다. Fantaisie-Impromptu 13마디까지 실기기 재생으로 확인했다.
+> 2026-09-20 13:13 전자악보 내보내기는 PDF·MusicXML·프로젝트·MIDI 네 개만 제공한다. `.mxl`·`.xml`은 가져오기 호환성에만 유지한다.
+> 2026-09-20 20:19 MusicXML 인코더가 매 마디에 음자리표·조표·박자를 반복해 ScoreView 조판이 붕괴됐다. 변경분만 출력하도록 고쳤고(Fantaisie clef 138→9) SM-S937N에 재설치했다(PID 468, SHA-256 `85c95799…`).
+> 2026-09-20 20:05 `libflutter_notemus_native.so`가 4KB ELF 정렬(ALIGN 0x1000)이라 16KB 페이지 기기(SM-S937N)와 호환되지 않았다. CMake에 `-Wl,-z,max-page-size=16384`를 넣어 Align 0x4000으로 재빌드했다(SHA-256 `fea60590…`). 재설치 smoke는 B-017.
+> 2026-09-20 17:57 전자악보 조판을 `flutter_notemus`(SMuFL/Bravura)·MusicXML 파서로 교체하고, 재생은 Notemus 네이티브 MIDI 시퀀서(사인파 음색)로 연결했다(D-141). debug APK(SHA-256 `7ddaa0fa…`) 빌드 완료. 기기 미연결로 설치·청취 smoke는 B-017.
+> 2026-09-20 15:55 전자악보를 WebView/alphaTab에서 Flutter 네이티브 CustomPainter로 전면 교체했다(D-140). 버전 이름 입력·삭제, 연주용 자동 항목 제거를 포함했다. debug APK(SHA-256 `97c32a2b…`)를 SM-S937N에 설치(PID 13662)해 Fantaisie 열기·음표 모드 터치·버전 `SmokeTest` 생성·연주용 미표시를 확인했다.
+> 2026-09-20 15:35 원본 버전 셀렉트·버전 추가와 빈 오선/아래음자리 hit-test 수정을 넣은 debug arm64 APK(239MB, SHA-256 `47f585bcb74b2a7e008f484dd578552c458307bc130af34d4af9b941268075fe`)를 SM-S937N(R5CY43JMZ7N)에 넣고 MainActivity PID 6912를 확인했다.
+> 2026-09-20 14:05 쓰기 좌표·페이지 나눔·원본/연주용 라벨 수정을 넣은 debug arm64 APK(239MB, SHA-256 `42f2494bfc7dab5d8a5201aafe0f5ed29b81d6e0d34d9c1b64bf9ba089e751c9`)를 SM-S937N(R5CY43JMZ7N)에 넣고 MainActivity PID 30602를 확인했다.
+> 2026-09-20 13:47 쓰기 고스트·마디 복제·원본/연주용 전환이 들어간 debug arm64 APK(239MB, SHA-256 `8bda534fde38ffbb0febf9bb809ae88042b1cb1e167c063342c5889874155ec3`)를 SM-S937N(R5CY43JMZ7N)에 넣고 MainActivity PID 17471을 확인했다.
+> 2026-09-20 13:40 INTRO/VERSE 연주 순서 UI를 제거하고 마디 물리 복제·이동으로 단순화했다. 연주용은 `performance_scores/` 별도 MusicXML로 저장한다. 음표 입력은 고스트 미리보기와 음표 그림 팔레트를 쓴다.
+> 2026-09-20 13:15 반주 메뉴를 다시 제거하고, 연주 순서는 선택 구간을 중복 행으로 추가·개별 반복·위아래 이동·삭제하도록 고쳤다. 긴 악보 INTRO 추가를 막던 256마디 제한은 4096마디로 늘렸다.
 > 2026-09-20 00:45 너비 맞춤·핀치 줌·줄 앞 구간 표기가 들어간 debug arm64 APK(239MB, SHA-256 `92ee122effabf2e1fbde32c51ecf2bfed97bca6dd334542c0b52aee91a1647c6`)를 SM-S937N(R5CY43JMZ7N)에 넣고 MainActivity PID 14015를 확인했다.
 > 2026-09-20 00:44 구간 이름은 붙인 줄 앞에만 네모로 두고, 높은음자리표에 빨간 한글로 반복하지 않는다.
 > 2026-09-20 00:42 전자악보를 화면 너비에 맞춰 줄이고, 배경을 흰색으로 두며, 핀치로 확대·이동한다.
@@ -209,32 +225,38 @@
 ## MVP 8 — 로컬 피아노 전자악보
 
 - [x] M8-01 원본을 보존하는 주석 포함 평면화 PDF 내보내기
-- [x] M8-02 MusicXML/MXL Import·Export와 내부 Score Document 모델
+- [x] M8-02 MusicXML/MXL Import·MusicXML Export와 내부 Score Document 모델
   - MusicXML 4.0 `score-partwise`, `.musicxml`·`.xml`·`.mxl`, 피아노 다중 staff·voice·chord 타이밍 지원
-  - Library 가져오기, 곡명·작곡가·템포 자동 채움, MusicXML/MXL 재내보내기 연결
+  - `time symbol="common"|"cut"`을 보존해 보통박자(C)와 알라 브레베(¢)를 숫자 박자표와 구분
+  - Library 가져오기, 곡명·작곡가·템포 자동 채움, MusicXML 재내보내기 연결
   - PDF와 같은 출처(기기·Google Drive·Dropbox·WebDAV)에서 `.musicxml`·`.mxl`·`.xml`을 고른다
+  - 첫 Library 진입 시 `Claire de lune`와 `Fantaisie-Impromptu in C♯ Minor`를 기본 악보로 넣고 같은 제목의 기존 악보는 중복하지 않는다
 - [x] M8-03 피아노 Grand Staff 렌더링과 화면 크기별 재배치
-  - alphaTab 1.8.4·Bravura를 로컬 자산으로 포함하고 CDN·워커·사운드폰트 없이 SVG 렌더링
-  - MusicXML 전체 파트, 피아노 Grand Staff, 모바일·태블릿 폭별 자동 system wrap과 스케일 적용
+  - ~~alphaTab WebView~~ → ~~CustomPainter stub~~ → `flutter_notemus` ScoreView(SMuFL/Bravura)(D-141)
+  - 내부 MusicScore는 MusicXML로 직렬화해 Notemus에 넘기고, 입력 hit-test·고스트는 `native_score_layout`을 유지한다
+  - 핀치 확대와 화면 맞춤 유지
+  - MusicXML 전체 파트, 피아노 Grand Staff, Notemus system wrap과 스케일 적용
 - [x] M8-04 음표·쉼표·마디·조표·박자표·코드 작성 및 수정
   - 렌더링된 음표 직접 선택과 마디별 음표·쉼표·코드 심벌 이벤트 선택·입력·수정·삭제
   - 조표·박자표, 전체 파트 정렬 마디 추가·삭제, 최대 100단계 undo/redo와 저장 전 이탈 확인
-  - 편집 즉시 Grand Staff 재조판, 원본 형식 유지 검증·원자 저장, 현재 편집본 MusicXML/MXL 내보내기
+  - 편집 즉시 Grand Staff 재조판, 원본 형식 유지 검증·원자 저장, 현재 편집본 MusicXML 내보내기
   - Library `악보 만들기`로 빈 피아노 한 마디를 만들어 바로 편집한다
   - 음가·쉼표·임시표를 고른 뒤 오선을 눌러 바로 넣고, 음표를 끌어 높이를 바꾼다
 - [x] M8-05 MIDI/샘플 기반 로컬 재생과 Bar/Beat Cursor
-  - alphaTab MIDI 합성기 + FreePats YDP 그랜드 피아노 SoundFont를 오프라인 자산으로 사용
-  - 재생·일시정지·정지·탐색과 실제 렌더 Bar/Beat Cursor를 하나의 타임라인으로 연결
-  - 악보를 먼저 누르면 Web Audio를 열고, SoundFont가 늦어도 재생을 이어 받는다
+  - ~~alphaTab SoundFont~~ → `flutter_notemus` MidiMapper + 네이티브 시퀀서(현재 사인파 음색, YDP SF2 재연결은 후속)
+  - 재생·일시정지·정지·탐색과 마디 하이라이트 커서를 하나의 타임라인으로 연결
+  - 재생 중 현재 시스템이 화면 아래 안전 영역을 벗어나면 현재 마디가 보이도록 자동 스크롤은 후속
+  - 재생 막대가 보일 때 네이티브 오디오 백엔드를 초기화한다
 - [x] M8-06 Section 반복 횟수와 순서를 저장하는 Playback Sequence
-  - 원본 Score Document는 유지하고 Section 순서·반복만 별도 메타데이터로 저장
-  - 재생 시 펼친 선형 타임라인을 alphaTab 재생과 Bar/Beat Cursor에 연결
-  - 연주 순서 패널에서 선택한 마디에 벌스·코러스 역할을 붙이고, 그 역할의 반복 횟수만 정한다
-  - 붙은 구간 이름은 그 줄 앞에만 네모로 보인다. 이후 마디에는 반복하지 않는다
-  - 조판은 A4 폭으로 하고 화면 너비에 비율을 맞춰 줄인다. 흰 배경에서 핀치로 확대·이동한다. 구간은 그려진 한 줄에 붙인다
-  - `다음 마디 추가`로 빈 마디를 늘릴 수 있다. 마디 번호·순서·조표·박자는 연주 순서에 두지 않는다
+  - 사용자 UX는 INTRO/VERSE 구간 표식 대신 마디 물리 복제·이동·삭제로 단순화했다
+  - 원본 MusicXML은 유지하고 연주용·추가 버전은 `score_versions/<songId>/`에 별도 저장한다
+  - AppBar에서 원본과 버전을 셀렉트로 고르고 `버전 추가`로 복제본을 만든다
+  - 기존 Playback Sequence JSON sidecar는 읽기 호환만 유지하고 화면 UI에서는 쓰지 않는다
+  - 쓰기 모드에서 음가/쉼표는 음표 그림으로 고르고, 손가락을 뗄 때까지 고스트로 위치를 보여 준다
+  - 빈 오선·아래음자리(왼손)에도 마디·스태프 기하 hit-test로 음을 넣는다
+  - 마디를 누르면 +/−/복제/드래그 도구가 나오고, 드래그 중에는 마디 고스트가 따라간다
+  - 조판과 흰 종이는 794×1123 A4 용지 단위로 구성하고 시스템이 하단을 넘으면 다음 종이로 옮긴다. 화면 너비에 동일 비율로 줄이고 종이 사이는 회색이며 핀치로 확대·이동한다
   - 오선을 누르면 그 줄 전체를 주황 박스가 감싼다
-  - 구간이 없으면 이 마디에 먼저 붙이라고만 안내한다
 - [x] M8-07 목표 조성·반음 단위 이조와 코드·조표 재구성
   - 반음 또는 목표 조로 음표·harmony·keyFifths를 한 명령으로 옮긴다
   - 도착 조의 음이름 표기를 쓰고, 변경은 즉시 Grand Staff·재생 타임라인에 반영한다
@@ -248,7 +270,7 @@
 - [x] M8-09 재구성 결과를 반영한 MusicXML·MIDI·PDF와 편집 가능한 앱 프로젝트 내보내기
   - PDF 완료 기준: 작성·수정, 현재 조·이조, 반주·편곡 프로필과 Playback Sequence 순서·반복을 실제 펼친 선형 Grand Staff로 조판
   - Android 로컬에서 새 PDF로 저장하고 앱·일반 PDF Viewer에서 재열기 검증, 원본 Score Document는 보존
-  - 구현: 성능 파일은 `.musicxml`·`.xml`·`.mxl`·MIDI·PDF로 펼친·반주 점수, 프로젝트 zip은 원본+sidecar. Android 재열기는 B-017
+  - 구현: 내보내기 메뉴는 PDF·`.musicxml`·프로젝트 zip·MIDI만 제공한다. `.mxl`·`.xml`은 가져오기 호환성에만 유지한다. Android 재열기는 B-017
 
 ## Future
 

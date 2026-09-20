@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:page_a_diddle/core/storage/song_file_storage.dart';
@@ -7,6 +8,7 @@ import 'package:page_a_diddle/features/digital_score/domain/arrangement_profile.
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_transpose.dart';
+import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:path/path.dart' as path;
 
 class DigitalScoreEditorService {
@@ -25,18 +27,139 @@ class DigitalScoreEditorService {
     required MusicScore score,
     PlaybackSequence sequence = PlaybackSequence.empty,
     ArrangementProfile arrangement = ArrangementProfile.off,
+    String versionId = scoreVersionOriginalId,
   }) async {
-    final format = path.extension(relativePath).toLowerCase() == '.mxl'
-        ? MusicXmlFileFormat.mxl
-        : MusicXmlFileFormat.musicXml;
-    final bytes = _codec.encode(score, format);
-    _codec.decode(bytes, fileName: relativePath);
-    await _storage.replaceFile(relativePath, bytes);
+    final bytes = _codec.encode(score, MusicXmlFileFormat.musicXml);
+    _codec.decode(bytes, fileName: 'score.musicxml');
+    if (versionId == scoreVersionOriginalId) {
+      final format = path.extension(relativePath).toLowerCase() == '.mxl'
+          ? MusicXmlFileFormat.mxl
+          : MusicXmlFileFormat.musicXml;
+      final originalBytes = format == MusicXmlFileFormat.musicXml
+          ? bytes
+          : _codec.encode(score, format);
+      _codec.decode(originalBytes, fileName: relativePath);
+      await _storage.replaceFile(relativePath, originalBytes);
+    } else {
+      await _storage.saveScoreVersionBytes(songId, versionId, bytes);
+      if (versionId == scoreVersionLegacyPerformanceId) {
+        await _storage.savePerformanceScore(songId, bytes);
+      }
+    }
     await _storage.savePlaybackSequence(songId, jsonEncode(sequence.toJson()));
     await _storage.saveArrangementProfile(
       songId,
       jsonEncode(arrangement.toJson()),
     );
+  }
+
+  Future<MusicScore?> loadPerformanceScore(String songId) async {
+    final bytes = await _storage.loadPerformanceScoreBytes(songId);
+    if (bytes == null) return null;
+    return _codec.decode(
+      bytes is Uint8List ? bytes : Uint8List.fromList(bytes),
+      fileName: 'performance.musicxml',
+    );
+  }
+
+  Future<bool> hasPerformanceScore(String songId) {
+    return _storage.hasPerformanceScore(songId);
+  }
+
+  Future<MusicScore> ensurePerformanceScore({
+    required String songId,
+    required MusicScore original,
+  }) async {
+    final existing = await loadPerformanceScore(songId);
+    if (existing != null) return existing;
+    final bytes = _codec.encode(original, MusicXmlFileFormat.musicXml);
+    await _storage.savePerformanceScore(songId, bytes);
+    return original;
+  }
+
+  Future<ScoreVersionCatalog> loadVersionCatalog(String songId) async {
+    final raw = await _storage.loadScoreVersionManifest(songId);
+    if (raw == null || raw.trim().isEmpty) return ScoreVersionCatalog.empty;
+    final catalog = ScoreVersionCatalog.fromJson(
+      Map<String, dynamic>.from(jsonDecode(raw) as Map),
+    );
+    // Drop legacy auto-migrated "performance" unless the user renamed it.
+    final filtered = catalog.versions
+        .where((version) => version.id != scoreVersionLegacyPerformanceId)
+        .toList();
+    if (filtered.length == catalog.versions.length) return catalog;
+    final cleaned = catalog.copyWith(
+      versions: filtered,
+      activeId:
+          catalog.activeId == scoreVersionLegacyPerformanceId
+          ? scoreVersionOriginalId
+          : catalog.activeId,
+    );
+    await saveVersionCatalog(songId, cleaned);
+    return cleaned;
+  }
+
+  Future<ScoreVersionCatalog> deleteVersion({
+    required String songId,
+    required String versionId,
+    required ScoreVersionCatalog catalog,
+  }) async {
+    if (versionId == scoreVersionOriginalId) return catalog;
+    await _storage.deleteScoreVersion(songId, versionId);
+    final next = catalog.copyWith(
+      versions: [
+        for (final version in catalog.versions)
+          if (version.id != versionId) version,
+      ],
+      activeId: catalog.activeId == versionId
+          ? scoreVersionOriginalId
+          : catalog.activeId,
+    );
+    await saveVersionCatalog(songId, next);
+    return next;
+  }
+
+  Future<void> saveVersionCatalog(String songId, ScoreVersionCatalog catalog) {
+    return _storage.saveScoreVersionManifest(
+      songId,
+      jsonEncode(catalog.toJson()),
+    );
+  }
+
+  Future<MusicScore?> loadVersionScore({
+    required String songId,
+    required String versionId,
+  }) async {
+    if (versionId == scoreVersionOriginalId) return null;
+    final bytes = await _storage.loadScoreVersionBytes(songId, versionId);
+    if (bytes == null && versionId == scoreVersionLegacyPerformanceId) {
+      return loadPerformanceScore(songId);
+    }
+    if (bytes == null) return null;
+    return _codec.decode(
+      bytes is Uint8List ? bytes : Uint8List.fromList(bytes),
+      fileName: '$versionId.musicxml',
+    );
+  }
+
+  Future<ScoreVersionCatalog> addVersion({
+    required String songId,
+    required MusicScore source,
+    required ScoreVersionCatalog catalog,
+    required String name,
+    String? versionId,
+  }) async {
+    final id =
+        versionId ??
+        'v${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
+    final bytes = _codec.encode(source, MusicXmlFileFormat.musicXml);
+    await _storage.saveScoreVersionBytes(songId, id, bytes);
+    final next = catalog.copyWith(
+      activeId: id,
+      versions: [...catalog.versions, ScoreVersionRef(id: id, name: name)],
+    );
+    await saveVersionCatalog(songId, next);
+    return next;
   }
 
   Future<PlaybackSequence> loadSequence(String songId) async {

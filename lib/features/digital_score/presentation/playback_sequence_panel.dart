@@ -20,18 +20,23 @@ PlaybackSequence sequenceForMarkedSections(
   MusicScore score,
   PlaybackSequence current,
 ) {
-  final repeats = {
-    for (final item in current.items) item.section: item.repeats,
-  };
   final sections = <String>[];
   for (final range in discoverScoreSections(score)) {
     if (!sections.contains(range.section)) {
       sections.add(range.section);
     }
   }
+  final marked = sections.toSet();
+  final retained = <PlaybackSequenceItem>[
+    for (final item in current.items)
+      if (marked.contains(item.section)) item,
+  ];
+  final represented = retained.map((item) => item.section).toSet();
   return PlaybackSequence([
+    ...retained,
     for (final section in sections)
-      PlaybackSequenceItem(section: section, repeats: repeats[section] ?? 1),
+      if (!represented.contains(section))
+        PlaybackSequenceItem(section: section),
   ]);
 }
 
@@ -42,7 +47,10 @@ class ScoreStructurePanel extends StatelessWidget {
     required this.measureIndex,
     required this.onSectionChanged,
     required this.onRepeatsChanged,
-    required this.onInsertMeasure,
+    required this.onSectionMoved,
+    required this.onSectionAdded,
+    required this.onSectionRemoved,
+    required this.onDone,
     super.key,
   });
 
@@ -50,8 +58,11 @@ class ScoreStructurePanel extends StatelessWidget {
   final PlaybackSequence sequence;
   final int measureIndex;
   final ValueChanged<String?> onSectionChanged;
-  final void Function(String section, int repeats) onRepeatsChanged;
-  final VoidCallback onInsertMeasure;
+  final void Function(int index, int repeats) onRepeatsChanged;
+  final void Function(int fromIndex, int toIndex) onSectionMoved;
+  final ValueChanged<String> onSectionAdded;
+  final ValueChanged<int> onSectionRemoved;
+  final VoidCallback onDone;
 
   MusicMeasure get _measure {
     return score.parts.first.measures[measureIndex];
@@ -82,13 +93,24 @@ class ScoreStructurePanel extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        l10n.playbackSequence,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    TextButton(onPressed: onDone, child: Text(l10n.done)),
+                  ],
+                ),
                 Text(
                   l10n.playbackSequenceHelp,
                   style: Theme.of(
                     context,
                   ).textTheme.bodySmall?.copyWith(color: AppColors.mutedInk),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     Text(
@@ -122,9 +144,11 @@ class ScoreStructurePanel extends StatelessWidget {
                 Align(
                   alignment: Alignment.centerLeft,
                   child: TextButton.icon(
-                    onPressed: onInsertMeasure,
-                    icon: const Icon(Icons.add_box_outlined),
-                    label: Text(l10n.insertMeasureAfter),
+                    onPressed: section == null
+                        ? null
+                        : () => onSectionAdded(section),
+                    icon: const Icon(Icons.add_rounded),
+                    label: Text(l10n.addToPlaybackSequence),
                   ),
                 ),
                 if (marked.isEmpty)
@@ -138,13 +162,17 @@ class ScoreStructurePanel extends StatelessWidget {
                     ),
                   )
                 else
-                  for (final value in marked)
+                  for (var index = 0; index < sequence.items.length; index++)
                     _RepeatRow(
-                      section: value,
-                      repeats: _repeatsFor(sequence, value),
-                      onRepeatsChanged: (repeats) {
-                        onRepeatsChanged(value, repeats);
-                      },
+                      section: sequence.items[index].section,
+                      repeats: sequence.items[index].repeats,
+                      canMoveEarlier: index > 0,
+                      canMoveLater: index < sequence.items.length - 1,
+                      onMoveEarlier: () => onSectionMoved(index, index - 1),
+                      onMoveLater: () => onSectionMoved(index, index + 1),
+                      onRemove: () => onSectionRemoved(index),
+                      onRepeatsChanged: (repeats) =>
+                          onRepeatsChanged(index, repeats),
                     ),
               ],
             ),
@@ -155,22 +183,25 @@ class ScoreStructurePanel extends StatelessWidget {
   }
 }
 
-int _repeatsFor(PlaybackSequence sequence, String section) {
-  for (final item in sequence.items) {
-    if (item.section == section) return item.repeats;
-  }
-  return 1;
-}
-
 class _RepeatRow extends StatelessWidget {
   const _RepeatRow({
     required this.section,
     required this.repeats,
+    required this.canMoveEarlier,
+    required this.canMoveLater,
+    required this.onMoveEarlier,
+    required this.onMoveLater,
+    required this.onRemove,
     required this.onRepeatsChanged,
   });
 
   final String section;
   final int repeats;
+  final bool canMoveEarlier;
+  final bool canMoveLater;
+  final VoidCallback onMoveEarlier;
+  final VoidCallback onMoveLater;
+  final VoidCallback onRemove;
   final ValueChanged<int> onRepeatsChanged;
 
   @override
@@ -178,6 +209,16 @@ class _RepeatRow extends StatelessWidget {
     final l10n = context.l10n;
     return Row(
       children: [
+        IconButton(
+          tooltip: l10n.moveSectionEarlier,
+          onPressed: canMoveEarlier ? onMoveEarlier : null,
+          icon: const Icon(Icons.keyboard_arrow_up_rounded),
+        ),
+        IconButton(
+          tooltip: l10n.moveSectionLater,
+          onPressed: canMoveLater ? onMoveLater : null,
+          icon: const Icon(Icons.keyboard_arrow_down_rounded),
+        ),
         Expanded(child: Text(playbackSectionLabel(l10n, section))),
         IconButton(
           tooltip: l10n.repeatDown,
@@ -203,6 +244,11 @@ class _RepeatRow extends StatelessWidget {
               ? null
               : () => onRepeatsChanged(repeats + 1),
           icon: const Icon(Icons.add_rounded),
+        ),
+        IconButton(
+          tooltip: l10n.removeFromPlaybackSequence,
+          onPressed: onRemove,
+          icon: const Icon(Icons.close_rounded),
         ),
       ],
     );

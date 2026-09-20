@@ -39,22 +39,36 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #ffffff;
+      background: #f2f2f2;
       touch-action: none;
     }
 
     #alphaTab-frame {
       position: relative;
       width: 794px;
-      background: #ffffff;
+      height: 1123px;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          #ffffff 0,
+          #ffffff 1123px,
+          #f2f2f2 1123px,
+          #f2f2f2 1147px
+        );
       transform-origin: top left;
+      box-shadow: 0 0 0 1px #dddddd;
+    }
+
+    #alphaTab-frame.playback-follow {
+      transition: transform 220ms ease-out;
     }
 
     #alphaTab-container {
       position: relative;
       width: 794px;
-      padding: 16px 24px 32px;
-      background: #ffffff;
+      min-height: 0;
+      padding: 0;
+      background: transparent;
     }
 
     .pad-measure-highlight {
@@ -95,6 +109,62 @@
       background: #ff4800;
       color: #fff;
       font: 700 11px/16px ui-monospace, monospace;
+    }
+
+    .pad-note-ghost {
+      position: absolute;
+      pointer-events: none;
+      z-index: 6;
+      width: 18px;
+      height: 28px;
+      margin-left: -9px;
+      margin-top: -20px;
+      opacity: 0.55;
+    }
+
+    .pad-note-ghost::before {
+      content: '';
+      position: absolute;
+      left: 1px;
+      bottom: 2px;
+      width: 12px;
+      height: 9px;
+      border-radius: 50%;
+      background: #ff4800;
+      transform: rotate(-20deg);
+    }
+
+    .pad-note-ghost::after {
+      content: '';
+      position: absolute;
+      left: 12px;
+      bottom: 6px;
+      width: 2px;
+      height: 22px;
+      background: #ff4800;
+    }
+
+    .pad-note-ghost.is-rest::before {
+      width: 10px;
+      height: 4px;
+      border-radius: 1px;
+      left: 4px;
+      bottom: 12px;
+      transform: none;
+    }
+
+    .pad-note-ghost.is-rest::after {
+      display: none;
+    }
+
+    .pad-measure-ghost {
+      position: absolute;
+      pointer-events: none;
+      z-index: 5;
+      background: rgba(255, 72, 0, 0.12);
+      border: 2px dashed #ff4800;
+      border-radius: 8px;
+      opacity: 0.9;
     }
 
     .at-surface {
@@ -170,7 +240,16 @@
       var viewportWidthPx = 0;
       var viewportHeightPx = 0;
       var oneFingerPan = true;
+      var inputMode = 'off';
+      var inputDuration = 'quarter';
+      var inputRest = false;
+      var noteInputActive = null;
+      var measureDrag = null;
       var A4_WIDTH = 794;
+      var A4_HEIGHT = 1123;
+      var PAGE_GAP = 24;
+      var PAGE_GUTTER_X = 12;
+      var PAGE_GUTTER_Y = 8;
       var MIN_ZOOM = 1;
       var MAX_ZOOM = 4;
       var viewport = document.getElementById('alphaTab-viewport');
@@ -178,6 +257,10 @@
       var container = document.getElementById('alphaTab-container');
       var activePointers = {};
       var viewGesture = null;
+      var pageBreaks = [];
+      var paperStackHeight = A4_HEIGHT;
+      var playbackPlaying = false;
+      var followedPlaybackSystemY = null;
       var KEY_TONICS = {
         '-7': 'C♭', '-6': 'G♭', '-5': 'D♭', '-4': 'A♭', '-3': 'E♭',
         '-2': 'B♭', '-1': 'F', '0': 'C', '1': 'G', '2': 'D', '3': 'A',
@@ -191,45 +274,187 @@
         };
       }
 
+      function pageBaseX(scale) {
+        var availableW = Math.max(1, viewSize().w - PAGE_GUTTER_X * 2);
+        var contentW = A4_WIDTH * scale;
+        return PAGE_GUTTER_X + Math.max(0, (availableW - contentW) / 2);
+      }
+
       function resetView() {
         userZoom = 1;
         panX = 0;
         panY = 0;
+        followedPlaybackSystemY = null;
+        if (frame) frame.classList.remove('playback-follow');
         activePointers = {};
         viewGesture = null;
         applyPageFit();
       }
 
+      function sourceToPageY(sourceY) {
+        var offset = 0;
+        for (var i = 0; i < pageBreaks.length; i++) {
+          if (sourceY < pageBreaks[i].sourceY) break;
+          offset = pageBreaks[i].offset;
+        }
+        return sourceY + offset;
+      }
+
+      function pageToSourceY(pageY) {
+        for (var i = pageBreaks.length - 1; i >= 0; i--) {
+          var start = pageBreaks[i].sourceY + pageBreaks[i].offset;
+          if (pageY >= start) return pageY - pageBreaks[i].offset;
+        }
+        return pageY;
+      }
+
+      function scoreChunks(surface) {
+        return Array.prototype.filter.call(
+          surface.children,
+          function (child) { return !!child.querySelector('svg'); }
+        );
+      }
+
+      function unpaginateScore() {
+        var surface = container && container.querySelector('.at-surface');
+        if (!surface) {
+          pageBreaks = [];
+          paperStackHeight = A4_HEIGHT;
+          return;
+        }
+        var chunks = scoreChunks(surface);
+        for (var i = 0; i < chunks.length; i++) {
+          var chunk = chunks[i];
+          var applied = chunk.getAttribute('data-pad-offset');
+          if (applied == null) continue;
+          var top = Number.parseFloat(chunk.style.top) || 0;
+          chunk.style.top = (top - (Number.parseFloat(applied) || 0)) + 'px';
+          chunk.removeAttribute('data-pad-offset');
+          chunk.removeAttribute('data-pad-source-top');
+        }
+        pageBreaks = [];
+        paperStackHeight = A4_HEIGHT;
+      }
+
+      function paginateScore() {
+        var surface = container && container.querySelector('.at-surface');
+        if (!surface) {
+          pageBreaks = [];
+          paperStackHeight = A4_HEIGHT;
+          return paperStackHeight;
+        }
+        unpaginateScore();
+        var chunks = scoreChunks(surface);
+        pageBreaks = [];
+        var offset = 0;
+        var pageIndex = 0;
+        for (var i = 0; i < chunks.length; i++) {
+          var chunk = chunks[i];
+          chunk.style.marginTop = '0px';
+          var sourceTop = Number.parseFloat(chunk.style.top) || 0;
+          var height = Number.parseFloat(chunk.style.height) ||
+            chunk.offsetHeight || 0;
+          var pageStart = pageIndex * (A4_HEIGHT + PAGE_GAP);
+          var pageY = sourceTop + offset - pageStart;
+          if (pageY > 0 && pageY + height > A4_HEIGHT) {
+            pageIndex++;
+            var nextPageStart = pageIndex * (A4_HEIGHT + PAGE_GAP);
+            offset = nextPageStart - sourceTop;
+            pageBreaks.push({ sourceY: sourceTop, offset: offset });
+          }
+          chunk.setAttribute('data-pad-source-top', String(sourceTop));
+          chunk.setAttribute('data-pad-offset', String(offset));
+          chunk.style.top = (sourceTop + offset) + 'px';
+        }
+        paperStackHeight =
+          Math.max(A4_HEIGHT, (pageIndex + 1) * A4_HEIGHT + pageIndex * PAGE_GAP);
+        surface.style.height = paperStackHeight + 'px';
+        return paperStackHeight;
+      }
+
+      function scorePaperHeight() {
+        return Math.max(A4_HEIGHT, paperStackHeight);
+      }
+
+      function setCursorPageOffset(measureIndex) {
+        var master = masterBarBounds(measureIndex);
+        var box = master && boxSize(
+          master.lineAlignedBounds || master.visualBounds || master.realBounds
+        );
+        var cursors = container && container.querySelector('.at-cursors');
+        if (!cursors) return;
+        var offset = box ? sourceToPageY(box.y) - box.y : 0;
+        cursors.style.transform = 'translateY(' + offset + 'px)';
+      }
+
+      function followPlaybackMeasure(measureIndex) {
+        if (!playbackPlaying) return;
+        var box = systemBox(measureIndex);
+        if (!box) return;
+        var pageTop = sourceToPageY(box.y);
+        if (followedPlaybackSystemY === pageTop) return;
+
+        var view = viewSize();
+        var scale = pageFit * userZoom;
+        var pageBottom = sourceToPageY(box.y + box.h);
+        var screenTop = PAGE_GUTTER_Y + panY + pageTop * scale;
+        var screenBottom = PAGE_GUTTER_Y + panY + pageBottom * scale;
+        var topGuard = Math.max(32, view.h * 0.12);
+        var bottomGuard = Math.max(topGuard + 1, view.h * 0.76);
+        followedPlaybackSystemY = pageTop;
+        if (screenTop >= topGuard && screenBottom <= bottomGuard) return;
+
+        var targetTop = Math.max(32, view.h * 0.18);
+        panY = targetTop - PAGE_GUTTER_Y - pageTop * scale;
+        if (frame) frame.classList.add('playback-follow');
+        applyPageFit();
+      }
+
       function clampPan() {
         var view = viewSize();
-        var rawH = (container && (container.scrollHeight || container.offsetHeight)) || 0;
+        var rawH = scorePaperHeight();
         var scale = pageFit * userZoom;
         var contentW = A4_WIDTH * scale;
         var contentH = rawH * scale;
-        if (!(contentW > view.w)) {
+        var availableW = Math.max(1, view.w - PAGE_GUTTER_X * 2);
+        var availableH = Math.max(1, view.h - PAGE_GUTTER_Y * 2);
+        if (!(contentW > availableW)) {
           panX = 0;
         } else {
-          panX = Math.max(Math.min(0, view.w - contentW), Math.min(0, panX));
+          panX = Math.max(
+            Math.min(0, availableW - contentW),
+            Math.min(0, panX)
+          );
         }
-        if (!(contentH > view.h)) {
+        if (!(contentH > availableH)) {
           panY = 0;
         } else {
-          panY = Math.max(Math.min(0, view.h - contentH), Math.min(0, panY));
+          panY = Math.max(
+            Math.min(0, availableH - contentH),
+            Math.min(0, panY)
+          );
         }
       }
 
       function applyPageFit() {
         var view = viewSize();
-        pageFit = view.w > 0 ? view.w / A4_WIDTH : 1;
+        var availableW = Math.max(1, view.w - PAGE_GUTTER_X * 2);
+        pageFit = view.w > 0 ? Math.min(1, availableW / A4_WIDTH) : 1;
         if (!Number.isFinite(pageFit) || pageFit <= 0) pageFit = 1;
         userZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, userZoom));
         clampPan();
-        if (container) container.style.width = A4_WIDTH + 'px';
+        if (container) {
+          container.style.width = A4_WIDTH + 'px';
+        }
         if (frame) {
+          var baseX = pageBaseX(pageFit * userZoom);
           frame.style.width = A4_WIDTH + 'px';
+          frame.style.height = scorePaperHeight() + 'px';
           frame.style.transformOrigin = 'top left';
           frame.style.transform =
-            'translate(' + panX + 'px,' + panY + 'px) scale(' + (pageFit * userZoom) + ')';
+            'translate(' + (baseX + panX) + 'px,' +
+            (PAGE_GUTTER_Y + panY) + 'px) scale(' +
+            (pageFit * userZoom) + ')';
         }
         return pageFit;
       }
@@ -295,17 +520,263 @@
         var newScale = pageFit * nextZoom;
         userZoom = nextZoom;
         if (oldScale > 0) {
-          panX = midX - (viewGesture.midX - viewGesture.panX) * (newScale / oldScale);
-          panY = midY - (viewGesture.midY - viewGesture.panY) * (newScale / oldScale);
+          var ratio = newScale / oldScale;
+          var oldBaseX = pageBaseX(oldScale);
+          var newBaseX = pageBaseX(newScale);
+          panX = midX - newBaseX -
+            (viewGesture.midX - oldBaseX - viewGesture.panX) * ratio;
+          panY = midY - PAGE_GUTTER_Y -
+            (viewGesture.midY - PAGE_GUTTER_Y - viewGesture.panY) * ratio;
         }
         applyPageFit();
       }
 
+      function zoomViewBy(factor, centerX, centerY) {
+        if (!Number.isFinite(factor) || factor <= 0) return userZoom;
+        var view = viewSize();
+        var focusX = Number.isFinite(centerX) ? centerX : view.w / 2;
+        var focusY = Number.isFinite(centerY) ? centerY : view.h / 2;
+        followedPlaybackSystemY = null;
+        if (frame) frame.classList.remove('playback-follow');
+        var oldZoom = userZoom;
+        var nextZoom = Math.max(
+          MIN_ZOOM,
+          Math.min(MAX_ZOOM, oldZoom * factor)
+        );
+        if (nextZoom === oldZoom) return userZoom;
+        var oldScale = pageFit * oldZoom;
+        var newScale = pageFit * nextZoom;
+        var ratio = newScale / oldScale;
+        var oldBaseX = pageBaseX(oldScale);
+        var newBaseX = pageBaseX(newScale);
+        panX = focusX - newBaseX - (focusX - oldBaseX - panX) * ratio;
+        panY = focusY - PAGE_GUTTER_Y -
+          (focusY - PAGE_GUTTER_Y - panY) * ratio;
+        userZoom = nextZoom;
+        applyPageFit();
+        return userZoom;
+      }
+
+      function clearNoteGhost() {
+        var old = container.querySelectorAll('.pad-note-ghost');
+        for (var i = 0; i < old.length; i++) old[i].remove();
+        noteInputActive = null;
+      }
+
+      function clearMeasureGhost() {
+        var old = container.querySelectorAll('.pad-measure-ghost');
+        for (var i = 0; i < old.length; i++) old[i].remove();
+      }
+
+      function drawNoteGhost(point, rest) {
+        var surface = container.querySelector('.at-surface') || container;
+        var old = container.querySelectorAll('.pad-note-ghost');
+        for (var i = 0; i < old.length; i++) old[i].remove();
+        if (!point) return;
+        var ghost = document.createElement('div');
+        ghost.className = 'pad-note-ghost' + (rest ? ' is-rest' : '');
+        ghost.setAttribute('aria-hidden', 'true');
+        ghost.style.left = point.x + 'px';
+        ghost.style.top = sourceToPageY(point.y) + 'px';
+        surface.appendChild(ghost);
+      }
+
+      function drawMeasureGhostAt(measureIndex) {
+        clearMeasureGhost();
+        var box = measureUnion(measureIndex) || systemBox(measureIndex);
+        if (!box) return;
+        var surface = container.querySelector('.at-surface') || container;
+        var ghost = document.createElement('div');
+        ghost.className = 'pad-measure-ghost';
+        ghost.setAttribute('aria-hidden', 'true');
+        ghost.style.left = box.x + 'px';
+        ghost.style.top = sourceToPageY(box.y) + 'px';
+        ghost.style.width = box.w + 'px';
+        ghost.style.height = box.h + 'px';
+        surface.appendChild(ghost);
+      }
+
+      function viewToSourcePoint(vx, vy) {
+        var scale = pageFit * userZoom;
+        if (!(scale > 0)) scale = 1;
+        var baseX = pageBaseX(scale);
+        return {
+          x: (vx - baseX - panX) / scale,
+          y: pageToSourceY((vy - PAGE_GUTTER_Y - panY) / scale)
+        };
+      }
+
+      function durationTicks(type) {
+        switch (type) {
+          case 'whole': return 3840;
+          case 'half': return 1920;
+          case 'eighth': return 480;
+          case '16th': return 240;
+          default: return 960;
+        }
+      }
+
+      function barDurationTicks(bar) {
+        try {
+          if (bar && bar.masterBar && typeof bar.masterBar.calculateDuration === 'function') {
+            var duration = Number(bar.masterBar.calculateDuration());
+            if (duration > 0) return duration;
+          }
+        } catch (_) {}
+        return 3840;
+      }
+
+      function resolveStaffHit(point) {
+        if (!point || !lastScore || !lastScore.masterBars) return null;
+        var best = null;
+        var count = lastScore.masterBars.length;
+        for (var mi = 0; mi < count; mi++) {
+          var master = masterBarBounds(mi);
+          if (!master || !master.bars || !master.bars.length) continue;
+          for (var bi = 0; bi < master.bars.length; bi++) {
+            var barBounds = master.bars[bi];
+            var box = boxSize(barBounds.visualBounds || barBounds.realBounds);
+            if (!box) continue;
+            var padY = Math.max(24, box.h * 0.75);
+            var inX = point.x >= box.x - 4 && point.x <= box.x + box.w + 4;
+            var inY = point.y >= box.y - padY && point.y <= box.y + box.h + padY;
+            var cx = Math.max(box.x, Math.min(point.x, box.x + box.w));
+            var cy = Math.max(box.y, Math.min(point.y, box.y + box.h));
+            var dist = (point.x - cx) * (point.x - cx) + (point.y - cy) * (point.y - cy);
+            if (inX && inY) dist *= 0.01;
+            if (!best || dist < best.dist) {
+              best = {
+                dist: dist,
+                masterIndex: mi,
+                barBounds: barBounds,
+                box: box
+              };
+            }
+          }
+        }
+        if (!best || best.dist > 120 * 120) return null;
+        var bar = best.barBounds.bar;
+        if (!bar) return null;
+        var beat = nearestBeatInBar(best.barBounds, point.x);
+        if (!beat) {
+          var voices = bar.voices || [];
+          for (var vi = 0; vi < voices.length; vi++) {
+            if (voices[vi] && voices[vi].beats && voices[vi].beats.length) {
+              beat = voices[vi].beats[0];
+              break;
+            }
+          }
+        }
+        if (!beat) return null;
+        var onsetTicks = onsetTicksForPoint(best.box, bar, point.x, beat);
+        var midi = midiAtStaffBox(bar, best.box, point.y);
+        var ghostPoint = staffPointForMidiBox(best.box, bar, midi);
+        ghostPoint.x = Math.max(
+          best.box.x + 8,
+          Math.min(point.x, best.box.x + best.box.w - 8)
+        );
+        return {
+          beat: beat,
+          bar: bar,
+          masterIndex: best.masterIndex,
+          midi: midi,
+          onsetTicks: onsetTicks,
+          ghostPoint: ghostPoint,
+          box: best.box
+        };
+      }
+
+      function nearestBeatInBar(barBounds, pointX) {
+        var beats = barBounds.beats || [];
+        var bestBeat = null;
+        var bestDist = Infinity;
+        for (var i = 0; i < beats.length; i++) {
+          var bounds = beats[i];
+          var beat = bounds.beat;
+          var vb = boxSize(bounds.visualBounds || bounds.realBounds);
+          if (!beat) continue;
+          var mid = vb ? vb.x + vb.w / 2 : pointX;
+          var dist = Math.abs(pointX - mid);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestBeat = beat;
+          }
+        }
+        return bestBeat;
+      }
+
+      function onsetTicksForPoint(box, bar, pointX, beat) {
+        var ratio = box.w > 0 ? (pointX - box.x) / box.w : 0;
+        ratio = Math.max(0, Math.min(0.999, ratio));
+        var total = barDurationTicks(bar);
+        var step = durationTicks(inputDuration);
+        var ticks = Math.round((ratio * total) / step) * step;
+        ticks = Math.max(0, Math.min(total - step, ticks));
+        if (!(ticks >= 0)) {
+          return beat && beat.displayStart != null ? beat.displayStart : 0;
+        }
+        return ticks;
+      }
+
+      function updateNoteGhostFromView(x, y) {
+        var point = viewToSourcePoint(x, y);
+        var rect = (viewport || frame).getBoundingClientRect();
+        pointer.x = rect.left + x;
+        pointer.y = rect.top + y;
+        var hit = resolveStaffHit(point);
+        if (!hit) return noteInputActive;
+        drawNoteGhost(hit.ghostPoint, inputRest);
+        noteInputActive = hit;
+        return noteInputActive;
+      }
+
+      function commitNoteGhost() {
+        if (!noteInputActive) {
+          clearNoteGhost();
+          return false;
+        }
+        postStaffTapHit(noteInputActive);
+        clearNoteGhost();
+        return true;
+      }
+
+      function updateMeasureDragFromView(x, y) {
+        if (!measureDrag) return;
+        var target = measureAtSourcePoint(viewToSourcePoint(x, y));
+        if (target == null) return;
+        measureDrag.toIndex = target;
+        drawMeasureGhostAt(target);
+      }
+
+      function commitMeasureDrag() {
+        if (!measureDrag) return;
+        var fromIndex = measureDrag.fromIndex;
+        var toIndex = measureDrag.toIndex;
+        measureDrag = null;
+        clearMeasureGhost();
+        if (fromIndex === toIndex) return;
+        postToFlutter('measureMoved', {
+          fromIndex: fromIndex,
+          toIndex: toIndex
+        });
+      }
+
       function handleViewPointer(phase, id, x, y) {
         if (phase === 'down') {
+          followedPlaybackSystemY = null;
+          if (frame) frame.classList.remove('playback-follow');
           activePointers[id] = { x: x, y: y };
           if (pointerList().length >= 2) {
+            clearNoteGhost();
             viewGesture = startPinchGesture();
+          } else if (measureDrag) {
+            viewGesture = { type: 'measure-drag' };
+            updateMeasureDragFromView(x, y);
+          } else if (inputMode === 'note' || inputMode === 'rest') {
+            viewGesture = { type: 'note-input' };
+            updateNoteGhostFromView(x, y);
+          } else if (inputMode === 'select') {
+            viewGesture = { type: 'select', x: x, y: y };
           } else if (oneFingerPan) {
             viewGesture = { type: 'pan', x: x, y: y, panX: panX, panY: panY };
           } else {
@@ -317,16 +788,37 @@
           if (!activePointers[id]) return;
           activePointers[id] = { x: x, y: y };
           if (pointerList().length >= 2) {
+            clearNoteGhost();
             if (!viewGesture || viewGesture.type !== 'pinch') {
               viewGesture = startPinchGesture();
             }
             applyPinchGesture();
+          } else if (viewGesture && viewGesture.type === 'measure-drag') {
+            updateMeasureDragFromView(x, y);
+          } else if (viewGesture && viewGesture.type === 'note-input') {
+            updateNoteGhostFromView(x, y);
           } else if (viewGesture && viewGesture.type === 'pan' && oneFingerPan) {
             panX = viewGesture.panX + (x - viewGesture.x);
             panY = viewGesture.panY + (y - viewGesture.y);
             applyPageFit();
           }
           return;
+        }
+        if (viewGesture && viewGesture.type === 'note-input' &&
+            pointerList().length <= 1) {
+          commitNoteGhost();
+        }
+        if (viewGesture && viewGesture.type === 'measure-drag' &&
+            pointerList().length <= 1) {
+          commitMeasureDrag();
+        }
+        if (viewGesture && viewGesture.type === 'select' &&
+            pointerList().length <= 1) {
+          var dx = x - viewGesture.x;
+          var dy = y - viewGesture.y;
+          if ((dx * dx + dy * dy) < 100) {
+            selectMeasureAtView(x, y);
+          }
         }
         delete activePointers[id];
         if (pointerList().length >= 2) {
@@ -343,41 +835,6 @@
         } else {
           viewGesture = null;
         }
-      }
-
-      function installViewGestures() {
-        if (!viewport || viewport.dataset.padViewGestures === '1') return;
-        viewport.dataset.padViewGestures = '1';
-        function localTouch(touch) {
-          var rect = viewport.getBoundingClientRect();
-          return {
-            x: touch.clientX - rect.left,
-            y: touch.clientY - rect.top
-          };
-        }
-        viewport.addEventListener('touchstart', function (event) {
-          for (var i = 0; i < event.changedTouches.length; i++) {
-            var touch = event.changedTouches[i];
-            var local = localTouch(touch);
-            handleViewPointer('down', touch.identifier, local.x, local.y);
-          }
-          if (shouldCapturePointers(event.touches.length)) event.preventDefault();
-        }, { passive: false });
-        viewport.addEventListener('touchmove', function (event) {
-          for (var i = 0; i < event.changedTouches.length; i++) {
-            var touch = event.changedTouches[i];
-            var local = localTouch(touch);
-            handleViewPointer('move', touch.identifier, local.x, local.y);
-          }
-          if (shouldCapturePointers(event.touches.length)) event.preventDefault();
-        }, { passive: false });
-        function endTouches(event) {
-          for (var i = 0; i < event.changedTouches.length; i++) {
-            handleViewPointer('up', event.changedTouches[i].identifier, 0, 0);
-          }
-        }
-        viewport.addEventListener('touchend', endTouches, { passive: true });
-        viewport.addEventListener('touchcancel', endTouches, { passive: true });
       }
 
       function postScoreSystems() {
@@ -461,20 +918,10 @@
         };
       }
 
-      function measureAtPoint(clientX, clientY) {
-        var lookup = boundsLookup();
-        var point = toLocalPoint(clientX, clientY);
-        if (lookup) {
-          var beat = null;
-          if (typeof lookup.getBeatAtPos === 'function') {
-            beat = lookup.getBeatAtPos(point.x, point.y);
-          } else if (typeof lookup.findBeatAtPos === 'function') {
-            beat = lookup.findBeatAtPos(point.x, point.y);
-          }
-          if (beat && beat.voice && beat.voice.bar) {
-            return beat.voice.bar.index;
-          }
-        }
+      function measureAtSourcePoint(point) {
+        if (!point) return null;
+        var hit = resolveStaffHit(point);
+        if (hit) return hit.masterIndex;
         var count = lastScore && lastScore.masterBars
           ? lastScore.masterBars.length
           : 0;
@@ -489,6 +936,18 @@
           }
         }
         return null;
+      }
+
+      function measureAtPoint(clientX, clientY) {
+        return measureAtSourcePoint(toLocalPoint(clientX, clientY));
+      }
+
+      function selectMeasureAtView(x, y) {
+        var measure = measureAtSourcePoint(viewToSourcePoint(x, y));
+        if (measure == null) return -1;
+        highlightMeasure(measure);
+        postToFlutter('scoreTapped', { measure: measure + 1 });
+        return measure;
       }
 
       function systemBox(measureIndex) {
@@ -520,7 +979,7 @@
         if (!Number.isFinite(highlightedMeasure) || highlightedMeasure < 0) {
           return false;
         }
-        var box = systemBox(highlightedMeasure);
+        var box = measureUnion(highlightedMeasure) || systemBox(highlightedMeasure);
         if (!box) {
           if ((attempt || 0) < 10) {
             window.setTimeout(function () {
@@ -535,7 +994,7 @@
         overlay.setAttribute('aria-hidden', 'true');
         overlay.setAttribute('data-measure', String(highlightedMeasure + 1));
         overlay.style.left = box.x + 'px';
-        overlay.style.top = box.y + 'px';
+        overlay.style.top = sourceToPageY(box.y) + 'px';
         overlay.style.width = box.w + 'px';
         overlay.style.height = box.h + 'px';
         surface.appendChild(overlay);
@@ -557,7 +1016,7 @@
           overlay.setAttribute('aria-hidden', 'true');
           overlay.textContent = label;
           overlay.style.left = Math.max(0, boxes[0].x + boxes[0].w - 22) + 'px';
-          overlay.style.top = Math.max(0, boxes[0].y - 16) + 'px';
+          overlay.style.top = Math.max(0, sourceToPageY(boxes[0].y) - 16) + 'px';
           surface.appendChild(overlay);
         }
       }
@@ -604,7 +1063,7 @@
           overlay.setAttribute('aria-hidden', 'true');
           overlay.textContent = label;
           overlay.style.left = sectionMarkX(i, boxes[0]) + 'px';
-          overlay.style.top = Math.max(0, boxes[0].y - 20) + 'px';
+          overlay.style.top = Math.max(0, sourceToPageY(boxes[0].y) - 20) + 'px';
           surface.appendChild(overlay);
         }
       }
@@ -612,6 +1071,7 @@
       function notifyRendered() {
         if (!lastScore) return;
         window.requestAnimationFrame(function () {
+          paginateScore();
           applyPageFit();
           postScoreSystems();
           postToFlutter('renderFinished', {
@@ -675,13 +1135,13 @@
       function initAlphaTab() {
         currentScale = 1;
         resetView();
-        installViewGestures();
         var scriptFile = new URL('./vendor/alphaTab.min.js', document.baseURI).href;
 
         api = new alphaTab.AlphaTabApi(container, {
           core: {
             engine: 'svg',
             useWorkers: false,
+            enableLazyLoading: false,
             includeNoteBounds: true,
             fontDirectory: './vendor/font/',
             scriptFile: scriptFile
@@ -754,6 +1214,9 @@
 
         api.playerStateChanged.on(function (args) {
           var playing = args.state === alphaTab.synth.PlayerState.Playing;
+          playbackPlaying = playing;
+          followedPlaybackSystemY = null;
+          if (!playing && frame) frame.classList.remove('playback-follow');
           document.body.classList.toggle('playback-playing', playing);
           postToFlutter('playerStateChanged', {
             playing: playing,
@@ -780,6 +1243,8 @@
           try {
             var voice = beat.voice;
             var bar = voice.bar;
+            setCursorPageOffset(bar.index);
+            followPlaybackMeasure(bar.index);
             postToFlutter('playedBeatChanged', {
               partIndex: bar.staff.track.index,
               measureIndex: bar.index,
@@ -825,6 +1290,10 @@
                 return;
               }
               ignoreNextMeasureClick = true;
+              if (inputMode === 'note' || inputMode === 'rest' ||
+                  inputMode === 'select') {
+                return;
+              }
               postStaffTap(beat, midiAtBeat(beat, pointer.x, pointer.y));
             } catch (error) {
               postToFlutter('error', { message: errorMessage(error) });
@@ -842,6 +1311,33 @@
           if (ignoreNextMeasureClick) {
             ignoreNextMeasureClick = false;
             return;
+          }
+          if (inputMode === 'note' || inputMode === 'rest' ||
+              inputMode === 'select') {
+            return;
+          }
+          var lookup = boundsLookup();
+          if (lookup && lookup.getBeatAtPos) {
+            var point = toLocalPoint(event.clientX, event.clientY);
+            var beat = lookup.getBeatAtPos(point.x, point.y);
+            if (beat) {
+              var note = lookup.getNoteAtPos
+                ? lookup.getNoteAtPos(beat, point.x, point.y)
+                : null;
+              if (note && !note.isRest) {
+                postNoteHit('noteTapped', note, note.realValue);
+                return;
+              }
+              var bar = beat.voice && beat.voice.bar;
+              if (bar) {
+                highlightMeasure(bar.masterBar ? bar.masterBar.index : bar.index);
+              }
+              postStaffTap(
+                beat,
+                midiAtBeat(beat, event.clientX, event.clientY)
+              );
+              return;
+            }
           }
           var measure = measureAtPoint(event.clientX, event.clientY);
           if (measure == null) return;
@@ -886,9 +1382,10 @@
         var rect = surface.getBoundingClientRect();
         var sx = rect.width > 0 ? surface.offsetWidth / rect.width : 1;
         var sy = rect.height > 0 ? surface.offsetHeight / rect.height : 1;
+        var pageY = (clientY - rect.top) * sy;
         return {
           x: (clientX - rect.left) * sx,
-          y: (clientY - rect.top) * sy
+          y: pageToSourceY(pageY)
         };
       }
 
@@ -903,34 +1400,93 @@
         return oct * 12 + naturals[rem];
       }
 
+      function stepsFromBottom(bottomMidi, midi) {
+        var best = 0;
+        var bestDist = Infinity;
+        for (var s = -24; s <= 36; s++) {
+          var dist = Math.abs(diatonicFromBottom(bottomMidi, s) - midi);
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = s;
+            if (dist === 0) break;
+          }
+        }
+        return best;
+      }
+
+      function clefInfoForBar(bar) {
+        var clef = bar && bar.clef;
+        var isBass = false;
+        if (alphaTab.model && alphaTab.model.Clef) {
+          isBass = clef === alphaTab.model.Clef.F4;
+        } else if (bar && bar.staff && bar.staff.index >= 1) {
+          isBass = true;
+        }
+        return {
+          isBass: isBass,
+          bottomMidi: isBass ? 43 : 64,
+          defaultMidi: isBass ? 55 : 67
+        };
+      }
+
+      function midiAtStaffBox(bar, box, pointY) {
+        var clef = clefInfoForBar(bar);
+        if (!box || !box.h) return clef.defaultMidi;
+        var steps = Math.round((box.y + box.h - pointY) / (box.h / 8));
+        return Math.max(21, Math.min(108, diatonicFromBottom(clef.bottomMidi, steps)));
+      }
+
+      function staffPointForMidiBox(box, bar, midi) {
+        if (!box) return { x: 0, y: 0 };
+        var clef = clefInfoForBar(bar);
+        var steps = stepsFromBottom(clef.bottomMidi, midi);
+        return {
+          x: box.x + box.w / 2,
+          y: box.y + box.h - steps * (box.h / 8)
+        };
+      }
+
       function midiAtBeat(beat, clientX, clientY) {
+        var point = toLocalPoint(clientX, clientY);
+        var staff = beatStaffBox(beat);
+        return midiAtStaffBox(
+          beat.voice && beat.voice.bar,
+          staff && staff.box,
+          point.y
+        );
+      }
+
+      function beatStaffBox(beat) {
         var lookup = boundsLookup();
         var beatBounds = lookup && lookup.findBeat ? lookup.findBeat(beat) : null;
-        var box = beatBounds && beatBounds.barBounds && beatBounds.barBounds.visualBounds
-          ? beatBounds.barBounds.visualBounds
-          : (beatBounds && beatBounds.visualBounds);
-        var clef = beat.voice.bar.clef;
-        var isBass = !!(alphaTab.model && alphaTab.model.Clef &&
-          clef === alphaTab.model.Clef.F4);
-        var bottomMidi = isBass ? 43 : 64;
-        if (!box || !box.h) return isBass ? 55 : 67;
-        var point = toLocalPoint(clientX, clientY);
-        var steps = Math.round((box.y + box.h - point.y) / (box.h / 8));
-        var midi = diatonicFromBottom(bottomMidi, steps);
-        return Math.max(21, Math.min(108, midi));
+        if (!beatBounds) return null;
+        var barBox = beatBounds.barBounds &&
+          (beatBounds.barBounds.visualBounds || beatBounds.barBounds.realBounds);
+        var visual = beatBounds.visualBounds || beatBounds.realBounds;
+        return {
+          box: boxSize(barBox) || boxSize(visual),
+          visual: boxSize(visual)
+        };
+      }
+
+      function postStaffTapHit(hit) {
+        var bar = hit.bar || (hit.beat && hit.beat.voice && hit.beat.voice.bar);
+        if (!bar) return;
+        var staff = bar.staff;
+        var measureIndex = bar.masterBar ? bar.masterBar.index : bar.index;
+        postToFlutter('staffTapped', {
+          partIndex: staff.track.index,
+          measureIndex: measureIndex,
+          staff: staff.index + 1,
+          onsetTicks: hit.onsetTicks != null
+            ? hit.onsetTicks
+            : (hit.beat ? hit.beat.displayStart : 0),
+          midi: hit.midi
+        });
       }
 
       function postStaffTap(beat, midi) {
-        var voice = beat.voice;
-        var bar = voice.bar;
-        var staff = bar.staff;
-        postToFlutter('staffTapped', {
-          partIndex: staff.track.index,
-          measureIndex: bar.index,
-          staff: staff.index + 1,
-          onsetTicks: beat.displayStart,
-          midi: midi
-        });
+        postStaffTapHit({ beat: beat, bar: beat.voice.bar, midi: midi });
       }
 
       function postNoteHit(type, note, midi, originalMidi) {
@@ -938,9 +1494,10 @@
         var voice = beat.voice;
         var bar = voice.bar;
         var staff = bar.staff;
+        var measureIndex = bar.masterBar ? bar.masterBar.index : bar.index;
         var payload = {
           partIndex: staff.track.index,
-          measureIndex: bar.index,
+          measureIndex: measureIndex,
           staff: staff.index + 1,
           voiceIndex: voice.index,
           onsetTicks: beat.displayStart,
@@ -977,6 +1534,7 @@
       window.bridgeLoadScore = function (xmlContent) {
         if (!api) return false;
         try {
+          unpaginateScore();
           resetView();
           var bytes = new TextEncoder().encode(xmlContent);
           if (typeof api.load === 'function') {
@@ -1016,12 +1574,7 @@
       };
 
       window.bridgeTapAt = function (x, y) {
-        var rect = (viewport || frame).getBoundingClientRect();
-        var measure = measureAtPoint(rect.left + x, rect.top + y);
-        if (measure == null) return -1;
-        highlightMeasure(measure);
-        postToFlutter('scoreTapped', { measure: measure + 1 });
-        return measure;
+        return selectMeasureAtView(x, y);
       };
 
       window.bridgeSetViewport = function (width, height) {
@@ -1036,12 +1589,46 @@
         return oneFingerPan;
       };
 
+      window.bridgeSetInputMode = function (mode, duration, rest) {
+        inputMode = mode || 'off';
+        inputDuration = duration || 'quarter';
+        inputRest = !!rest;
+        if (inputMode !== 'note' && inputMode !== 'rest') {
+          clearNoteGhost();
+        }
+        if (inputMode === 'off') {
+          measureDrag = null;
+          clearMeasureGhost();
+        }
+        return inputMode;
+      };
+
+      window.bridgeStartMeasureDrag = function (measureIndex) {
+        var index = Number(measureIndex);
+        if (!Number.isFinite(index) || index < 0) return false;
+        measureDrag = { fromIndex: index, toIndex: index };
+        drawMeasureGhostAt(index);
+        return true;
+      };
+
+      window.bridgeCancelMeasureDrag = function () {
+        measureDrag = null;
+        clearMeasureGhost();
+        return true;
+      };
+
       window.bridgeSetView = function (zoom, nextPanX, nextPanY) {
+        followedPlaybackSystemY = null;
+        if (frame) frame.classList.remove('playback-follow');
         if (Number.isFinite(zoom)) userZoom = zoom;
         if (Number.isFinite(nextPanX)) panX = nextPanX;
         if (Number.isFinite(nextPanY)) panY = nextPanY;
         applyPageFit();
         return true;
+      };
+
+      window.bridgeZoomBy = function (factor, centerX, centerY) {
+        return zoomViewBy(factor, centerX, centerY);
       };
 
       window.bridgePointer = function (phase, id, x, y) {

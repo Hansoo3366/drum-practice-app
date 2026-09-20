@@ -11,7 +11,7 @@ const standardPlaybackSections = <String>[
 
 const int minPlaybackRepeats = 1;
 const int maxPlaybackRepeats = 16;
-const int maxExpandedMeasures = 256;
+const int maxExpandedMeasures = 4096;
 
 class PlaybackSequenceItem {
   PlaybackSequenceItem({required String section, this.repeats = 1})
@@ -134,9 +134,11 @@ List<String?> measureSectionCodes(MusicScore score) {
   final count = score.parts.first.measures.length;
   final labels = List<String?>.filled(count, null);
   for (final range in discoverScoreSections(score)) {
-    for (var index = range.startMeasureIndex;
-        index <= range.endMeasureIndex;
-        index++) {
+    for (
+      var index = range.startMeasureIndex;
+      index <= range.endMeasureIndex;
+      index++
+    ) {
       labels[index] = range.section;
     }
   }

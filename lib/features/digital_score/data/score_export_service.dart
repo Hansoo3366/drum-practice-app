@@ -9,7 +9,7 @@ import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/performance_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 
-enum ScoreExportKind { musicXml, xml, mxl, midi, pdf, project }
+enum ScoreExportKind { musicXml, midi, pdf, project }
 
 class ScoreExport {
   const ScoreExport({
@@ -59,16 +59,6 @@ class ScoreExportService {
         bytes: _musicXmlCodec.encode(performance, MusicXmlFileFormat.musicXml),
         fileName: '$safeTitle.musicxml',
         extension: 'musicxml',
-      ),
-      ScoreExportKind.xml => ScoreExport(
-        bytes: _musicXmlCodec.encode(performance, MusicXmlFileFormat.musicXml),
-        fileName: '$safeTitle.xml',
-        extension: 'xml',
-      ),
-      ScoreExportKind.mxl => ScoreExport(
-        bytes: _musicXmlCodec.encode(performance, MusicXmlFileFormat.mxl),
-        fileName: '$safeTitle.mxl',
-        extension: 'mxl',
       ),
       ScoreExportKind.midi => ScoreExport(
         bytes: _midiCodec.encode(performance),

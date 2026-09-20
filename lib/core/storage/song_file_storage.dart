@@ -69,6 +69,15 @@ class SongFileStorage {
     );
   }
 
+  String performanceScorePathFor(String songId) =>
+      path.join('performance_scores', '$songId.musicxml');
+
+  String scoreVersionManifestPathFor(String songId) =>
+      path.join('score_versions', songId, 'manifest.json');
+
+  String scoreVersionPathFor(String songId, String versionId) =>
+      path.join('score_versions', songId, '$versionId.musicxml');
+
   String annotationPathFor(String songId) =>
       path.join('annotations', '$songId.json');
 
@@ -127,6 +136,54 @@ class SongFileStorage {
 
   Future<String?> loadOriginalKey(String songId) async {
     return _loadSidecar(originalKeyPathFor(songId));
+  }
+
+  Future<bool> hasPerformanceScore(String songId) async {
+    final file = await resolve(performanceScorePathFor(songId));
+    return file.exists();
+  }
+
+  Future<List<int>?> loadPerformanceScoreBytes(String songId) async {
+    final file = await resolve(performanceScorePathFor(songId));
+    if (!await file.exists() || await file.length() == 0) return null;
+    return file.readAsBytes();
+  }
+
+  Future<void> savePerformanceScore(String songId, List<int> bytes) async {
+    await replaceFile(performanceScorePathFor(songId), bytes);
+  }
+
+  Future<void> deletePerformanceScore(String songId) async {
+    await delete(performanceScorePathFor(songId));
+  }
+
+  Future<String?> loadScoreVersionManifest(String songId) {
+    return _loadSidecar(scoreVersionManifestPathFor(songId));
+  }
+
+  Future<void> saveScoreVersionManifest(String songId, String jsonContent) {
+    return _saveSidecar(scoreVersionManifestPathFor(songId), jsonContent);
+  }
+
+  Future<List<int>?> loadScoreVersionBytes(
+    String songId,
+    String versionId,
+  ) async {
+    final file = await resolve(scoreVersionPathFor(songId, versionId));
+    if (!await file.exists() || await file.length() == 0) return null;
+    return file.readAsBytes();
+  }
+
+  Future<void> saveScoreVersionBytes(
+    String songId,
+    String versionId,
+    List<int> bytes,
+  ) {
+    return replaceFile(scoreVersionPathFor(songId, versionId), bytes);
+  }
+
+  Future<void> deleteScoreVersion(String songId, String versionId) async {
+    await delete(scoreVersionPathFor(songId, versionId));
   }
 
   Future<void> _saveSidecar(String relativePath, String jsonContent) async {

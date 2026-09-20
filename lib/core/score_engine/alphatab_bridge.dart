@@ -309,6 +309,7 @@ sealed class AlphaTabEvent {
       'noteTapped' => AlphaTabNoteTappedEvent.fromJson(data),
       'staffTapped' => AlphaTabStaffTappedEvent.fromJson(data),
       'noteDragged' => AlphaTabNoteDraggedEvent.fromJson(data),
+      'measureMoved' => AlphaTabMeasureMovedEvent.fromJson(data),
       'playerReady' => AlphaTabPlayerReadyEvent.fromJson(data),
       'playerIssue' => AlphaTabPlayerIssueEvent.fromJson(data),
       'playerStateChanged' => AlphaTabPlayerStateEvent.fromJson(data),
@@ -416,10 +417,7 @@ class ScoreSystemsEvent extends AlphaTabEvent {
       systems: [
         for (final item in raw)
           if (item is Map)
-            (
-              start: _readInt(item['start']),
-              end: _readInt(item['end']),
-            ),
+            (start: _readInt(item['start']), end: _readInt(item['end'])),
       ],
     );
   }
@@ -522,6 +520,23 @@ class AlphaTabNoteDraggedEvent extends AlphaTabEvent {
   final int onsetTicks;
   final int originalMidi;
   final int midi;
+}
+
+class AlphaTabMeasureMovedEvent extends AlphaTabEvent {
+  const AlphaTabMeasureMovedEvent({
+    required this.fromIndex,
+    required this.toIndex,
+  });
+
+  factory AlphaTabMeasureMovedEvent.fromJson(Map<String, dynamic> json) {
+    return AlphaTabMeasureMovedEvent(
+      fromIndex: _readInt(json['fromIndex']),
+      toIndex: _readInt(json['toIndex']),
+    );
+  }
+
+  final int fromIndex;
+  final int toIndex;
 }
 
 class AlphaTabPlayerReadyEvent extends AlphaTabEvent {

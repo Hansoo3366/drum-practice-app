@@ -2,6 +2,447 @@
 
 최신 작업을 문서 상단에 추가한다. 기존 기록은 수정하거나 삭제하지 않는다.
 
+## 2026-09-20 22:45 KST — A4 시스템 단위 페이지 넘김
+
+- 작업자: GPT-5.6 Sol
+- 목표: 마디/시스템이 페이지 경계에서 세로로 잘리던 문제 제거. 줄마다 A4 폭 맞춤
+- 변경:
+  - `paginateSystemsOntoA4Pages`: 시스템 블록+safety로 페이지 분할(Clair 3줄/쪽)
+  - `_A4ScoreDocumentPainter`: 페이지마다 시스템 밴드만 옮김. 첫 페이지만 topInset, 이후는 경계부터(이전 줄 하단 잔상 제거)
+  - 줄마다 마디선 기준 `scaleX`로 A4 안쪽 폭 맞춤
+  - 테스트 `a4_system_pagination_test.dart`
+- 검증: 단위 테스트 통과, SM-S937N Clair 캡처 `pag_clair8_break` — 페이지 간격 위 ink 0(잘림 없음), 시스템 가로 fill ≈0.87–0.95
+- 남은 일: 템포 문구 중복, 슬러가 마디선보다 길 때 가로 스케일 미세 조정, YDP 음색
+
+## 2026-09-20 22:05 KST — A4 용지 조판 복원
+
+- 작업자: GPT-5.6 Sol
+- 목표: 화면 폭 맞추기로 이탈했던 결정을 되돌린다. 조판·흰 종이는 A4(794×1123)
+- 변경:
+  - `scorePageWidthPx/Height/Gap` 상수 유지·보강
+  - `GrandStaffPainter.availableWidth` = A4 폭(패딩 제외)
+  - 흰 A4 종이 적층 + 24px 회색 간격, 종이 clip 안에서만 조판
+  - 초기·맞춤 배율 = 화면너비/794
+- 검증: layout probe 통과, Clair `clair_a4.png` 흰 종이 밖 spill 0, 페이지 사이 회색 띠 확인
+- 남은 일: 시스템 단위 페이지 재배치(경계 걸침 완화), 템포 중복
+
+## 2026-09-20 21:56 KST — Clair 흰 종이 뚫림 수정(사용자 캡처 기준)
+
+- 작업자: GPT-5.6 Sol
+- 목표: 사용자 Clair 캡처에서 오선이 흰 종이를 뚫고 회색으로 나가던 문제
+- 변경:
+  - 흰 종이 `Container(decoration + clipBehavior: hardEdge)`로 강제 클립
+  - 조판 넘침은 종이 안에서 잘림
+  - 오선은 종이 폭까지만 다시 그림(낮은음자리 중도 끊김 보완)
+  - `Container` clip은 `decoration` 필수(미설정 시 assert 크래시 수정)
+- 검증: Clair 재설치 캡처 `clair_v3.png` — 종이 밖 spill 0, 오선 끝 x≈1037/1080(여백 내)
+- 남은 일: Andante/템포 중복, 마디 뒤 빈 오선 길이 다듬기
+
+## 2026-09-20 21:35 KST — 흰 종이 밖 오선·악보 넘침 수정
+
+- 작업자: GPT-5.6 Sol
+- 목표: 가로 스케일·오선 연장이 흰 종이(캔버스) 밖 회색 여백까지 침범하던 문제
+- 변경: 가로 스케일/오선 오버레이 제거, 종이 ClipRect, InteractiveViewer margin 0·clip, 배경 canvas 통일
+- 검증: `pad_paper_fix.png` 좌우 margin spill 0, 테스트 통과, 재설치
+
+## 2026-09-20 21:25 KST — 오선 화면 밖 넘침 수정
+
+- 작업자: GPT-5.6 Sol
+- 목표: 가로 스케일(최소 1.2)로 악보·오선이 화면 밖으로 나가던 문제를 고친다
+- 변경 파일: `lib/features/digital_score/presentation/piano_score_view.dart`, `docs/*`
+- 완료 내용: 전체 Transform 제거 → 시스템 밴드별 스케일+ClipRect, 오선 endX를 종이 안으로 제한
+- 검증: SM-S937N `pad_score_clipfix.png` 좌우 가장자리 spill 0, layout probe 통과
+- 남은 일: Allegro 중복·상단 inset·이음줄
+
+## 2026-09-20 21:18 KST — 오선·시스템 가로 채움(캡처 검증)
+
+- 작업자: GPT-5.6 Sol
+- 목표: 오선/시스템이 화면 오른쪽을 비우던 문제를 캡처로 확인하고 고친다
+- 관련 로드맵: M8-03, B-017
+- 변경 파일: `lib/features/digital_score/presentation/piano_score_view.dart`, `test/features/digital_score/notemus_layout_probe_test.dart`, `docs/*`
+- 완료 내용:
+  - 원인: notemus가 시스템을 왼쪽 정렬해 두고, 오선은 마지막 글리프까지만 그림. 첫 시스템은 콘텐츠가 뷰포트의 ~85%에서 끝남
+  - `_JustifiedScorePaint`: 시스템 0 세로줄 기준 `Transform` 가로 스케일 + 오선 오버레이를 종이 폭까지 그림
+  - SM-S937N 캡처 `pad_score_verify10.png`: 세로줄 x≈1002/1080(간격 7.2%), 오선 끝 x≈1038(96.1%)
+- 검증: layout probe 테스트 통과, 기기 재설치·Fantaisie 캡처 픽셀 측정
+- 남은 일: Allegro 중복·상단 inset, 이음줄 넘침, 시스템별 개별 스케일, 입력 hit-test, YDP 음색
+
+## 2026-09-20 20:36 KST — 오선 화면 폭 맞춤·캡처 검증
+
+- 작업자: GPT-5.6 Sol
+- 목표: 오선지가 화면 끝까지 안 늘어나던 문제를 캡처로 확인하고 고친다
+- 관련 로드맵: M8-03, B-017
+- 변경 파일: `lib/features/digital_score/presentation/piano_score_view.dart`, `docs/*`
+- 완료 내용:
+  - 캡처로 오선이 콘텐츠 길이에서 끊기고 오른쪽이 비는 것을 확인
+  - 조판을 뷰포트 폭 기준으로 하고, 오선을 캔버스 끝까지 연장(조판 transform 좌표계)
+  - staffGap 확대, ScoreView 중첩 스크롤 제거 유지
+- 검증: 기기 재설치 후 Fantaisie 화면 재캡처로 확인 중
+- 남은 일: 사용자 최종 확인, 입력 hit-test, YDP 음색
+
+## 2026-09-20 20:24 KST — 조판 넘침·낮은음자리표 잘림 수정
+
+- 작업자: GPT-5.6 Sol
+- 목표: 악보가 흰 배경 밖으로 튀고 낮은음자리표가 안 보이던 문제를 고친다
+- 관련 로드맵: M8-03, B-017
+- 변경 파일:
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `test/features/digital_score/notemus_layout_probe_test.dart`
+  - `docs/*`
+- 완료 내용:
+  - 원인: ScoreView 내부 가로 스크롤 + InteractiveViewer 중첩, contentWidth(945)>페이지(794)
+  - 낮은음자리표 데이터는 있었으나 뷰포트/중첩 스크롤에 잘림
+  - `GrandStaffPainter` 직접 그리고 종이 크기를 content에 맞춤
+- 검증: layout probe·analyze 통과, APK 설치 PID 2134 (SHA-256 `f525ba80…`)
+- 남은 일: 사용자 확인, 입력 hit-test 정렬, YDP 음색
+
+## 2026-09-20 20:19 KST — MusicXML 속성 반복으로 조판 붕괴 수정
+
+- 작업자: GPT-5.6 Sol
+- 목표: Fantaisie ScoreView가 뒤죽박죽으로 보이던 구성을 고친다
+- 관련 로드맵: M8-03, B-017, D-141
+- 변경 파일:
+  - `lib/features/digital_score/data/music_xml_codec.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `test/features/digital_score/data/music_xml_codec_test.dart`
+  - `docs/*`
+- 완료 내용:
+  - 원인: 인코더가 138마디 전부에 clef/key/time을 재기록 → notemus가 마디마다 기호 중복 조판
+  - 변경된 속성만 MusicXML에 쓰도록 수정(원본과 같이 attributes 12·clef 9)
+  - ScoreView 고정 높이 제거해 조판 높이 자체 사용
+- 검증: codec·diagnose 테스트 통과, analyze 문제 없음, SM-S937N 재설치 PID 468
+- 남은 일: 사용자 조판·재생 확인, 입력 hit-test 정렬, YDP 음색
+
+## 2026-09-20 20:14 KST — 16KB 정렬 APK 재설치
+
+- 작업자: GPT-5.6 Sol
+- 목표: Align 0x4000으로 고친 notemus APK를 SM-S937N에 재설치한다
+- 관련 로드맵: B-017
+- 변경 파일: `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용: `adb install -r` 성공, MainActivity PID 31675, SHA-256 `fea60590…`
+- 검증: 설치·기동 확인. 기기 `getconf PAGE_SIZE`는 4096. 조판·재생 smoke는 사용자 확인 대기
+- 남은 일: Fantaisie 조판·재생 확인
+
+## 2026-09-20 20:05 KST — flutter_notemus 16KB 페이지 정렬 수정
+
+- 작업자: GPT-5.6 Sol
+- 목표: SM-S937N Android 16KB 페이지와 맞지 않던 notemus 네이티브 .so를 고친다
+- 관련 로드맵: B-017, D-141, M8-03/M8-05
+- 변경 파일:
+  - `android/build.gradle.kts` (flutter_notemus CMakeLists에 max-page-size=16384 패치)
+  - pub-cache `flutter_notemus-2.8.1/.../CMakeLists.txt` (동일 플래그)
+  - `docs/*`
+- 완료 내용:
+  - 원인: `libflutter_notemus_native.so` LOAD Align `0x1000`(4KB). 다른 arm64 .so는 `0x4000`/`0x10000`
+  - 수정 후 Align `0x4000` 확인, debug APK SHA-256 `fea60590a54604e6b7aaf1a1635348de7b4032ecdab485df2bbea6c32e76f071`
+- 검증: llvm-readelf로 arm64 Align 확인. 기기 미연결로 재설치 미실시
+- 남은 일: USB 연결 후 재설치·Fantaisie smoke
+
+## 2026-09-20 19:48 KST — notemus debug APK 기기 설치
+
+- 작업자: GPT-5.6 Sol
+- 목표: flutter_notemus 빌드 APK를 SM-S937N에 설치한다
+- 관련 로드맵: B-017, D-141
+- 변경 파일: `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - `adb install -r` 성공 (SHA-256 `7ddaa0fa…`)
+  - MainActivity 기동, PID 13075
+- 검증: 설치·기동만 확인. 조판·재생 청취는 사용자 확인 대기
+- 남은 일: Fantaisie 조판·재생 smoke, YDP 음색, hit-test 정렬
+
+## 2026-09-20 17:57 KST — flutter_notemus 조판·재생 연결
+
+- 작업자: GPT-5.6 Sol
+- 목표: CustomPainter stub 대신 실제 전자악보 라이브러리로 조판하고 재생 소리를 복구한다
+- 관련 로드맵: M8-03·M8-05, D-141, B-017
+- 변경 파일:
+  - `pubspec.yaml` (`flutter_notemus: ^2.8.1`)
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `test/features/digital_score/notemus_bridge_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - MusicXML 코덱 → `MusicXMLParser.scoreFromMusicXML` → `ScoreView`(Bravura)
+  - 재생: `MidiMapper.fromScore` + `MethodChannelMidiNativeAudioBackend` 시퀀서
+  - 입력 hit-test·고스트 오버레이는 `native_score_layout` 유지
+- 검증:
+  - `flutter analyze lib/features/digital_score/presentation/piano_score_view.dart` 문제 없음
+  - `flutter test test/features/digital_score/notemus_bridge_test.dart` 통과
+  - `flutter build apk --debug` 성공, SHA-256 `7ddaa0fa3ac5feeae598997efb0eabaa89c79e2428994c65f9a3ce6306bf71eb`
+  - `adb devices` 비어 설치·청취 미실시
+- 남은 일:
+  - 기기 재연결 후 설치·조판·재생 smoke(B-017)
+  - YDP SoundFont 음색·입력 좌표와 ScoreView 정렬
+
+## 2026-09-20 15:55 KST — 전자악보 네이티브 조판 전면 교체
+
+- 작업자: GPT-5.6 Sol
+- 목표: WebView/alphaTab 한계를 버리고 Flutter 네이티브 전자악보로 교체한다
+- 관련 로드맵: M8-03·M8-04·M8-05, D-140, B-017
+- 변경 파일:
+  - `lib/features/digital_score/domain/native_score_layout.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart` (WebView 제거)
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/data/digital_score_editor_service.dart`
+  - l10n, 테스트, `docs/*`
+- 완료 내용:
+  - CustomPainter Grand Staff + InteractiveViewer 확대/이동
+  - 고스트와 삽입이 동일 `hitStaff`/`staffYForMidi` 좌표 사용
+  - 버전 이름 입력 다이얼로그·삭제, 연주용 자동 이전 제거
+  - 재생은 네이티브 타임라인/커서(음색 재연결은 후속)
+- 검증:
+  - native_score_layout·editor_service·score_version 테스트 통과
+  - analyze 대상 경로 문제 없음
+  - debug arm64 APK 빌드 완료 SHA-256 `97c32a2b3fac8d60a2a8c673efc001025b31cad8a637358f8388511a179fe496`
+  - SM-S937N `adb install -r` 성공, MainActivity PID 13662
+  - Fantaisie 전자악보 진입, `연주용` 미표시, 음표 모드 오선 터치 후 크래시/FlutterError 없음
+  - 버전 이름 `SmokeTest` 저장·`버전 삭제` 확인 후 원본으로 복귀
+- 남은 일:
+  - 고스트/삽입 위치 정밀도·재생 음색·음표 글리프 품질 보강
+
+## 2026-09-20 15:35 KST — 버전 셀렉트와 오선 hit-test 수정
+
+- 작업자: GPT-5.6 Sol
+- 목표: 원본에 버전 추가·선택, 빈 오선/아래음자리/확대 고스트 입력 오류를 고친다
+- 관련 로드맵: M8-04·M8-06 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/domain/score_version.dart`
+  - `lib/features/digital_score/data/digital_score_editor_service.dart`
+  - `lib/features/digital_score/data/digital_score_data.dart`
+  - `lib/features/digital_score/domain/staff_note_input.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/core/storage/song_file_storage.dart`
+  - `assets/alphatab/index.html`
+  - `lib/l10n/app_en.arb`, `lib/l10n/app_ko.arb`, 생성된 현지화
+  - 관련 테스트와 `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - AppBar에 원본/버전 Dropdown과 버전 추가를 넣었다. 저장은 `score_versions/<songId>/`.
+  - 기존 `performance_scores`는 버전 목록으로 자동 이전한다.
+  - 음표 입력을 기존 음표 `getBeatAtPos` 대신 마디·스태프 박스 기하 hit-test로 바꿨다.
+  - 아래음자리 staff/clef와 왼손 voice를 반영한다.
+- 검증:
+  - 대상 테스트 14개 통과
+  - `dart analyze` digital_score_screen: 문제 없음
+  - debug arm64 APK를 SM-S937N에 `adb install -r`로 재설치
+  - APK SHA-256 `47f585bcb74b2a7e008f484dd578552c458307bc130af34d4af9b941268075fe` (239MB)
+  - MainActivity PID 6912
+- 남은 일:
+  - SM-S937N에서 버전·고스트·아래음자리 입력을 직접 확인한다
+
+## 2026-09-20 14:05 KST — 쓰기 좌표·페이지 겹침·AppBar 라벨 수정
+
+- 작업자: GPT-5.6 Sol
+- 목표: 고스트/삽입 위치 불일치, 마디 선택 오류, 복제 후 악보 겹침, 원본/연주용 아이콘 불명확을 고친다
+- 관련 로드맵: M8-04·M8-06 보완, B-017
+- 변경 파일:
+  - `assets/alphatab/index.html`
+  - `lib/features/digital_score/domain/score_editor.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `test/features/digital_score/domain/score_editor_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 포인터 hit-test를 페이지 맞춤·확대·팬과 같은 뷰포트 변환으로 계산한다.
+  - 고스트를 해석된 박·음높이 오선 위치에 그리고, 선택 하이라이트는 마디 단위로 맞춘다.
+  - 페이지 나눔은 적용 전 오프셋을 되돌린 뒤 다시 계산해 재렌더 겹침을 막는다.
+  - AppBar에 `원본`/`연주용` 텍스트 버튼을 쓴다.
+  - 마디 복제 시 이벤트를 깊은 복사한다.
+- 검증:
+  - `flutter test test/features/digital_score/domain/score_editor_test.dart` 10개 통과
+  - `dart analyze` 대상 경로: 문제 없음
+  - debug arm64 APK를 SM-S937N에 `adb install -r`로 재설치
+  - APK SHA-256 `42f2494bfc7dab5d8a5201aafe0f5ed29b81d6e0d34d9c1b64bf9ba089e751c9` (239MB)
+  - MainActivity PID 30602
+- 남은 일:
+  - 기기에서 고스트=삽입 위치, 마디 탭/복제, 원본/연주용 라벨을 직접 확인한다
+
+## 2026-09-20 13:47 KST — 쓰기·마디 복제 UX 빌드 설치
+
+- 작업자: GPT-5.6 Sol
+- 목표: 고스트 음표·마디 복제·원본/연주용 전환이 들어간 debug APK를 SM-S937N에 넣는다
+- 관련 로드맵: M8-04·M8-06 보완, B-017
+- 변경 파일: 없음 (빌드·설치만)
+- 완료 내용:
+  - debug arm64 APK를 빌드해 SM-S937N(R5CY43JMZ7N)에 `adb install -r`로 넣고 MainActivity를 실행했다.
+- 검증:
+  - APK SHA-256 `8bda534fde38ffbb0febf9bb809ae88042b1cb1e167c063342c5889874155ec3` (239MB)
+  - MainActivity PID 17471
+- 남은 일:
+  - 기기에서 고스트 입력·마디 +/−/복제/드래그·원본/연주용 저장을 직접 확인한다
+
+## 2026-09-20 13:40 KST — 악보 쓰기·마디 복제 UX 단순화
+
+- 작업자: GPT-5.6 Sol
+- 목표: INTRO/VERSE 연주 순서를 빼고 마디 물리 복제와 고스트 음표 입력으로 단순화한다
+- 관련 로드맵: M8-04·M8-06 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/presentation/note_duration_icon.dart`
+  - `lib/features/digital_score/presentation/score_editor_panel.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `lib/features/digital_score/domain/score_editor.dart`
+  - `lib/features/digital_score/data/digital_score_data.dart`
+  - `lib/features/digital_score/data/digital_score_editor_service.dart`
+  - `lib/core/storage/song_file_storage.dart`
+  - `lib/core/score_engine/alphatab_bridge.dart`
+  - `assets/alphatab/index.html`
+  - `lib/l10n/app_en.arb`, `lib/l10n/app_ko.arb`, 생성된 현지화 파일
+  - 관련 테스트와 `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 음가/쉼표 칩을 음표 그림으로 바꿨다.
+  - 쓰기 모드에서 손가락을 뗄 때까지 고스트 음표를 보여 준 뒤 삽입한다.
+  - 마디 도구 바(+/−/복제/드래그)와 마디 이동 고스트를 추가했다.
+  - INTRO/VERSE 연주 순서 메뉴·패널을 제거했다.
+  - 원본|연주용 전환과 `performance_scores/<songId>.musicxml` 별도 저장을 넣었다.
+- 검증:
+  - `flutter analyze --no-pub` 대상 경로: 문제 없음
+  - `flutter test --no-pub -j 1` 전체 283개 통과
+- 남은 일:
+  - SM-S937N에서 고스트 입력·마디 복제·원본/연주용 저장·재열기 smoke
+
+## 2026-09-20 13:15 KST — 연주 순서 행 추가·이동 회귀 수정
+
+- 작업자: GPT-5.6 Sol
+- 목표: 숨겼던 반주 메뉴를 제거하고 연주 순서의 추가·이동을 실제 순서 행 기준으로 동작시킨다
+- 관련 로드맵: M8-06 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/domain/playback_sequence.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/presentation/playback_sequence_panel.dart`
+  - `lib/l10n/app_en.arb`, `lib/l10n/app_ko.arb`, 생성된 현지화 파일
+  - `test/features/digital_score/domain/playback_sequence_test.dart`
+  - `test/features/digital_score/presentation/playback_sequence_panel_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 전자악보 도구 메뉴에서 반주 항목을 제거했다. 저장된 반주 프로필 데이터 호환성은 유지한다.
+  - 연주 순서의 추가 버튼을 빈 마디 삽입에서 선택 구간 행 복제로 바꿨다.
+  - 같은 INTRO·VERSE 행을 여러 번 유지하고 각 행의 반복 횟수·순서·삭제를 인덱스 기준으로 따로 처리한다.
+  - 긴 악보의 같은 구간 추가가 256마디 상한에 막히지 않도록 펼침 상한을 4096마디로 늘렸다.
+- 검증:
+  - 연주 순서 도메인·360px 패널 대상 테스트 10개 통과
+  - `flutter test --no-pub -j 1` 전체 282개 통과
+  - `flutter analyze --no-pub`: 새 오류 없음. 기존 ScoreViewer 미사용 경고 4건과 Setlist deprecation 1건만 유지
+- 남은 일:
+  - SM-S937N에서 INTRO 중복 추가·행 이동·저장·재열기와 반주 메뉴 미노출을 확인한다.
+
+## 2026-09-20 13:13 KST — 내보내기 네 형식으로 정리
+
+- 작업자: GPT-5.6 Sol
+- 목표: 사용자가 고르는 전자악보 내보내기 형식을 필요한 네 개로 줄인다
+- 관련 로드맵: M8-09 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/data/score_export_service.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `test/features/digital_score/data/score_export_service_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 내보내기 메뉴에 PDF·MusicXML·프로젝트·MIDI만 남겼다.
+  - ScoreExportKind와 서비스에서도 `.mxl`·`.xml` 내보내기 분기를 제거했다.
+  - `.mxl`·`.xml` 가져오기와 기존 원본 편집 호환성은 유지한다.
+- 검증:
+  - 대상 Dart 정적 분석: 문제 없음
+  - 내보내기·MusicXML 코덱 테스트 14개 통과
+  - debug arm64 APK 빌드·SM-S937N 설치 성공
+  - APK SHA-256 `2de94b8c6bfe0768cfdec7642958d3899f01b586bf82978dc531d99f45fc95d4`, PID 13260
+  - SM-S937N 내보내기 메뉴에서 PDF·MusicXML·프로젝트·MIDI 네 항목만 확인
+- 남은 일:
+  - 네 형식의 실제 파일 저장·재열기 전체 smoke
+
+## 2026-09-20 13:10 KST — 전자악보 재생 자동 스크롤
+
+- 작업자: GPT-5.6 Sol
+- 목표: 재생 커서가 다음 오선으로 진행할 때 화면도 자동으로 따라간다
+- 관련 로드맵: M8-05 보완, B-017
+- 변경 파일:
+  - `assets/alphatab/index.html`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 재생 중 현재 마디 시스템이 화면 높이 12~76% 안전 영역을 벗어날 때만 자동 이동한다.
+  - A4 페이지 사이 보정과 현재 확대 배율을 유지하고 같은 오선에서는 반복 이동하지 않는다.
+  - 자동 이동은 220ms로 연결하며 사용자가 직접 확대·이동하면 자동 전환 효과를 즉시 해제한다.
+- 검증:
+  - alphaTab 자산 테스트 3개 통과
+  - debug arm64 APK 빌드·SM-S937N 설치 성공
+  - APK SHA-256 `695ebd193d20211a9305cc900d3b1d02b8050fb95accb08e011675ed6369584f`, PID 11340
+  - Fantaisie-Impromptu를 0:17·13마디까지 재생해 11~17마디 화면으로 자동 이동하고 13마디 Cursor 표시 확인
+- 남은 일:
+  - 조옮김·연주 순서·내보내기·재열기 전체 smoke
+
+## 2026-09-20 13:03 KST — 알라 브레베 표기 보존
+
+- 작업자: GPT-5.6 Sol
+- 목표: Fantaisie-Impromptu의 2/2를 숫자 박자표가 아닌 알라 브레베로 구분한다
+- 관련 로드맵: M8-02 보완, B-017
+- 변경 파일:
+  - `lib/features/digital_score/domain/music_score.dart`
+  - `lib/features/digital_score/data/music_xml_codec.dart`
+  - `lib/features/digital_score/presentation/score_editor_panel.dart`
+  - `lib/l10n/app_en.arb`, `lib/l10n/app_ko.arb`, 생성된 현지화 파일
+  - `test/features/digital_score/data/music_xml_codec_test.dart`
+  - `test/features/digital_score/presentation/score_editor_panel_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - MusicXML `time symbol="common"|"cut"`을 내부 박자표에 보존하고 내보낼 때 다시 기록한다.
+  - `cut`은 알라 브레베(¢), `common`은 보통박자(C), symbol이 없으면 숫자 박자표로 구분한다.
+  - 박자표 설정에서는 알라 브레베를 숫자 2/2 입력칸과 구분해 표시한다.
+- 검증:
+  - 대상 Dart 정적 분석: 문제 없음
+  - MusicXML 코덱·설정 화면·기본 MXL 테스트 13개 통과
+  - debug arm64 APK 빌드·SM-S937N 설치 성공
+  - APK SHA-256 `46660d339033774f25640bb268fdd19998302dbb109d992357ee7767a4ff3093`, PID 9464
+  - Fantaisie-Impromptu 첫 마디에서 ¢ 렌더 확인
+- 남은 일:
+  - 실제 피아노 청취와 조옮김·연주 순서·내보내기·재열기 전체 smoke
+
+## 2026-09-20 12:44 KST — 기본 MXL 두 곡과 A4 시스템 페이지 넘김
+
+- 작업자: GPT-5.6 Sol
+- 목표: 제공된 두 MXL을 기본 Library에 넣고 실제 곡으로 A4 조판을 검증한다
+- 관련 로드맵: M8-02, M8-06 보완, B-017
+- 변경 파일:
+  - `assets/scores/clair-de-lune-claude-debussy.mxl`
+  - `assets/scores/fantaisie-impromptu-in-c-minor-chopin.mxl`
+  - `lib/features/digital_score/data/bundled_score_seeder.dart`
+  - `lib/features/library/presentation/library_controller.dart`
+  - `assets/alphatab/index.html`, `pubspec.yaml`
+  - `test/features/digital_score/data/bundled_score_seeder_test.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 첫 Library 진입 때 두 MXL을 로컬 악보로 한 번 등록한다.
+  - 기존 같은 제목은 중복하지 않고 사용자가 삭제한 기본 악보는 다음 실행에 다시 넣지 않는다.
+  - alphaTab 렌더 시스템이 A4 하단을 넘으면 24px 회색 간격 뒤 다음 흰 종이로 옮긴다.
+  - 페이지 이동 뒤에도 터치 좌표·선택 오버레이·재생 커서가 원본 악보 좌표를 사용하도록 보정했다.
+- 검증:
+  - `flutter analyze --no-pub` 대상 파일: 문제 없음
+  - 기본 MXL·초기화·A4 자산 테스트 5개 통과
+  - debug arm64 APK 빌드·SM-S937N 설치 성공
+  - APK SHA-256 `9f9c86a0a60d55f33376249a6d7951e5c6e16b7b0c72193b14946081d16493b3`, PID 5090
+  - SM-S937N에서 기존 Claire 중복 없음, Fantaisie 추가, A4 시스템 넘김·회색 종이 사이·확대·주황 선택 박스 확인
+- 남은 일:
+  - 실제 두 손가락 제스처 감각과 피아노 청취 확인
+  - 조옮김·연주 순서·내보내기·재열기 전체 smoke
+
+## 2026-09-20 11:57 KST — A4 용지 배경과 오선 폭 정렬
+
+- 작업자: Cursor
+- 목표: 흰 배경을 휴대폰 화면이 아닌 A4 용지 단위로 만들고 오선이 종이 밖으로 나가지 않게 한다
+- 관련 로드맵: M8-06 보완, B-017
+- 변경 파일:
+  - `assets/alphatab/index.html`
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `test/features/digital_score/presentation/alphatab_asset_test.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`
+- 완료 내용:
+  - 실제 렌더 높이를 1123px의 배수로 올림해 794×1123 A4 흰 종이를 쌓는다.
+  - alphaTab의 794px SVG 바깥에 더해지던 CSS 좌우 패딩 48px을 제거했다.
+  - 종이 밖 WebView·Flutter 배경은 회색으로 분리했다.
+- 검증:
+  - `flutter analyze --no-pub lib/features/digital_score/presentation/piano_score_view.dart`: 문제 없음
+  - `flutter test --no-pub -j 1 test/features/digital_score/presentation/alphatab_asset_test.dart`: 3개 통과
+  - IDE lint: 문제 없음
+- 남은 일:
+  - SM-S937N에서 A4 경계와 오선 폭을 확인한다.
+
 ## 2026-09-20 00:45 KST — 구간 표기 빌드를 폰에 설치
 
 - 작업자: Cursor Grok 4.6

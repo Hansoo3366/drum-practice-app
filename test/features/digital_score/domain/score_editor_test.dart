@@ -119,6 +119,39 @@ void main() {
       }
     });
 
+    test('duplicates a measure after the source', () {
+      final duplicated = const DuplicateMeasureCommand(
+        measureIndex: 0,
+      ).apply(_score());
+
+      expect(duplicated.parts.first.measures, hasLength(2));
+      expect(
+        duplicated.parts.first.measures[0].notes.any((note) => !note.isRest),
+        isTrue,
+      );
+      expect(
+        duplicated.parts.first.measures[1].notes.any((note) => !note.isRest),
+        isTrue,
+      );
+      expect(duplicated.parts.first.measures.map((m) => m.number), ['1', '2']);
+      final sourceNotes = duplicated.parts.first.measures[0].notes
+          .where((note) => !note.isRest)
+          .map((note) => note.pitch?.midi)
+          .toList();
+      final copyNotes = duplicated.parts.first.measures[1].notes
+          .where((note) => !note.isRest)
+          .map((note) => note.pitch?.midi)
+          .toList();
+      expect(copyNotes, sourceNotes);
+      expect(
+        identical(
+          duplicated.parts.first.measures[0].events,
+          duplicated.parts.first.measures[1].events,
+        ),
+        isFalse,
+      );
+    });
+
     test('inserts and deletes aligned grand-staff measures', () {
       final inserted = const InsertMeasureCommand(
         afterMeasureIndex: 0,

@@ -343,6 +343,49 @@ class DeleteMeasureCommand implements ScoreEditCommand {
   }
 }
 
+class DuplicateMeasureCommand implements ScoreEditCommand {
+  const DuplicateMeasureCommand({required this.measureIndex});
+
+  final int measureIndex;
+
+  @override
+  MusicScore apply(MusicScore score) {
+    if (measureIndex < 0 || measureIndex >= score.measureCount) {
+      throw RangeError.index(measureIndex, score.parts);
+    }
+    final parts = score.parts.map((part) {
+      final measures = part.measures.toList();
+      if (measureIndex >= measures.length) return part;
+      final source = measures[measureIndex];
+      measures.insert(
+        measureIndex + 1,
+        source.copyWith(
+          number: '${measureIndex + 2}',
+          attributes: source.attributes.copyWith(
+            clefs: Map<int, MusicClef>.from(source.attributes.clefs),
+          ),
+          events: [
+            for (final event in source.events) _cloneEvent(event),
+          ],
+        ),
+      );
+      return part.copyWith(measures: _renumber(measures));
+    }).toList();
+    return score.copyWith(parts: parts);
+  }
+}
+
+MusicEvent _cloneEvent(MusicEvent event) {
+  return switch (event) {
+    final MusicNote note => note.copyWith(
+      pitch: note.pitch,
+      type: note.type,
+    ),
+    final MusicDirection direction => direction.copyWith(),
+    final MusicHarmony harmony => harmony.copyWith(),
+  };
+}
+
 ScoreEventAddress? findRenderedNoteAddress({
   required MusicScore score,
   required int partIndex,

@@ -10,7 +10,17 @@ import 'package:page_a_diddle/features/digital_score/domain/performance_score.da
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   const exporter = ScoreExportService();
+
+  test('offers only PDF, MusicXML, project, and MIDI exports', () {
+    expect(ScoreExportKind.values, [
+      ScoreExportKind.musicXml,
+      ScoreExportKind.midi,
+      ScoreExportKind.pdf,
+      ScoreExportKind.project,
+    ]);
+  });
 
   test('unfolds sequence and accompaniment for MusicXML export', () async {
     final written = _score(sections: true);
@@ -44,32 +54,6 @@ void main() {
         (note) => note.voice == arrangementVoice,
       ),
       isFalse,
-    );
-  });
-
-  test('writes the same MusicXML payload with a .xml name', () async {
-    final written = _score();
-    final musicXml = await exporter.encode(
-      written: written,
-      title: 'Legacy',
-      kind: ScoreExportKind.musicXml,
-    );
-    final xml = await exporter.encode(
-      written: written,
-      title: 'Legacy',
-      kind: ScoreExportKind.xml,
-    );
-
-    expect(xml.fileName, 'Legacy.xml');
-    expect(xml.extension, 'xml');
-    expect(xml.bytes, musicXml.bytes);
-    expect(
-      utf8.decode(xml.bytes),
-      contains('<score-partwise version="4.0">'),
-    );
-    expect(
-      const MusicXmlCodec().decode(xml.bytes, fileName: xml.fileName).noteCount,
-      1,
     );
   });
 

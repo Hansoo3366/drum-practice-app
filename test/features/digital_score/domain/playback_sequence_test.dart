@@ -23,12 +23,7 @@ void main() {
       'VERSE',
       'CHORUS',
     ]);
-    expect(measureSectionMarks(_score()), [
-      'INTRO',
-      'VERSE',
-      null,
-      'CHORUS',
-    ]);
+    expect(measureSectionMarks(_score()), ['INTRO', 'VERSE', null, 'CHORUS']);
   });
 
   test('keeps the written score when the sequence is empty', () {
@@ -90,7 +85,7 @@ void main() {
     );
     expect(
       () => expandPlaybackSequence(
-        _score(measures: 20, verseAt: null, chorusAt: null),
+        _score(measures: 300, verseAt: null, chorusAt: null),
         PlaybackSequence([PlaybackSequenceItem(section: 'INTRO', repeats: 16)]),
       ),
       throwsFormatException,
@@ -111,7 +106,7 @@ void main() {
     expect(PlaybackSequence.fromJson(null), PlaybackSequence.empty);
   });
 
-  test('keeps the written score until playback is turned on', () {
+  test('previews the performance score outside editing', () {
     final written = _score();
     final sequence = PlaybackSequence([
       PlaybackSequenceItem(section: 'INTRO', repeats: 4),
@@ -132,16 +127,13 @@ void main() {
       isTrue,
     );
     expect(
-      identical(
-        displayedDigitalScore(
-          written: written,
-          editing: false,
-          playbackEnabled: false,
-          sequence: sequence,
-        ),
-        written,
-      ),
-      isTrue,
+      displayedDigitalScore(
+        written: written,
+        editing: false,
+        playbackEnabled: false,
+        sequence: sequence,
+      ).measureCount,
+      9,
     );
     expect(
       displayedDigitalScore(

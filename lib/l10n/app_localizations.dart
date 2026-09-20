@@ -2132,6 +2132,30 @@ abstract class AppLocalizations {
   /// **'Time signature'**
   String get timeSignature;
 
+  /// Time signature notation
+  ///
+  /// In en, this message translates to:
+  /// **'Notation'**
+  String get timeSignatureNotation;
+
+  /// Numeric time signature notation
+  ///
+  /// In en, this message translates to:
+  /// **'Numbers'**
+  String get timeSignatureNumbers;
+
+  /// Common time symbol
+  ///
+  /// In en, this message translates to:
+  /// **'Common time (C)'**
+  String get commonTime;
+
+  /// Cut time symbol
+  ///
+  /// In en, this message translates to:
+  /// **'Alla breve (¢)'**
+  String get allaBreve;
+
   /// numerator
   ///
   /// In en, this message translates to:
@@ -2894,6 +2918,54 @@ abstract class AppLocalizations {
   /// **'Edit score'**
   String get scoreEdit;
 
+  /// Edit the original score file
+  ///
+  /// In en, this message translates to:
+  /// **'Original'**
+  String get scoreOriginal;
+
+  /// Legacy performance copy label
+  ///
+  /// In en, this message translates to:
+  /// **'Performance'**
+  String get scorePerformance;
+
+  /// Create a new editable score version from the current score
+  ///
+  /// In en, this message translates to:
+  /// **'Add version'**
+  String get addScoreVersion;
+
+  /// Hint for naming a score version
+  ///
+  /// In en, this message translates to:
+  /// **'Version name'**
+  String get scoreVersionName;
+
+  /// Delete the selected score version
+  ///
+  /// In en, this message translates to:
+  /// **'Delete version'**
+  String get deleteScoreVersion;
+
+  /// Default name for a newly created score version
+  ///
+  /// In en, this message translates to:
+  /// **'Version {n}'**
+  String scoreVersionN(int n);
+
+  /// Copy the selected measure after itself
+  ///
+  /// In en, this message translates to:
+  /// **'Duplicate measure'**
+  String get duplicateMeasure;
+
+  /// Drag the selected measure to a new place
+  ///
+  /// In en, this message translates to:
+  /// **'Move measure'**
+  String get dragMeasure;
+
   /// Musical note
   ///
   /// In en, this message translates to:
@@ -2929,6 +3001,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Add chord'**
   String get addChordSymbol;
+
+  /// Short visible label for inserting a measure
+  ///
+  /// In en, this message translates to:
+  /// **'Add measure'**
+  String get addMeasure;
+
+  /// Increase score page zoom
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom in'**
+  String get zoomIn;
+
+  /// Decrease score page zoom
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom out'**
+  String get zoomOut;
 
   /// Edit the selected score event
   ///
@@ -3056,11 +3146,23 @@ abstract class AppLocalizations {
   /// **'Playback order'**
   String get playbackSequence;
 
-  /// How to mark a section role and set its repeat count
+  /// How to mark sections and set playback order
   ///
   /// In en, this message translates to:
-  /// **'Tap a measure and mark verse or chorus. Then set how many times that section repeats.'**
+  /// **'Mark sections on measures, then set their order and repeats.'**
   String get playbackSequenceHelp;
+
+  /// Append the selected measure section to playback order
+  ///
+  /// In en, this message translates to:
+  /// **'Add to order'**
+  String get addToPlaybackSequence;
+
+  /// Remove one item from playback order
+  ///
+  /// In en, this message translates to:
+  /// **'Remove from playback order'**
+  String get removeFromPlaybackSequence;
 
   /// Swap the selected measure with the previous one
   ///
@@ -3073,6 +3175,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Move measure later'**
   String get moveMeasureLater;
+
+  /// Move this playback section one position earlier
+  ///
+  /// In en, this message translates to:
+  /// **'Move section earlier'**
+  String get moveSectionEarlier;
+
+  /// Move this playback section one position later
+  ///
+  /// In en, this message translates to:
+  /// **'Move section later'**
+  String get moveSectionLater;
 
   /// Empty playback sequence when the score has no section marks
   ///

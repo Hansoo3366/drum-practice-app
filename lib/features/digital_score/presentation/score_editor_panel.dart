@@ -7,42 +7,48 @@ import 'package:page_a_diddle/app/widgets/sheet_insets.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_editor.dart';
 import 'package:page_a_diddle/features/digital_score/domain/staff_note_input.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/note_duration_icon.dart';
+
+enum ScoreEditorMode { select, note, rest }
 
 class ScoreEditorPanel extends StatelessWidget {
   const ScoreEditorPanel({
     required this.canUndo,
     required this.canRedo,
-    required this.hasSelection,
+    required this.mode,
+    required this.selectedEvent,
     required this.inputDurationType,
-    required this.inputRest,
     required this.inputAlter,
     required this.onUndo,
     required this.onRedo,
+    required this.onModeChanged,
     required this.onDurationTypeChanged,
-    required this.onInputRestChanged,
     required this.onInputAlterChanged,
+    required this.onEditSelected,
+    required this.onAddChord,
     required this.onDeleteSelected,
-    required this.onInsertMeasure,
     super.key,
   });
 
   final bool canUndo;
   final bool canRedo;
-  final bool hasSelection;
+  final ScoreEditorMode mode;
+  final MusicEvent? selectedEvent;
   final String inputDurationType;
-  final bool inputRest;
   final int inputAlter;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
+  final ValueChanged<ScoreEditorMode> onModeChanged;
   final ValueChanged<String> onDurationTypeChanged;
-  final ValueChanged<bool> onInputRestChanged;
   final ValueChanged<int> onInputAlterChanged;
+  final VoidCallback onEditSelected;
+  final VoidCallback onAddChord;
   final VoidCallback onDeleteSelected;
-  final VoidCallback onInsertMeasure;
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final hasSelection = selectedEvent != null;
     return Material(
       color: AppColors.canvas,
       child: DecoratedBox(
@@ -61,39 +67,138 @@ class ScoreEditorPanel extends StatelessWidget {
                   child: ListView(
                     scrollDirection: Axis.horizontal,
                     children: [
-                      for (final type in staffDurationTypes)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: ChoiceChip(
-                            label: Text(staffDurationLabels[type]!),
-                            selected: inputDurationType == type,
-                            onSelected: (_) => onDurationTypeChanged(type),
+                      Tooltip(
+                        message: l10n.select,
+                        child: ChoiceChip(
+                          label: Icon(
+                            Icons.touch_app_outlined,
+                            size: 20,
+                            color: mode == ScoreEditorMode.select
+                                ? AppColors.accent
+                                : AppColors.ink,
                           ),
-                        ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: FilterChip(
-                          label: Text(l10n.rest),
-                          selected: inputRest,
-                          onSelected: onInputRestChanged,
+                          selected: mode == ScoreEditorMode.select,
+                          showCheckmark: false,
+                          onSelected: (_) =>
+                              onModeChanged(ScoreEditorMode.select),
                         ),
                       ),
-                      for (final alter in const [-1, 0, 1])
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: ChoiceChip(
-                            label: Text(switch (alter) {
-                              -1 => '♭',
-                              1 => '♯',
-                              _ => '♮',
-                            }),
-                            selected: inputAlter == alter,
-                            onSelected: (_) => onInputAlterChanged(alter),
+                      const SizedBox(width: 8),
+                      Tooltip(
+                        message: l10n.addNote,
+                        child: ChoiceChip(
+                          label: NoteDurationIcon(
+                            durationType: 'quarter',
+                            color: mode == ScoreEditorMode.note
+                                ? AppColors.accent
+                                : AppColors.ink,
                           ),
+                          selected: mode == ScoreEditorMode.note,
+                          showCheckmark: false,
+                          onSelected: (_) =>
+                              onModeChanged(ScoreEditorMode.note),
                         ),
+                      ),
+                      const SizedBox(width: 8),
+                      Tooltip(
+                        message: l10n.addRest,
+                        child: ChoiceChip(
+                          label: NoteDurationIcon(
+                            durationType: 'quarter',
+                            rest: true,
+                            color: mode == ScoreEditorMode.rest
+                                ? AppColors.accent
+                                : AppColors.ink,
+                          ),
+                          selected: mode == ScoreEditorMode.rest,
+                          showCheckmark: false,
+                          onSelected: (_) =>
+                              onModeChanged(ScoreEditorMode.rest),
+                        ),
+                      ),
                     ],
                   ),
                 ),
+                const SizedBox(height: 8),
+                if (mode == ScoreEditorMode.select)
+                  SizedBox(
+                    height: 42,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            hasSelection
+                                ? _eventLabel(l10n, selectedEvent!)
+                                : l10n.selectScoreEvent,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                                  color: hasSelection
+                                      ? AppColors.ink
+                                      : AppColors.mutedInk,
+                                  fontWeight: hasSelection
+                                      ? FontWeight.w700
+                                      : FontWeight.w400,
+                                ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: l10n.editSelected,
+                          onPressed: hasSelection ? onEditSelected : null,
+                          icon: const Icon(Icons.edit_outlined),
+                        ),
+                        IconButton(
+                          tooltip: l10n.deleteSelectedEvent,
+                          onPressed: hasSelection ? onDeleteSelected : null,
+                          icon: const Icon(Icons.delete_outline_rounded),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  SizedBox(
+                    height: 42,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        for (final type in staffDurationTypes)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Tooltip(
+                              message: staffDurationLabels[type]!,
+                              child: ChoiceChip(
+                                label: NoteDurationIcon(
+                                  durationType: type,
+                                  rest: mode == ScoreEditorMode.rest,
+                                  color: inputDurationType == type
+                                      ? AppColors.accent
+                                      : AppColors.ink,
+                                ),
+                                selected: inputDurationType == type,
+                                showCheckmark: false,
+                                onSelected: (_) => onDurationTypeChanged(type),
+                              ),
+                            ),
+                          ),
+                        if (mode == ScoreEditorMode.note)
+                          for (final alter in const [-1, 0, 1])
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ChoiceChip(
+                                label: Text(switch (alter) {
+                                  -1 => '♭',
+                                  1 => '♯',
+                                  _ => '♮',
+                                }),
+                                selected: inputAlter == alter,
+                                showCheckmark: false,
+                                onSelected: (_) => onInputAlterChanged(alter),
+                              ),
+                            ),
+                      ],
+                    ),
+                  ),
                 const SizedBox(height: 8),
                 SizedBox(
                   height: 40,
@@ -109,15 +214,11 @@ class ScoreEditorPanel extends StatelessWidget {
                         onPressed: canRedo ? onRedo : null,
                         icon: const Icon(Icons.redo_rounded),
                       ),
-                      IconButton(
-                        tooltip: l10n.deleteSelectedEvent,
-                        onPressed: hasSelection ? onDeleteSelected : null,
-                        icon: const Icon(Icons.delete_outline_rounded),
-                      ),
-                      IconButton(
-                        tooltip: l10n.insertMeasureAfter,
-                        onPressed: onInsertMeasure,
-                        icon: const Icon(Icons.add_box_outlined),
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: onAddChord,
+                        icon: const Icon(Icons.text_fields_rounded, size: 20),
+                        label: Text(l10n.addChordSymbol),
                       ),
                     ],
                   ),
@@ -129,6 +230,28 @@ class ScoreEditorPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+String _eventLabel(AppLocalizations l10n, MusicEvent event) {
+  return switch (event) {
+    MusicNote(:final isRest, :final pitch, :final type) => [
+      if (isRest) l10n.rest else if (pitch != null) _pitchLabel(pitch),
+      if (type != null) staffDurationLabels[type] ?? type,
+    ].join(' · '),
+    MusicHarmony() => l10n.chordSymbol,
+    _ => l10n.select,
+  };
+}
+
+String _pitchLabel(MusicPitch pitch) {
+  final accidental = switch (pitch.alter) {
+    -2 => '♭♭',
+    -1 => '♭',
+    1 => '♯',
+    2 => '♯♯',
+    _ => '',
+  };
+  return '${pitch.step.name.toUpperCase()}$accidental${pitch.octave}';
 }
 
 Future<MusicNote?> showNoteEditorSheet(
@@ -554,10 +677,13 @@ class _MeasureSettingsSheet extends StatefulWidget {
   State<_MeasureSettingsSheet> createState() => _MeasureSettingsSheetState();
 }
 
+enum _TimeSignatureNotation { numbers, common, allaBreve }
+
 class _MeasureSettingsSheetState extends State<_MeasureSettingsSheet> {
   late int _keyFifths;
   late int _beats;
   late int _beatType;
+  late _TimeSignatureNotation _notation;
 
   @override
   void initState() {
@@ -568,6 +694,11 @@ class _MeasureSettingsSheetState extends State<_MeasureSettingsSheet> {
         const MusicTimeSignature(beats: 4, beatType: 4);
     _beats = time.beats;
     _beatType = time.beatType;
+    _notation = switch (time.symbol) {
+      MusicTimeSymbol.common => _TimeSignatureNotation.common,
+      MusicTimeSymbol.cut => _TimeSignatureNotation.allaBreve,
+      null => _TimeSignatureNotation.numbers,
+    };
   }
 
   @override
@@ -578,7 +709,15 @@ class _MeasureSettingsSheetState extends State<_MeasureSettingsSheet> {
         Navigator.of(context).pop(
           MeasureSettingsResult(
             keyFifths: _keyFifths,
-            time: MusicTimeSignature(beats: _beats, beatType: _beatType),
+            time: MusicTimeSignature(
+              beats: _beats,
+              beatType: _beatType,
+              symbol: switch (_notation) {
+                _TimeSignatureNotation.common => MusicTimeSymbol.common,
+                _TimeSignatureNotation.allaBreve => MusicTimeSymbol.cut,
+                _TimeSignatureNotation.numbers => null,
+              },
+            ),
           ),
         );
       },
@@ -587,7 +726,6 @@ class _MeasureSettingsSheetState extends State<_MeasureSettingsSheet> {
           Row(
             children: [
               Expanded(
-                flex: 2,
                 child: _DropdownField<int>(
                   label: context.l10n.keySignature,
                   value: _keyFifths,
@@ -598,29 +736,59 @@ class _MeasureSettingsSheetState extends State<_MeasureSettingsSheet> {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: _DropdownField<int>(
-                  label: context.l10n.timeSignature,
-                  value: _beats,
-                  values: List.generate(12, (index) => index + 1),
-                  itemLabel: (value) => '$value',
-                  onChanged: (value) => setState(() => _beats = value),
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(8, 24, 8, 0),
-                child: Text('/'),
-              ),
-              Expanded(
-                child: _DropdownField<int>(
-                  label: ' ',
-                  value: _beatType,
-                  values: const [1, 2, 4, 8, 16],
-                  itemLabel: (value) => '$value',
-                  onChanged: (value) => setState(() => _beatType = value),
+                child: _DropdownField<_TimeSignatureNotation>(
+                  label: context.l10n.timeSignatureNotation,
+                  value: _notation,
+                  values: _TimeSignatureNotation.values,
+                  itemLabel: (value) => switch (value) {
+                    _TimeSignatureNotation.numbers =>
+                      context.l10n.timeSignatureNumbers,
+                    _TimeSignatureNotation.common => context.l10n.commonTime,
+                    _TimeSignatureNotation.allaBreve => context.l10n.allaBreve,
+                  },
+                  onChanged: (value) => setState(() {
+                    _notation = value;
+                    if (value == _TimeSignatureNotation.common) {
+                      _beats = 4;
+                      _beatType = 4;
+                    } else if (value == _TimeSignatureNotation.allaBreve) {
+                      _beats = 2;
+                      _beatType = 2;
+                    }
+                  }),
                 ),
               ),
             ],
           ),
+          if (_notation == _TimeSignatureNotation.numbers) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _DropdownField<int>(
+                    label: context.l10n.timeSignature,
+                    value: _beats,
+                    values: List.generate(12, (index) => index + 1),
+                    itemLabel: (value) => '$value',
+                    onChanged: (value) => setState(() => _beats = value),
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(8, 24, 8, 0),
+                  child: Text('/'),
+                ),
+                Expanded(
+                  child: _DropdownField<int>(
+                    label: ' ',
+                    value: _beatType,
+                    values: const [1, 2, 4, 8, 16],
+                    itemLabel: (value) => '$value',
+                    onChanged: (value) => setState(() => _beatType = value),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

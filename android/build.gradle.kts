@@ -53,11 +53,39 @@ fun patchPdfiumWindowsLink(cmake: File) {
     )
 }
 
+fun patchFlutterNotemus16KbPages(cmake: File) {
+    if (!cmake.exists()) {
+        return
+    }
+    val text = cmake.readText()
+    if (text.contains("max-page-size=16384")) {
+        return
+    }
+    cmake.writeText(
+        text.trimEnd() +
+            """
+
+# Support Android 15 16 KB page size (D-141 / SM-S937N).
+if (ANDROID)
+  target_link_options(flutter_notemus_native PRIVATE
+    "-Wl,-z,max-page-size=16384"
+    "-Wl,-z,common-page-size=16384"
+  )
+endif()
+""",
+    )
+}
+
 subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
     if (name == "pdfium_flutter") {
         patchPdfiumWindowsLink(file("${project.projectDir}/CMakeLists.txt"))
+    }
+    if (name == "flutter_notemus") {
+        patchFlutterNotemus16KbPages(
+            file("${project.projectDir}/src/main/cpp/CMakeLists.txt"),
+        )
     }
 }
 subprojects {

@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
+import 'package:page_a_diddle/app/theme/app_theme.dart';
 import 'package:page_a_diddle/app/widgets/app_empty_state.dart';
 import 'package:page_a_diddle/core/score_engine/alphatab_bridge.dart';
 import 'package:page_a_diddle/features/digital_score/data/digital_score_data.dart';
@@ -14,11 +16,10 @@ import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/performance_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_editor.dart';
-import 'package:page_a_diddle/features/digital_score/domain/score_layout.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_transpose.dart';
+import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/staff_note_input.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_score_view.dart';
-import 'package:page_a_diddle/features/digital_score/presentation/playback_sequence_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_editor_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_playback_bar.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_transpose_panel.dart';
@@ -34,24 +35,25 @@ class DigitalScoreScreen extends ConsumerStatefulWidget {
 
 class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   final _playback = PianoScorePlaybackController();
-  MusicScoreEditor? _editor;
-  String? _editorSourcePath;
-  PlaybackSequence _sequence = PlaybackSequence.empty;
-  PlaybackSequence _savedSequence = PlaybackSequence.empty;
+  final _scoreViewKey = GlobalKey<PianoScoreViewState>();
+  final Map<String, MusicScoreEditor> _versionEditors = {};
+  MusicScoreEditor? _originalEditor;
+  String? _loadedSongId;
+  ScoreVersionCatalog _versionCatalog = ScoreVersionCatalog.empty;
+  String _activeVersionId = scoreVersionOriginalId;
   ArrangementProfile _arrangement = ArrangementProfile.off;
   ArrangementProfile _savedArrangement = ArrangementProfile.off;
   bool _editing = false;
-  bool _structuring = false;
   bool _playbackEnabled = false;
   bool _saving = false;
   bool _exporting = false;
   bool _confirmingLeave = false;
+  bool _showMeasureTools = false;
   int _partIndex = 0;
   int _measureIndex = 0;
-  List<ScoreSystemSpan> _systems = const [];
   ScoreEventAddress? _selectedAddress;
+  ScoreEditorMode _editorMode = ScoreEditorMode.select;
   String _inputDurationType = 'quarter';
-  bool _inputRest = false;
   int _inputAlter = 0;
 
   @override
@@ -61,37 +63,49 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     super.dispose();
   }
 
+  MusicScoreEditor? get _editor => _activeVersionId == scoreVersionOriginalId
+      ? _originalEditor
+      : _versionEditors[_activeVersionId];
+
   bool get _isDirty {
-    final editor = _editor;
-    return editor != null &&
-        (editor.isDirty ||
-            _sequence != _savedSequence ||
-            _arrangement != _savedArrangement);
+    final originalDirty = _originalEditor?.isDirty ?? false;
+    final versionDirty = _versionEditors.values.any((editor) => editor.isDirty);
+    return originalDirty || versionDirty || _arrangement != _savedArrangement;
   }
 
   MusicScoreEditor _editorFor(DigitalScoreData data) {
-    if (_editor == null || _editorSourcePath != data.song.sourcePath) {
-      _editor = MusicScoreEditor(data.score);
-      _editorSourcePath = data.song.sourcePath;
-      _sequence = sequenceForMarkedSections(data.score, data.sequence);
-      _savedSequence = _sequence;
+    if (_loadedSongId != data.song.id) {
+      _originalEditor = MusicScoreEditor(data.score);
+      _versionEditors.clear();
+      _versionCatalog = data.versionCatalog;
+      _activeVersionId = scoreVersionOriginalId;
+      _loadedSongId = data.song.id;
       _arrangement = data.arrangement;
       _savedArrangement = data.arrangement;
       _partIndex = 0;
       _measureIndex = 0;
-      _systems = const [];
       _selectedAddress = null;
+      _showMeasureTools = false;
     }
     return _editor!;
+  }
+
+  String _versionLabel(ScoreVersionRef version) {
+    final l10n = context.l10n;
+    if (version.isOriginal) return l10n.scoreOriginal;
+    if (version.id == scoreVersionLegacyPerformanceId) {
+      return l10n.scorePerformance;
+    }
+    return version.name;
   }
 
   MusicScore _viewScore(MusicScore written) {
     return displayedDigitalScore(
       written: written,
-      editing: _editing || _structuring,
+      editing: _editing,
       playbackEnabled: _playbackEnabled,
-      sequence: _sequence,
-      arrangement: _arrangement,
+      sequence: PlaybackSequence.empty,
+      arrangement: ArrangementProfile.off,
     );
   }
 
@@ -106,11 +120,10 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
             songId: data.song.id,
             relativePath: data.song.sourcePath,
             score: editor.score,
-            sequence: _sequence,
             arrangement: _arrangement,
+            versionId: _activeVersionId,
           );
       editor.markSaved();
-      _savedSequence = _sequence;
       _savedArrangement = _arrangement;
       if (!mounted) return true;
       setState(() {});
@@ -137,8 +150,8 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       final exported = await const ScoreExportService().encode(
         written: written,
         title: data.song.title,
-        sequence: _sequence,
-        arrangement: _arrangement,
+        sequence: PlaybackSequence.empty,
+        arrangement: ArrangementProfile.off,
         kind: kind,
       );
       final savedPath = await FilePicker.saveFile(
@@ -229,18 +242,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   void _placeStaffNote(AlphaTabStaffTappedEvent hit) {
     final editor = _editor;
     if (editor == null) return;
-    if (_structuring) {
-      if (hit.partIndex < 0 || hit.partIndex >= editor.score.parts.length) {
-        return;
-      }
-      final measures = editor.score.parts[hit.partIndex].measures;
-      if (hit.measureIndex < 0 || hit.measureIndex >= measures.length) return;
-      setState(() {
-        _partIndex = hit.partIndex;
-        _measureIndex = scoreSystemStart(hit.measureIndex, _systems);
-      });
-      return;
-    }
     if (!_editing) return;
     if (hit.partIndex < 0 || hit.partIndex >= editor.score.parts.length) {
       return;
@@ -248,6 +249,44 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     final measures = editor.score.parts[hit.partIndex].measures;
     if (hit.measureIndex < 0 || hit.measureIndex >= measures.length) return;
     final measure = measures[hit.measureIndex];
+    if (_editorMode == ScoreEditorMode.select) {
+      final onset = onsetFromTicks(
+        hit.onsetTicks,
+        measure.attributes.divisions,
+      );
+      final selected =
+          findNoteAt(
+            score: editor.score,
+            partIndex: hit.partIndex,
+            measureIndex: hit.measureIndex,
+            staff: hit.staff,
+            onset: onset,
+            midi: hit.midi,
+          ) ??
+          findNoteAt(
+            score: editor.score,
+            partIndex: hit.partIndex,
+            measureIndex: hit.measureIndex,
+            staff: hit.staff,
+            onset: onset,
+          ) ??
+          findNoteAt(
+            score: editor.score,
+            partIndex: hit.partIndex,
+            measureIndex: hit.measureIndex,
+            staff: hit.staff,
+            onset: onset,
+            rest: true,
+          );
+      setState(() {
+        _partIndex = hit.partIndex;
+        _measureIndex = hit.measureIndex;
+        _selectedAddress = selected;
+        _showMeasureTools = true;
+      });
+      return;
+    }
+    final addingRest = _editorMode == ScoreEditorMode.rest;
     final onset = onsetFromTicks(hit.onsetTicks, measure.attributes.divisions);
     final existingNote = findNoteAt(
       score: editor.score,
@@ -255,20 +294,21 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       measureIndex: hit.measureIndex,
       staff: hit.staff,
       onset: onset,
-      midi: _inputRest
+      midi: addingRest
           ? null
           : pitchFromMidi(hit.midi, alter: _inputAlter).midi,
-      rest: _inputRest,
+      rest: addingRest,
     );
     if (existingNote != null) {
       setState(() {
         _partIndex = existingNote.partIndex;
         _measureIndex = existingNote.measureIndex;
         _selectedAddress = existingNote;
+        _editorMode = ScoreEditorMode.select;
       });
       return;
     }
-    if (_inputRest) {
+    if (addingRest) {
       final pitched = findNoteAt(
         score: editor.score,
         partIndex: hit.partIndex,
@@ -281,6 +321,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
           _partIndex = pitched.partIndex;
           _measureIndex = pitched.measureIndex;
           _selectedAddress = pitched;
+          _editorMode = ScoreEditorMode.select;
         });
         return;
       }
@@ -299,10 +340,31 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       onsetTicks: hit.onsetTicks,
       midi: hit.midi,
       durationType: _inputDurationType,
-      rest: _inputRest,
+      rest: addingRest,
       alter: _inputAlter,
     );
-    if (restAt != null && !_inputRest) {
+    if (!addingRest) {
+      final overlappingRestIndexes = <int>[];
+      for (var index = 0; index < measure.events.length; index++) {
+        final event = measure.events[index];
+        if (event is! MusicNote || !event.isRest) continue;
+        if (event.staff != note.staff || event.voice != note.voice) continue;
+        if (event.onset < note.end && event.end > note.onset) {
+          overlappingRestIndexes.add(index);
+        }
+      }
+      for (final index in overlappingRestIndexes.reversed) {
+        _apply(
+          DeleteScoreEventCommand(
+            ScoreEventAddress(
+              partIndex: hit.partIndex,
+              measureIndex: hit.measureIndex,
+              eventIndex: index,
+            ),
+          ),
+        );
+      }
+    } else if (restAt != null) {
       _apply(
         ReplaceScoreEventCommand(address: restAt, event: note),
         selectedAddress: restAt,
@@ -338,7 +400,11 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
 
   void _moveStaffNote(AlphaTabNoteDraggedEvent hit) {
     final editor = _editor;
-    if (_structuring || !_editing || editor == null) return;
+    if (!_editing ||
+        _editorMode != ScoreEditorMode.select ||
+        editor == null) {
+      return;
+    }
     final address = findRenderedNoteAddress(
       score: editor.score,
       partIndex: hit.partIndex,
@@ -377,43 +443,177 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     final next = _editor;
     if (next == null || next.score.measureCount == before) return;
     setState(() {
-      _measureIndex = math.min(
-        _measureIndex + 1,
-        next.score.measureCount - 1,
-      );
-      _sequence = sequenceForMarkedSections(next.score, _sequence);
+      _measureIndex = math.min(_measureIndex + 1, next.score.measureCount - 1);
+      _showMeasureTools = true;
     });
   }
 
-  void _setMeasureSection(String? section) {
-    _apply(
-      UpdateSystemSectionCommand(
-        measureIndex: _measureIndex,
-        section: section,
-        systems: _systems,
-      ),
-    );
+  void _duplicateMeasure() {
+    _apply(DuplicateMeasureCommand(measureIndex: _measureIndex));
     final editor = _editor;
     if (editor == null) return;
     setState(() {
-      _sequence = sequenceForMarkedSections(editor.score, _sequence);
+      _measureIndex = math.min(
+        _measureIndex + 1,
+        editor.score.measureCount - 1,
+      );
+      _showMeasureTools = true;
     });
   }
 
-  void _setSectionRepeats(String section, int repeats) {
+  void _deleteMeasure() {
+    _apply(DeleteMeasureCommand(measureIndex: _measureIndex));
+    final editor = _editor;
+    if (editor == null) return;
     setState(() {
-      _sequence = sequenceForMarkedSections(
-        _editor!.score,
-        PlaybackSequence([
-          for (final item in _sequence.items)
-            if (item.section == section)
-              item.copyWith(repeats: repeats)
-            else
-              item,
-          if (_sequence.items.every((item) => item.section != section))
-            PlaybackSequenceItem(section: section, repeats: repeats),
-        ]),
-      );
+      _measureIndex = math.min(_measureIndex, editor.score.measureCount - 1);
+      _showMeasureTools = editor.score.measureCount > 0;
+    });
+  }
+
+  void _moveMeasure(int fromIndex, int toIndex) {
+    _apply(MoveMeasureCommand(fromIndex: fromIndex, toIndex: toIndex));
+    setState(() {
+      _measureIndex = toIndex;
+      _showMeasureTools = true;
+    });
+  }
+
+  void _startMeasureDrag() {
+    final state = _scoreViewKey.currentState;
+    if (state == null) return;
+    unawaited(state.startMeasureDrag(_measureIndex));
+  }
+
+  Future<void> _switchVersion({
+    required String versionId,
+    required DigitalScoreData data,
+  }) async {
+    if (versionId == _activeVersionId) return;
+    if (versionId != scoreVersionOriginalId) {
+      final existing = _versionEditors[versionId];
+      if (existing == null) {
+        final service = ref.read(digitalScoreEditorServiceProvider);
+        final score = await service.loadVersionScore(
+          songId: data.song.id,
+          versionId: versionId,
+        );
+        if (!mounted) return;
+        if (score == null) return;
+        _versionEditors[versionId] = MusicScoreEditor(score);
+      }
+    }
+    setState(() {
+      _activeVersionId = versionId;
+      _versionCatalog = _versionCatalog.copyWith(activeId: versionId);
+      _selectedAddress = null;
+      _showMeasureTools = false;
+      _partIndex = 0;
+      _measureIndex = 0;
+      _clampNavigation(_editor!.score);
+    });
+    unawaited(
+      ref
+          .read(digitalScoreEditorServiceProvider)
+          .saveVersionCatalog(data.song.id, _versionCatalog),
+    );
+  }
+
+  Future<void> _addVersion(DigitalScoreData data) async {
+    final number = ScoreVersionCatalog.nextVersionNumber(
+      _versionCatalog.versions,
+    );
+    final controller = TextEditingController(
+      text: context.l10n.scoreVersionN(number),
+    );
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(context.l10n.addScoreVersion),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: InputDecoration(hintText: context.l10n.scoreVersionName),
+            onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(context.l10n.cancel),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
+              child: Text(context.l10n.save),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    if (!mounted || name == null || name.isEmpty) return;
+    final source = _editor?.score ?? data.score;
+    final service = ref.read(digitalScoreEditorServiceProvider);
+    final next = await service.addVersion(
+      songId: data.song.id,
+      source: source,
+      catalog: _versionCatalog,
+      name: name,
+    );
+    if (!mounted) return;
+    final created = next.versions.last;
+    _versionEditors[created.id] = MusicScoreEditor(source);
+    setState(() {
+      _versionCatalog = next;
+      _activeVersionId = created.id;
+      _selectedAddress = null;
+      _showMeasureTools = false;
+      _partIndex = 0;
+      _measureIndex = 0;
+      _clampNavigation(_editor!.score);
+    });
+  }
+
+  Future<void> _deleteActiveVersion(DigitalScoreData data) async {
+    if (_activeVersionId == scoreVersionOriginalId) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(context.l10n.deleteScoreVersion),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(context.l10n.cancel),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(context.l10n.delete),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted || confirmed != true) return;
+    final deletedId = _activeVersionId;
+    final next = await ref
+        .read(digitalScoreEditorServiceProvider)
+        .deleteVersion(
+          songId: data.song.id,
+          versionId: deletedId,
+          catalog: _versionCatalog,
+        );
+    if (!mounted) return;
+    _versionEditors.remove(deletedId);
+    setState(() {
+      _versionCatalog = next;
+      _activeVersionId = scoreVersionOriginalId;
+      _selectedAddress = null;
+      _showMeasureTools = false;
+      _partIndex = 0;
+      _measureIndex = 0;
+      _clampNavigation(_editor!.score);
     });
   }
 
@@ -422,12 +622,22 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     if (!_playbackEnabled) _playback.stop();
   }
 
-  void _onToolSelected(_ScoreTool tool) {
-    switch (tool) {
-      case _ScoreTool.chord:
-        _addChord();
-      case _ScoreTool.editSelected:
-        _editSelected();
+  void _onMenuSelected(
+    _ScoreMenuAction action,
+    DigitalScoreData data,
+    MusicScore score,
+  ) {
+    switch (action) {
+      case _ScoreMenuAction.transpose:
+        _transpose(score, originalFifths: data.originalFifths);
+      case _ScoreMenuAction.exportMusicXml:
+        _export(data, score, ScoreExportKind.musicXml);
+      case _ScoreMenuAction.exportMidi:
+        _export(data, score, ScoreExportKind.midi);
+      case _ScoreMenuAction.exportPdf:
+        _export(data, score, ScoreExportKind.pdf);
+      case _ScoreMenuAction.exportProject:
+        _export(data, score, ScoreExportKind.project);
     }
   }
 
@@ -491,6 +701,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       context,
       currentFifths: concertKeyFifths(score),
       originalFifths: originalFifths,
+      score: score,
     );
     if (!mounted || request == null) return;
     _apply(
@@ -501,38 +712,20 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     );
   }
 
-  void _toggleStructuring() {
-    setState(() {
-      _structuring = !_structuring;
-      if (_structuring) {
-        _editing = false;
-        _selectedAddress = null;
-        _measureIndex = scoreSystemStart(_measureIndex, _systems);
-        final editor = _editor;
-        if (editor != null) {
-          _sequence = sequenceForMarkedSections(editor.score, _sequence);
-        }
-      }
-    });
-  }
-
   void _selectMeasure(int measureIndex) {
     final editor = _editor;
-    if ((!_structuring && !_editing) || editor == null) return;
+    if (!_editing || editor == null) return;
     final measures = editor.score.parts.first.measures;
     if (measureIndex < 0 || measureIndex >= measures.length) return;
-    setState(() => _measureIndex = scoreSystemStart(measureIndex, _systems));
+    setState(() {
+      _measureIndex = measureIndex;
+      _showMeasureTools = true;
+      _selectedAddress = null;
+    });
   }
 
   void _onNoteTapped(AlphaTabNoteTappedEvent hit) {
     final editor = _editor;
-    if (_structuring) {
-      setState(() {
-        _partIndex = hit.partIndex;
-        _measureIndex = scoreSystemStart(hit.measureIndex, _systems);
-      });
-      return;
-    }
     if (!_editing || editor == null) return;
     final address = findRenderedNoteAddress(
       score: editor.score,
@@ -547,6 +740,8 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       _partIndex = address.partIndex;
       _measureIndex = address.measureIndex;
       _selectedAddress = address;
+      _showMeasureTools = true;
+      _editorMode = ScoreEditorMode.select;
     });
   }
 
@@ -626,13 +821,47 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                     onPressed: () => _save(value, editor),
                     icon: const Icon(Icons.save_rounded),
                   ),
+                DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _activeVersionId,
+                    borderRadius: BorderRadius.circular(12),
+                    items: [
+                      for (final version in _versionCatalog.selectable)
+                        DropdownMenuItem(
+                          value: version.id,
+                          child: Text(_versionLabel(version)),
+                        ),
+                    ],
+                    onChanged: (id) {
+                      if (id == null) return;
+                      unawaited(_switchVersion(versionId: id, data: value));
+                    },
+                  ),
+                ),
+                IconButton(
+                  tooltip: context.l10n.addScoreVersion,
+                  onPressed: () => unawaited(_addVersion(value)),
+                  icon: const Icon(Icons.playlist_add_rounded),
+                ),
+                if (_activeVersionId != scoreVersionOriginalId)
+                  IconButton(
+                    tooltip: context.l10n.deleteScoreVersion,
+                    onPressed: () => unawaited(_deleteActiveVersion(value)),
+                    icon: const Icon(Icons.delete_outline_rounded),
+                  ),
                 IconButton(
                   tooltip: context.l10n.scoreEdit,
                   isSelected: _editing,
                   onPressed: () => setState(() {
                     _editing = !_editing;
-                    if (_editing) _structuring = false;
-                    if (!_editing) _selectedAddress = null;
+                    if (!_editing) {
+                      _selectedAddress = null;
+                      _showMeasureTools = false;
+                      final view = _scoreViewKey.currentState;
+                      if (view != null) unawaited(view.cancelMeasureDrag());
+                    } else {
+                      _editorMode = ScoreEditorMode.select;
+                    }
                   }),
                   icon: const Icon(Icons.edit_note_rounded),
                   selectedIcon: const Icon(Icons.check_rounded),
@@ -644,35 +873,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                   icon: const Icon(Icons.play_circle_outline_rounded),
                   selectedIcon: const Icon(Icons.play_circle_rounded),
                 ),
-                IconButton(
-                  tooltip: context.l10n.playbackSequence,
-                  isSelected: _structuring,
-                  onPressed: _toggleStructuring,
-                  icon: const Icon(Icons.playlist_play_rounded),
-                ),
-                IconButton(
-                  tooltip: context.l10n.scoreTranspose,
-                  onPressed: () =>
-                      _transpose(score, originalFifths: value.originalFifths),
-                  icon: const Icon(Icons.swap_vert_rounded),
-                ),
-                if (_editing)
-                  PopupMenuButton<_ScoreTool>(
-                    tooltip: context.l10n.scoreTools,
-                    icon: const Icon(Icons.tune_rounded),
-                    onSelected: _onToolSelected,
-                    itemBuilder: (context) => [
-                      PopupMenuItem(
-                        value: _ScoreTool.chord,
-                        child: Text(context.l10n.addChordSymbol),
-                      ),
-                      if (_selectedAddress != null)
-                        PopupMenuItem(
-                          value: _ScoreTool.editSelected,
-                          child: Text(context.l10n.editSelected),
-                        ),
-                    ],
-                  ),
                 if (_exporting)
                   const Padding(
                     padding: EdgeInsets.all(14),
@@ -682,34 +882,52 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                     ),
                   )
                 else
-                  PopupMenuButton<ScoreExportKind>(
-                    tooltip: context.l10n.save,
-                    icon: const Icon(Icons.download_rounded),
-                    onSelected: (kind) => _export(value, score, kind),
+                  PopupMenuButton<_ScoreMenuAction>(
+                    tooltip: context.l10n.scoreTools,
+                    icon: const Icon(Icons.more_vert_rounded),
+                    onSelected: (action) =>
+                        _onMenuSelected(action, value, score),
                     itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: _ScoreMenuAction.transpose,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.swap_vert_rounded),
+                          title: Text(context.l10n.scoreTranspose),
+                        ),
+                      ),
+                      const PopupMenuDivider(),
                       const PopupMenuItem(
-                        value: ScoreExportKind.musicXml,
-                        child: Text('.musicxml'),
+                        value: _ScoreMenuAction.exportPdf,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.picture_as_pdf_outlined),
+                          title: Text('PDF'),
+                        ),
                       ),
                       const PopupMenuItem(
-                        value: ScoreExportKind.xml,
-                        child: Text('.xml'),
-                      ),
-                      const PopupMenuItem(
-                        value: ScoreExportKind.mxl,
-                        child: Text('.mxl'),
-                      ),
-                      const PopupMenuItem(
-                        value: ScoreExportKind.midi,
-                        child: Text('.mid'),
-                      ),
-                      const PopupMenuItem(
-                        value: ScoreExportKind.pdf,
-                        child: Text('.pdf'),
+                        value: _ScoreMenuAction.exportMusicXml,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.music_note_rounded),
+                          title: Text('MusicXML'),
+                        ),
                       ),
                       PopupMenuItem(
-                        value: ScoreExportKind.project,
-                        child: Text(context.l10n.scoreProject),
+                        value: _ScoreMenuAction.exportProject,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.folder_zip_outlined),
+                          title: Text(context.l10n.scoreProject),
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: _ScoreMenuAction.exportMidi,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.graphic_eq_rounded),
+                          title: Text('MIDI'),
+                        ),
                       ),
                     ],
                   ),
@@ -720,30 +938,26 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
               children: [
                 Expanded(
                   child: PianoScoreView(
+                    key: _scoreViewKey,
                     score: _viewScore(score),
                     semanticsLabel: value.song.title,
                     playback: _playback,
                     playbackVisible: _playbackEnabled,
-                    highlightedMeasureIndex: (_editing || _structuring)
-                        ? scoreSystemStart(_measureIndex, _systems)
-                        : null,
-                    absorbMeasureTaps: _structuring,
+                    highlightedMeasureIndex: _editing ? _measureIndex : null,
                     oneFingerPan: !_editing,
+                    inputMode: !_editing
+                        ? 'off'
+                        : switch (_editorMode) {
+                            ScoreEditorMode.note => 'note',
+                            ScoreEditorMode.rest => 'rest',
+                            ScoreEditorMode.select => 'select',
+                          },
+                    inputDurationType: _inputDurationType,
+                    inputRest: _editorMode == ScoreEditorMode.rest,
                     onNoteTapped: _onNoteTapped,
                     onStaffTapped: _placeStaffNote,
                     onMeasureTapped: _selectMeasure,
-                    onSystemsChanged: (systems) {
-                      if (!mounted) return;
-                      setState(() {
-                        _systems = systems;
-                        if (_structuring) {
-                          _measureIndex = scoreSystemStart(
-                            _measureIndex,
-                            _systems,
-                          );
-                        }
-                      });
-                    },
+                    onMeasureMoved: _moveMeasure,
                     onNoteDragged: _moveStaffNote,
                     onPlayerIssue: () {
                       if (!mounted) return;
@@ -759,45 +973,50 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                     builder: (context, _) {
                       return ScorePlaybackBar(
                         state: _playback.state,
-                        padBottomSafeArea: !_editing && !_structuring,
+                        padBottomSafeArea: !_editing,
                         onPlayPause: () => _playback.playPause(),
                         onStop: () => _playback.stop(),
                         onSeek: (positionMs) => _playback.seek(positionMs),
                       );
                     },
                   ),
-                if (_structuring)
-                  ScoreStructurePanel(
-                    score: score,
-                    sequence: _sequence,
-                    measureIndex: _measureIndex,
-                    onSectionChanged: _setMeasureSection,
-                    onRepeatsChanged: _setSectionRepeats,
-                    onInsertMeasure: _insertMeasureAfter,
+                if (_editing && _showMeasureTools)
+                  _MeasureToolsBar(
+                    canDelete: score.measureCount > 1,
+                    onAdd: _insertMeasureAfter,
+                    onRemove: _deleteMeasure,
+                    onDuplicate: _duplicateMeasure,
+                    onDrag: _startMeasureDrag,
                   ),
                 if (_editing)
                   ScoreEditorPanel(
                     canUndo: editor.canUndo,
                     canRedo: editor.canRedo,
-                    hasSelection: _selectedAddress != null,
+                    mode: _editorMode,
+                    selectedEvent: _selectedEvent,
                     inputDurationType: _inputDurationType,
-                    inputRest: _inputRest,
                     inputAlter: _inputAlter,
                     onUndo: _undo,
                     onRedo: _redo,
+                    onModeChanged: (mode) => setState(() {
+                      _editorMode = mode;
+                      if (mode != ScoreEditorMode.select) {
+                        _selectedAddress = null;
+                        _showMeasureTools = false;
+                      }
+                    }),
                     onDurationTypeChanged: (type) =>
                         setState(() => _inputDurationType = type),
-                    onInputRestChanged: (value) =>
-                        setState(() => _inputRest = value),
                     onInputAlterChanged: (alter) =>
                         setState(() => _inputAlter = alter),
+                    onEditSelected: _editSelected,
+                    onAddChord: _addChord,
                     onDeleteSelected: () {
                       final address = _selectedAddress;
                       if (address != null) {
                         _apply(DeleteScoreEventCommand(address));
                       }
                     },
-                    onInsertMeasure: _insertMeasureAfter,
                   ),
               ],
             ),
@@ -808,6 +1027,72 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   }
 }
 
+class _MeasureToolsBar extends StatelessWidget {
+  const _MeasureToolsBar({
+    required this.canDelete,
+    required this.onAdd,
+    required this.onRemove,
+    required this.onDuplicate,
+    required this.onDrag,
+  });
+
+  final bool canDelete;
+  final VoidCallback onAdd;
+  final VoidCallback onRemove;
+  final VoidCallback onDuplicate;
+  final VoidCallback onDrag;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return Material(
+      color: AppColors.canvas,
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          border: Border(top: BorderSide(color: AppColors.border)),
+        ),
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: l10n.insertMeasureAfter,
+                  onPressed: onAdd,
+                  icon: const Icon(Icons.add_rounded),
+                ),
+                IconButton(
+                  tooltip: l10n.deleteMeasure,
+                  onPressed: canDelete ? onRemove : null,
+                  icon: const Icon(Icons.remove_rounded),
+                ),
+                IconButton(
+                  tooltip: l10n.duplicateMeasure,
+                  onPressed: onDuplicate,
+                  icon: const Icon(Icons.copy_all_rounded),
+                ),
+                IconButton(
+                  tooltip: l10n.dragMeasure,
+                  onPressed: onDrag,
+                  icon: const Icon(Icons.drag_indicator_rounded),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 enum _LeaveAction { discard, save }
 
-enum _ScoreTool { chord, editSelected }
+enum _ScoreMenuAction {
+  transpose,
+  exportMusicXml,
+  exportMidi,
+  exportPdf,
+  exportProject,
+}

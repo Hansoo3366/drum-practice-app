@@ -1094,6 +1094,18 @@ class AppLocalizationsKo extends AppLocalizations {
   String get timeSignature => '박자표';
 
   @override
+  String get timeSignatureNotation => '박자표 표기';
+
+  @override
+  String get timeSignatureNumbers => '숫자';
+
+  @override
+  String get commonTime => '보통박자 (C)';
+
+  @override
+  String get allaBreve => '알라 브레베 (¢)';
+
+  @override
   String get numerator => '분자';
 
   @override
@@ -1494,6 +1506,32 @@ class AppLocalizationsKo extends AppLocalizations {
   String get scoreEdit => '악보 편집';
 
   @override
+  String get scoreOriginal => '원본';
+
+  @override
+  String get scorePerformance => '연주용';
+
+  @override
+  String get addScoreVersion => '버전 추가';
+
+  @override
+  String get scoreVersionName => '버전 이름';
+
+  @override
+  String get deleteScoreVersion => '버전 삭제';
+
+  @override
+  String scoreVersionN(int n) {
+    return '버전 $n';
+  }
+
+  @override
+  String get duplicateMeasure => '마디 복제';
+
+  @override
+  String get dragMeasure => '마디 옮기기';
+
+  @override
   String get note => '음표';
 
   @override
@@ -1510,6 +1548,15 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get addChordSymbol => '코드 추가';
+
+  @override
+  String get addMeasure => '마디 추가';
+
+  @override
+  String get zoomIn => '확대';
+
+  @override
+  String get zoomOut => '축소';
 
   @override
   String get editSelected => '선택 항목 수정';
@@ -1575,14 +1622,25 @@ class AppLocalizationsKo extends AppLocalizations {
   String get playbackSequence => '연주 순서';
 
   @override
-  String get playbackSequenceHelp =>
-      '오선에서 마디를 누르고 벌스·코러스를 붙입니다. 아래에서 그 구간을 몇 번 반복할지 정합니다.';
+  String get playbackSequenceHelp => '마디에 구간을 붙인 뒤 순서와 반복을 정합니다.';
+
+  @override
+  String get addToPlaybackSequence => '순서에 추가';
+
+  @override
+  String get removeFromPlaybackSequence => '연주 순서에서 삭제';
 
   @override
   String get moveMeasureEarlier => '마디 앞으로';
 
   @override
   String get moveMeasureLater => '마디 뒤로';
+
+  @override
+  String get moveSectionEarlier => '구간 순서 위로';
+
+  @override
+  String get moveSectionLater => '구간 순서 아래로';
 
   @override
   String get noSections => '먼저 이 마디에 구간을 붙이세요';

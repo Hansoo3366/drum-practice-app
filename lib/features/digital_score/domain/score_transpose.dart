@@ -4,6 +4,30 @@ import 'package:page_a_diddle/features/digital_score/domain/score_editor.dart';
 const int minTransposeSemitones = -24;
 const int maxTransposeSemitones = 24;
 
+List<int> validTransposeSemitones(MusicScore score) {
+  return [
+    for (
+      var semitones = minTransposeSemitones;
+      semitones <= maxTransposeSemitones;
+      semitones++
+    )
+      if (canTransposeScore(score, semitones: semitones)) semitones,
+  ];
+}
+
+bool canTransposeScore(
+  MusicScore score, {
+  required int semitones,
+  int? fifthsDelta,
+}) {
+  try {
+    transposeScore(score, semitones: semitones, fifthsDelta: fifthsDelta);
+    return true;
+  } on FormatException {
+    return false;
+  }
+}
+
 class TransposeScoreCommand implements ScoreEditCommand {
   const TransposeScoreCommand({required this.semitones, this.fifthsDelta});
 
@@ -215,7 +239,8 @@ MusicPitch transposePitch(
   if (midi < 0 || midi > 127) {
     throw const FormatException('Transposed pitch is out of range.');
   }
-  final step = PitchStep.values[_positiveMod(pitch.step.index + letterShift, 7)];
+  final step =
+      PitchStep.values[_positiveMod(pitch.step.index + letterShift, 7)];
   var alter = _positiveMod(midi, 12) - step.naturalSemitone;
   if (alter > 6) alter -= 12;
   if (alter < -6) alter += 12;

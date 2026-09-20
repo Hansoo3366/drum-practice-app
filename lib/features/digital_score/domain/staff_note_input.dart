@@ -26,10 +26,7 @@ int durationForType(MusicAttributes attributes, String type) {
 }
 
 int onsetFromTicks(int onsetTicks, int divisions) {
-  return math.max(
-    0,
-    (onsetTicks * divisions / alphaTabQuarterTicks).round(),
-  );
+  return math.max(0, (onsetTicks * divisions / alphaTabQuarterTicks).round());
 }
 
 MusicPitch pitchFromMidi(int midi, {int alter = 0}) {
@@ -103,7 +100,7 @@ MusicNote noteFromStaffTap({
   required String durationType,
   required bool rest,
   int alter = 0,
-  String voice = '1',
+  String? voice,
 }) {
   final duration = durationForType(measure.attributes, durationType);
   final onset = clampOnsetForDuration(
@@ -111,11 +108,12 @@ MusicNote noteFromStaffTap({
     onset: onsetFromTicks(onsetTicks, measure.attributes.divisions),
     duration: duration,
   );
+  final resolvedStaff = staff.clamp(1, measure.attributes.staves);
   return MusicNote(
     onset: onset,
     duration: duration,
-    voice: voice,
-    staff: staff.clamp(1, measure.attributes.staves),
+    voice: voice ?? '$resolvedStaff',
+    staff: resolvedStaff,
     pitch: rest ? null : pitchFromMidi(midi, alter: alter),
     type: durationType,
   );

@@ -65,6 +65,7 @@ dependencies:
   extension_google_sign_in_as_googleapis_auth: ^3.0.0
   http: ^1.6.0
   flutter_appauth: ^11.0.0
+  flutter_notemus: ^2.8.1
 
 dev_dependencies:
   flutter_test:
@@ -117,6 +118,7 @@ flutter:
     - assets/alphatab/vendor/
     - assets/alphatab/vendor/font/
     - assets/alphatab/vendor/soundfont/
+    - assets/scores/
     - assets/sounds/
     - assets/brands/
     - assets/icons/

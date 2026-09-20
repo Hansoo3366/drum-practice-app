@@ -10,7 +10,7 @@ MusicScore displayedDigitalScore({
   PlaybackSequence sequence = PlaybackSequence.empty,
   ArrangementProfile arrangement = ArrangementProfile.off,
 }) {
-  if (editing || !playbackEnabled) return written;
+  if (editing) return written;
   return composePerformanceScore(
     written,
     sequence: sequence,

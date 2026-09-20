@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
+import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_transpose_panel.dart';
 
 void main() {
@@ -109,6 +110,39 @@ void main() {
     expect(find.text('C / Am'), findsOneWidget);
     expect(find.text('D / Bm'), findsOneWidget);
   });
+
+  testWidgets('shows and enforces the current score transpose range', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      _app(
+        Builder(
+          builder: (context) => FilledButton(
+            onPressed: () {
+              showScoreTransposeSheet(
+                context,
+                currentFifths: 0,
+                score: _scoreAtMidiLimit(),
+              );
+            },
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.text('반음: -24 ~ 0'), findsOneWidget);
+    final increaseButton = find.ancestor(
+      of: find.byTooltip('반음 올리기'),
+      matching: find.byType(IconButton),
+    );
+    expect(tester.widget<IconButton>(increaseButton).onPressed, isNull);
+  });
 }
 
 Widget _app(Widget home) {
@@ -117,5 +151,31 @@ Widget _app(Widget home) {
     supportedLocales: const [Locale('ko')],
     localizationsDelegates: appLocalizationDelegates,
     home: Scaffold(body: home),
+  );
+}
+
+MusicScore _scoreAtMidiLimit() {
+  return MusicScore(
+    parts: [
+      MusicPart(
+        id: 'P1',
+        name: 'Piano',
+        measures: [
+          MusicMeasure(
+            number: '1',
+            attributes: MusicAttributes(divisions: 1),
+            events: [
+              MusicNote(
+                onset: 0,
+                duration: 1,
+                voice: '1',
+                staff: 1,
+                pitch: const MusicPitch(step: PitchStep.g, octave: 9),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ],
   );
 }

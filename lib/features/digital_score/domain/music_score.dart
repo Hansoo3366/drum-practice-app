@@ -192,11 +192,18 @@ class MusicAttributes {
 }
 
 class MusicTimeSignature {
-  const MusicTimeSignature({required this.beats, required this.beatType});
+  const MusicTimeSignature({
+    required this.beats,
+    required this.beatType,
+    this.symbol,
+  });
 
   final int beats;
   final int beatType;
+  final MusicTimeSymbol? symbol;
 }
+
+enum MusicTimeSymbol { common, cut }
 
 class MusicClef {
   const MusicClef({

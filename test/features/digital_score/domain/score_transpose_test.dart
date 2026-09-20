@@ -39,10 +39,7 @@ void main() {
       expect(keyTonicLabel(2), 'D');
       expect(keyTonicLabel(-2), 'B♭');
       expect(keyTonicLabel(14), 'D');
-      expect(
-        measureKeyFifths(_score(secondKeyFifths: -3)),
-        [0, -3],
-      );
+      expect(measureKeyFifths(_score(secondKeyFifths: -3)), [0, -3]);
     });
 
     test('spells C to D-flat when the flatter key has fewer accidentals', () {
@@ -136,6 +133,19 @@ void main() {
         ).apply(_score(note: const MusicPitch(step: PitchStep.g, octave: 9))),
         throwsFormatException,
       );
+    });
+
+    test('reports the score-specific semitone range before applying', () {
+      final highest = _score(
+        note: const MusicPitch(step: PitchStep.g, octave: 9),
+      );
+      final lowest = _score(
+        note: const MusicPitch(step: PitchStep.c, octave: -1),
+      );
+
+      expect(validTransposeSemitones(highest).last, 0);
+      expect(validTransposeSemitones(lowest).first, 0);
+      expect(canTransposeScore(highest, semitones: 1), isFalse);
     });
   });
 }

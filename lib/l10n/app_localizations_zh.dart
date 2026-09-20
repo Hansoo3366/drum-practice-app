@@ -1093,6 +1093,18 @@ class AppLocalizationsZh extends AppLocalizations {
   String get timeSignature => '拍号';
 
   @override
+  String get timeSignatureNotation => 'Notation';
+
+  @override
+  String get timeSignatureNumbers => 'Numbers';
+
+  @override
+  String get commonTime => 'Common time (C)';
+
+  @override
+  String get allaBreve => 'Alla breve (¢)';
+
+  @override
   String get numerator => '分子';
 
   @override
@@ -1494,6 +1506,32 @@ class AppLocalizationsZh extends AppLocalizations {
   String get scoreEdit => 'Edit score';
 
   @override
+  String get scoreOriginal => 'Original';
+
+  @override
+  String get scorePerformance => 'Performance';
+
+  @override
+  String get addScoreVersion => 'Add version';
+
+  @override
+  String get scoreVersionName => 'Version name';
+
+  @override
+  String get deleteScoreVersion => 'Delete version';
+
+  @override
+  String scoreVersionN(int n) {
+    return 'Version $n';
+  }
+
+  @override
+  String get duplicateMeasure => 'Duplicate measure';
+
+  @override
+  String get dragMeasure => 'Move measure';
+
+  @override
   String get note => 'Note';
 
   @override
@@ -1510,6 +1548,15 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get addChordSymbol => 'Add chord';
+
+  @override
+  String get addMeasure => 'Add measure';
+
+  @override
+  String get zoomIn => 'Zoom in';
+
+  @override
+  String get zoomOut => 'Zoom out';
 
   @override
   String get editSelected => 'Edit selected';
@@ -1576,13 +1623,25 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get playbackSequenceHelp =>
-      'Tap a measure and mark verse or chorus. Then set how many times that section repeats.';
+      'Mark sections on measures, then set their order and repeats.';
+
+  @override
+  String get addToPlaybackSequence => 'Add to order';
+
+  @override
+  String get removeFromPlaybackSequence => 'Remove from playback order';
 
   @override
   String get moveMeasureEarlier => 'Move measure earlier';
 
   @override
   String get moveMeasureLater => 'Move measure later';
+
+  @override
+  String get moveSectionEarlier => 'Move section earlier';
+
+  @override
+  String get moveSectionLater => 'Move section later';
 
   @override
   String get noSections => 'Mark a section on this measure first';

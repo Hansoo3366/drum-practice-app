@@ -1,5 +1,7 @@
-/// A4 at 96dpi. Engrave at this width, then scale the page to the phone.
+/// A4 at 96dpi. Engrave at this size, then scale the page to the phone.
 const double scorePageWidthPx = 794;
+const double scorePageHeightPx = 1123;
+const double scorePageGapPx = 24;
 
 class ScoreSystemSpan {
   const ScoreSystemSpan({
@@ -11,8 +13,7 @@ class ScoreSystemSpan {
   final int endMeasureIndex;
 
   bool contains(int measureIndex) {
-    return measureIndex >= startMeasureIndex &&
-        measureIndex <= endMeasureIndex;
+    return measureIndex >= startMeasureIndex && measureIndex <= endMeasureIndex;
   }
 
   @override
@@ -42,7 +43,10 @@ ScoreSystemSpan scoreSystemFor(
   );
 }
 
-int scoreSystemStart(int measureIndex, [List<ScoreSystemSpan> systems = const []]) {
+int scoreSystemStart(
+  int measureIndex, [
+  List<ScoreSystemSpan> systems = const [],
+]) {
   return scoreSystemFor(measureIndex, systems).startMeasureIndex;
 }
 

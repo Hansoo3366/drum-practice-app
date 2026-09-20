@@ -1,6 +1,5 @@
 import 'dart:math' as math;
-import 'dart:typed_data';
-
+import 'package:flutter/services.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_editor.dart';
@@ -22,13 +21,15 @@ class ScorePdfExporter {
       creator: 'Page-a-Diddle',
       subject: 'Reconstructed piano score',
     );
+    final fontData = await rootBundle.load('assets/fonts/SUIT-Regular.otf');
+    final font = PdfTtfFont(document.document, fontData);
     for (var pageIndex = 0; pageIndex < pageCount; pageIndex++) {
       final start = pageIndex * measuresPerPage;
       final end = math.min(start + measuresPerPage, measures.length);
       final slice = measures.sublist(start, end);
       document.addPage(
         pw.Page(
-          pageFormat: PdfPageFormat.a4.landscape,
+          pageFormat: PdfPageFormat.a4,
           margin: const pw.EdgeInsets.all(28),
           build: (context) {
             return pw.CustomPaint(
@@ -43,6 +44,7 @@ class ScorePdfExporter {
                   score: score,
                   measures: slice,
                   pageIndex: pageIndex,
+                  font: font,
                 );
               },
             );
@@ -59,8 +61,8 @@ class ScorePdfExporter {
     required MusicScore score,
     required List<MusicMeasure> measures,
     required int pageIndex,
+    required PdfFont font,
   }) {
-    final font = canvas.defaultFont!;
     if (pageIndex == 0 && (score.title ?? '').isNotEmpty) {
       canvas
         ..setFillColor(PdfColors.black)

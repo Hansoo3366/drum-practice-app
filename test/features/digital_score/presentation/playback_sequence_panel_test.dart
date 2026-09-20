@@ -21,14 +21,47 @@ void main() {
     ]);
   });
 
+  test('preserves a user-defined section order', () {
+    final sequence = sequenceForMarkedSections(
+      _score(),
+      PlaybackSequence([
+        PlaybackSequenceItem(section: 'VERSE', repeats: 2),
+        PlaybackSequenceItem(section: 'INTRO', repeats: 4),
+      ]),
+    );
+
+    expect(sequence.items, [
+      PlaybackSequenceItem(section: 'VERSE', repeats: 2),
+      PlaybackSequenceItem(section: 'INTRO', repeats: 4),
+    ]);
+  });
+
+  test('preserves repeated entries for the same marked section', () {
+    final sequence = sequenceForMarkedSections(
+      _score(),
+      PlaybackSequence([
+        PlaybackSequenceItem(section: 'INTRO', repeats: 2),
+        PlaybackSequenceItem(section: 'VERSE'),
+        PlaybackSequenceItem(section: 'INTRO', repeats: 3),
+      ]),
+    );
+
+    expect(sequence.items, [
+      PlaybackSequenceItem(section: 'INTRO', repeats: 2),
+      PlaybackSequenceItem(section: 'VERSE'),
+      PlaybackSequenceItem(section: 'INTRO', repeats: 3),
+    ]);
+  });
+
   testWidgets('marks a measure role and changes that role repeat count', (
     tester,
   ) async {
-    await tester.binding.setSurfaceSize(const Size(720, 720));
+    await tester.binding.setSurfaceSize(const Size(360, 720));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     String? section;
-    var inserted = false;
+    String? added;
+    int? removed;
     var sequence = PlaybackSequence([
       PlaybackSequenceItem(section: 'INTRO', repeats: 2),
       PlaybackSequenceItem(section: 'VERSE'),
@@ -43,19 +76,36 @@ void main() {
               sequence: sequence,
               measureIndex: 0,
               onSectionChanged: (value) => section = value,
-              onInsertMeasure: () => inserted = true,
-              onRepeatsChanged: (value, repeats) {
+              onSectionAdded: (value) {
+                added = value;
                 setState(() {
-                  sequence = sequenceForMarkedSections(
-                    _score(),
-                    PlaybackSequence([
-                      for (final item in sequence.items)
-                        if (item.section == value)
-                          item.copyWith(repeats: repeats)
-                        else
-                          item,
-                    ]),
+                  final source = sequence.items.lastWhere(
+                    (item) => item.section == value,
                   );
+                  sequence = PlaybackSequence([...sequence.items, source]);
+                });
+              },
+              onSectionRemoved: (index) {
+                removed = index;
+                setState(() {
+                  final items = sequence.items.toList()..removeAt(index);
+                  sequence = PlaybackSequence(items);
+                });
+              },
+              onDone: () {},
+              onSectionMoved: (from, to) {
+                setState(() {
+                  final items = sequence.items.toList();
+                  final moved = items.removeAt(from);
+                  items.insert(to, moved);
+                  sequence = PlaybackSequence(items);
+                });
+              },
+              onRepeatsChanged: (index, repeats) {
+                setState(() {
+                  final items = sequence.items.toList();
+                  items[index] = items[index].copyWith(repeats: repeats);
+                  sequence = PlaybackSequence(items);
                 });
               },
             );
@@ -64,9 +114,10 @@ void main() {
       ),
     );
 
-    expect(find.textContaining('오선에서 마디를 누르고'), findsOneWidget);
+    expect(find.text('마디에 구간을 붙인 뒤 순서와 반복을 정합니다.'), findsOneWidget);
     expect(find.text('1/2'), findsNothing);
-    expect(find.text('다음 마디 추가'), findsOneWidget);
+    expect(find.text('다음 마디 추가'), findsNothing);
+    expect(find.text('순서에 추가'), findsOneWidget);
     expect(find.byTooltip('마디 뒤로'), findsNothing);
     expect(find.text('조표'), findsNothing);
     expect(find.text('박자'), findsNothing);
@@ -80,15 +131,32 @@ void main() {
       PlaybackSequenceItem(section: 'INTRO', repeats: 3),
     );
 
+    await tester.tap(find.byTooltip('구간 순서 아래로').first);
+    await tester.pump();
+    expect(sequence.items.first.section, 'VERSE');
+    expect(
+      sequence.items.last,
+      PlaybackSequenceItem(section: 'INTRO', repeats: 3),
+    );
+
     await tester.tap(find.byType(DropdownButton<String>));
     await tester.pumpAndSettle();
     await tester.tap(find.text('코러스').last);
     await tester.pumpAndSettle();
     expect(section, 'CHORUS');
 
-    await tester.tap(find.text('다음 마디 추가'));
+    await tester.tap(find.text('순서에 추가'));
     await tester.pump();
-    expect(inserted, isTrue);
+    expect(added, 'INTRO');
+    expect(
+      sequence.items.last,
+      PlaybackSequenceItem(section: 'INTRO', repeats: 3),
+    );
+
+    await tester.tap(find.byTooltip('연주 순서에서 삭제').last);
+    await tester.pump();
+    expect(removed, 2);
+    expect(sequence.items, hasLength(2));
   });
 }
 

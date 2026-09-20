@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:page_a_diddle/core/database/app_database.dart';
+import 'package:page_a_diddle/features/digital_score/data/bundled_score_seeder.dart';
 import 'package:page_a_diddle/features/library/data/song_repository.dart';
 import 'package:page_a_diddle/features/library/domain/library_filter.dart';
 
@@ -84,6 +87,11 @@ final librarySelectionProvider =
     );
 
 final librarySongsProvider = StreamProvider<List<Song>>((ref) {
+  unawaited(
+    ref.watch(bundledScoreSeederProvider).ensureSeeded().onError((_, _) {
+      // Keep the user's library usable if a bundled sample cannot import.
+    }),
+  );
   final query = ref.watch(libraryQueryProvider);
   final filter = ref.watch(libraryFilterProvider);
   final folderKey = ref.watch(libraryFolderFilterProvider);
