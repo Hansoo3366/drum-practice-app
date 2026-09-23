@@ -4,6 +4,29 @@
 
 상태 표기: `[x]` 완료 · `[~]` 진행 중 · `[ ]` 미착수 · `[-]` 보류
 
+> 2026-09-23 11:16 피아노 전용 `AppElementId/EventLocator`, Section/Arrangement sidecar, Lomse JSON command 계약과 opaque C ABI 구현을 추가했다. 피아노 domain 테스트 9개·analyze·piano debug APK build, Lomse 0.30.0 macOS standalone build, host bridge smoke(load/export/LDP insert/undo/redo), 임시 Android arm64 FreeType을 주입한 Lomse·bridge standalone build가 통과했다. 아직 Flutter APK 링크·Dart FFI·AppElementId target mapping·Verovio 왕복·Android 실기기 latency는 검증하지 않았다. 이 항목들이 M8-10의 다음 게이트다.
+> 2026-09-23 11:30 피아노 전용 `FfiLomseEditorSession` Dart 어댑터와 Lomse/FreeType 검증 commit lock을 추가했다. native library가 없는 현재 APK에서는 `tryCreate()`가 null을 반환해 기존 Smoosic fallback을 유지한다. FFI status·fallback 테스트와 domain 테스트 12개, piano domain/data analyze가 통과했다. piano Gradle native packaging·AppElementId target mapping·Verovio 왕복·Android 실기기 latency는 다음 M8-10 게이트다.
+> 2026-09-23 피아노 전용 악보 엔진 방향을 확정했다. 기존 Flutter UI와 Verovio FFI 뷰어는 유지하고, Smoosic을 최종 편집기로 채택하지 않는다. Lomse C++ 편집 런타임을 좁은 FFI bridge로 연결하며, MusicXML snapshot을 저장 기준으로 삼고 AppElementId/EventLocator로 Verovio와 Lomse 객체를 매핑한다. Verse/Chorus/Arrangement는 MusicXML이나 엔진 내부가 아닌 프로젝트 sidecar에 둔다. 드럼 셸은 이번 방향의 변경 범위에서 제외한다.
+> 2026-09-23 Lomse 저장소를 별도 임시 복제해 API·편집 명령·3개 이상 staff 모델·MusicXML export 문서를 확인했다. Lomse는 C++ 엔진과 편집 API는 제공하지만 Flutter viewer/plugin은 제공하지 않으며, 일부 insert command의 입력은 LMD/LDP 형식이다. 따라서 Android Lomse FFI 빌드, import→edit→export→Verovio 왕복, AppElementId 매핑, 20페이지 latency를 PoC 선행 조건으로 둔다.
+> 2026-09-22 15:13 최신 arm64 release APK(SHA-256 `d26d977c…`)를 `emulator-5554`에 설치하고 Claire de lune에서 Android mouse scroll 한 틱을 주입했다. 악보는 세로로 이동했고 오선 간격·음표 크기는 확대되지 않았다. Ctrl/Cmd+휠·핀치·hover shadow note는 ADB 한계로 아직 별도 확인하지 않았다.
+> 2026-09-22 15:00 악보 입력·뷰포트 상호작용은 자체 동작을 추가하지 않고 MuseScore·Dorico·forScore의 데스크톱/모바일 관례를 기준으로 고정한다. 일반 마우스 휠은 세로 스크롤, Ctrl/Cmd+휠은 확대, 트랙패드 스크롤·한 손가락 뷰 모드는 이동, 핀치는 확대다. 악보 입력 모드에서는 포인터 hover에 shadow note를 미리 보여 주고 클릭/탭으로 확정하며, 스크롤은 악보를 변경하거나 고스트 크기를 바꾸지 않는다.
+> 2026-09-21 13:03 M8-03의 화면 조판을 A4 페이지 모델에서 분리했다. 연습 화면은 Notemus의 화면 폭 기준 연속 세로 레이아웃을 사용하고, A4 비율·여백·페이지 나눔은 PDF 출력에만 적용한다. 새 debug APK를 SM-S937N에 재설치해 Clair 화면을 확인했으며 관련 회귀 테스트 9개가 통과했다.
+> 2026-09-21 13:18 실기기 재검수에서 같은 Grand Staff 내부의 오선 끝점은 보정했지만, 시스템별 우측 정렬과 낮은 스태프 음자리표 표시가 출시 품질에 미달하는 것을 확인했다. M8-03 native score 화면은 정당화·clef 검증 전까지 보류한다.
+> 2026-09-21 14:10 M8-03 화면 조판을 `verovio_flutter` FFI(상류 Verovio 6.2.1)로 전환했다. MusicXML→Verovio SVG·HitMap→Flutter 흐름으로 표준 악보 조판을 사용하고, 실기기 Clair에서 오선·음표·낮은 음자리표·시스템 정렬을 확인했다. 화면은 연속 세로 문서이며 A4 비율·레터박스·페이지 나눔은 PDF 출력에만 적용한다.
+> 2026-09-21 14:20 진단 로그를 제거한 최종 debug APK를 다시 빌드해 SM-S937N에 설치했다. Clair 악보 화면이 표시되고 앱 프로세스가 유지되며 SIGSEGV/Fatal 로그가 없음을 확인했다.
+> 2026-09-21 15:03 버전 생성·전환·삭제의 저장 예외를 UI에서 회수하고, 버전 매니페스트를 원자 저장·손상 시 원본 fallback하도록 보강했다. Flutter SVG에서 좌측 상단으로 모이는 Verovio direction/tempo text는 화면에서 제거하고 마디 번호만 유지했으며, 원본 MusicXML/PDF 데이터는 보존한다. analyze·MVP 8 대상 테스트 107개·debug APK build는 통과했고 최종 실기기 재설치는 현재 기기 미연결로 대기한다.
+> 2026-09-21 15:34 최종 debug APK를 SM-S937N에 재설치해 Clair 악보의 좌측 상단 텍스트 겹침 해소를 확인했다. 버전 추가 취소에서 발생하던 TextEditingController dispose 타이밍 assertion을 대화상자 StatefulWidget 수명으로 수정했으며, 버전 취소·저장·삭제를 실기기에서 모두 통과했다. 전체 테스트는 299개 통과·기존 SoundFont 누락 1개 실패이며, 2페이지 이후·터치·재생·내보내기·재열기는 남아 있다.
+> 2026-09-21 15:59 버전 추가 UX를 `즉시 빈 복사본 생성`에서 `수정 → 저장 → 이름 입력 → 새 버전 생성`으로 변경했다. 실기기에서 실제 음표 수정 후 버전 이름 입력·저장·전환·삭제를 통과했고, 전체 테스트는 300개 통과·기존 SoundFont 누락 1개 실패다.
+> 2026-09-21 16:44 버전 카탈로그의 활성 버전을 재실행 후 복원하고, Verovio 음표 탭 직후 선택 상태를 지우던 콜백 순서를 수정했다. 코러스·벌스 마디 지정 패널을 실제 DigitalScoreScreen에 연결하고 Sequence·반주 sidecar를 저장·내보내기 경로에 연결했다. 새 APK build와 관련 테스트는 통과했지만 현재 ADB 기기가 연결되지 않아 실기기 입력 smoke는 대기 중이다.
+> 2026-09-21 17:20 단선 멜로디 변환의 기본 결과를 `멜로디 1단 + 피아노 오른손 1단 + 피아노 왼손 1단`의 3단 악보로 확정했다. 2단 Grand Staff는 피아노 단독 보기로 유지한다. 편집 입력은 음높이 방향 반전, Verovio 음표 이벤트 매핑, 실제 조판 좌표와 고스트 모양을 보강하는 작업을 시작했다.
+> 2026-09-21 18:02 현재 배포 제품은 드럼 앱으로 유지하고, 피아노 전자악보 기능은 공통 악보 코어로 개발한 뒤 추후 Flutter flavor 또는 별도 앱 셸로 분리하기로 결정했다. 저장소를 즉시 복제하지 않으며, 피아노 앱의 별도 이름·아이콘·Application ID는 출시 결정 시 만든다. 현재 뷰어·편집·재생에는 서버·AI를 요구하지 않고 OMR worker와 AI 편곡은 Future로 둔다.
+> 2026-09-22 09:29 에뮬레이터에서 악보 화면이 빈 스피너에 머물던 문제를 재검증했다. Verovio native page를 1/100mm 기준 A4 `2100×2970`으로 제한하고 `adjustPageHeight`를 끈 뒤, 페이지를 하나씩 화면에 공개하도록 수정했다. `emulator-5554`에서 `Claire de lune`와 `Fantaisie-Impromptu`를 모두 열어 오선·높은/낮은음자리표·음표를 확인했으며, 화면은 페이지 사이 간격 없는 연속 문서, PDF는 별도 A4 출력으로 유지한다. Verse/Chorus 반복은 원본 written score를 보존하고 non-editing 화면·재생·내보내기에서만 performance score로 펼친다.
+> 2026-09-22 10:56 에뮬레이터 최신 arm64 release에서 CHORUS Section을 지정하고 반복 2회를 추가한 뒤, 완료 시 화면은 원본 written score로 남고 Playback ON에서만 Section별 MIDI를 이어 재생하는 것을 확인했다. 재생 중 30초 이상 시간·마디 하이라이트가 진행되어도 빈 화면이나 Verovio 재조판으로 바뀌지 않는다. 같은 이름의 Section이 여러 범위에 있을 때도 각 범위 하나씩 분할해 중복 없이 연결하도록 보강했다.
+> 2026-09-22 13:28 확대·축소 입력을 viewport→scene 한 번 변환으로 통일하고, 두 손가락 제스처 중 음표 커밋을 차단했다. 같은 시스템의 모든 마디가 공유하는 보표 기준선·오선 간격과 마디 좌우 onset 경계를 입력 기준에 추가해, 마디별 오선 튐·쉼표 hit-box 오염·첫 음표 위치로의 잘못된 스냅을 줄였다. `emulator-5554` 최종 arm64 release에서 악보 표시·수정 진입·확대 상태 음표 입력·Version 1 저장과 재실행 복원을 확인했다.
+> 2026-09-22 13:28 버전 UX를 `버전 추가` 버튼 없는 흐름으로 확정했다. AppBar `수정`을 누르면 버전 이름 팝업을 먼저 열고, 이름을 확정한 뒤 수정하며, 저장할 때 해당 수정본을 새 버전으로 생성·활성화한다. 이름 입력을 취소하면 편집과 파일 생성을 시작하지 않는다.
+> 2026-09-22 16:50 제품 경계를 확정하고 Android product flavor/app shell을 도입했다. 드럼 flavor는 기존 PDF Viewer·메트로놈 등 드럼 연습 도구를 유지하고, 피아노 flavor는 PDF Viewer·MusicXML·Smoosic 편집기·MusicXML/PDF 내보내기 흐름을 별도 셸로 제공한다. 피아노 셸에서는 Tap Tempo·Tempo Trainer·Setlist·Jam을 노출하지 않는다. 저장소는 복제하지 않고 `com.hansookim.pianoscore`와 `Piano Score` 브랜딩을 사용하며, PDF→MusicXML OMR은 서버/worker가 필요한 Future로 남긴다.
+> 2026-09-22 17:45 Smoosic 편집기에서 MusicXML·PDF 내보내기 메뉴를 연결하고 piano/drum debug flavor APK 빌드를 다시 통과시켰다. 이전 APK의 에뮬레이터 셸·MusicXML 로딩·Save 팝업 smoke는 유효하지만, 내보내기 메뉴를 포함한 최신 APK 재설치는 emulator-5554의 `/data` 여유 공간 약 505MB와 패키지 관리자 내부 오류로 대기 중이다.
+
 ## 진행률 요약
 
 | 단계 | 완료/전체 | 진행률 | 상태 |
@@ -16,11 +39,14 @@
 | MVP 5 Stage | 5/5 | 100% | 완료 |
 | MVP 6 Jam Session v1 | 10/10 | 100% | 완료 |
 | MVP 7 Jam Session v2 | 7/7 | 100% | 완료 |
-| MVP 8 로컬 피아노 전자악보 | 9/9 | 100% | 완료, Android smoke 대기 |
+| MVP 8 로컬 피아노 전자악보 | 6/10 | 60% | 편집·버전·Section·제품 셸 실기기 검증 진행 중 |
 | Future | 0/16 | 0% | 서버 기능 후순위 |
 | 디자인 토큰 적용 | 1/1 | 100% | 완료 |
-| **전체** | **80/101** | **79%** | 진행 중 |
+| **전체** | **77/102** | **75%** | 진행 중 |
 
+> 2026-09-21 08:50 전자악보 「맞춤」을 A4 비율 유지·뷰포트 너비 맞춤·세로 레터박스로 명확히 했다(`a4FitWidthLetterboxTransform`, 단위 테스트 2).
+> 2026-09-21 09:31 Notemus 시스템별 가로 scaleX 왜곡을 제거하고, 실제 페이지·시스템·마디선을 기준으로 마디 강조·재생·음표 선택·입력 고스트 좌표를 투영했다. A4 fit/페이지/렌더 좌표 회귀 테스트 7개와 analyze를 통과했다. 실기기 캡처·터치 smoke는 B-017이다.
+> 2026-09-21 10:32 A4를 화면상 고정 픽셀 크기가 아닌 794:1123 비율의 종이로 해석했다. 좁은 화면은 화면상 오선 간격 최소 6dp를 목표로 조판하고, onset 정렬로 A4 폭을 넘는 시스템은 x/y 균일 축소해 종이 밖 이탈과 가로 찌그러짐을 막았다. 관련 대상 테스트 8개·analyze·debug APK 설치와 Clair 첫 화면 캡처를 확인했으며 2페이지 이후·터치 smoke는 B-017이다.
 > 2026-09-20 22:45 A4 시스템을 페이지 단위로 넘기도록 고쳤다. Clair에서 페이지 회색 간격 위 ink 0(세로 잘림 없음), 줄마다 가로 scaleX(fill ≈0.87–0.95). SM-S937N 재설치 확인.
 > 2026-09-20 21:18 Fantaisie 캡처로 오선·시스템 가로 미채움을 확인. notemus 왼쪽 정렬 + 오선이 글리프까지만 그려지던 것이 원인. Transform 가로 스케일(최소 1.2) + 오선 오버레이로 세로줄 간격 ~7%·오선 끝 ~96%까지 채움(verify10). Allegro 중복·상단 inset·이음줄 넘침은 남음.
 > 2026-09-20 11:57 전자악보 배경을 794×1123 A4 용지 단위로 쌓고, SVG에 중복 적용되던 좌우 48px 패딩을 제거해 오선이 종이 폭을 넘지 않게 했다.
@@ -231,31 +257,37 @@
   - Library 가져오기, 곡명·작곡가·템포 자동 채움, MusicXML 재내보내기 연결
   - PDF와 같은 출처(기기·Google Drive·Dropbox·WebDAV)에서 `.musicxml`·`.mxl`·`.xml`을 고른다
   - 첫 Library 진입 시 `Claire de lune`와 `Fantaisie-Impromptu in C♯ Minor`를 기본 악보로 넣고 같은 제목의 기존 악보는 중복하지 않는다
-- [x] M8-03 피아노 Grand Staff 렌더링과 화면 크기별 재배치
-  - ~~alphaTab WebView~~ → ~~CustomPainter stub~~ → `flutter_notemus` ScoreView(SMuFL/Bravura)(D-141)
-  - 내부 MusicScore는 MusicXML로 직렬화해 Notemus에 넘기고, 입력 hit-test·고스트는 `native_score_layout`을 유지한다
-  - 핀치 확대와 화면 맞춤 유지
-  - MusicXML 전체 파트, 피아노 Grand Staff, Notemus system wrap과 스케일 적용
-- [x] M8-04 음표·쉼표·마디·조표·박자표·코드 작성 및 수정
+- [~] M8-03 피아노 Grand Staff 렌더링과 화면 크기별 재배치
+  - ~~alphaTab WebView~~ → ~~CustomPainter stub~~ → ~~`flutter_notemus` ScoreView~~ → `verovio_flutter` FFI / Verovio 6.2.1 (D-145)
+  - 내부 MusicScore는 MusicXML로 직렬화해 Verovio 네이티브 조판 엔진에 넘기고, SVG와 HitMap을 화면 렌더·입력·강조에 공유한다. 재생은 별도 Notemus MIDI adapter다.
+  - Verovio native page는 1/100mm 기준 A4 `2100×2970`으로 조판하고, 화면에서는 페이지 사이 간격 없이 화면 폭으로 균일 축소해 연속 문서로 붙인다. 레터박스는 노출하지 않는다.
+  - 첫 native page를 준비하는 즉시 화면에 공개하고 나머지 페이지를 순차 렌더링한다. 페이지별 SVG·HitMap을 입력·강조에 공유하며, 페이지별 native 호출에는 타임아웃을 둔다.
+  - PDF 출력은 `PdfPageFormat.a4`와 별도 여백·페이지 나눔을 사용한다. Verse/Chorus를 설정하거나 Playback을 켜도 화면에는 원본 written score를 유지하고, 반복 재생·내보내기에서만 derived performance score/MIDI를 사용한다.
+- [~] M8-04 음표·쉼표·마디·조표·박자표·코드 작성 및 수정
   - 렌더링된 음표 직접 선택과 마디별 음표·쉼표·코드 심벌 이벤트 선택·입력·수정·삭제
   - 조표·박자표, 전체 파트 정렬 마디 추가·삭제, 최대 100단계 undo/redo와 저장 전 이탈 확인
   - 편집 즉시 Grand Staff 재조판, 원본 형식 유지 검증·원자 저장, 현재 편집본 MusicXML 내보내기
   - Library `악보 만들기`로 빈 피아노 한 마디를 만들어 바로 편집한다
   - 음가·쉼표·임시표를 고른 뒤 오선을 눌러 바로 넣고, 음표를 끌어 높이를 바꾼다
+  - 입력 좌표는 Verovio HitMap의 실제 음표 간격·보표 위치를 기준으로 계산하고, 고스트는 선택한 음가의 음표 모양으로 표시한다
+  - 입력 방향은 화면 위쪽이 높은 음, 아래쪽이 낮은 음이 되도록 보장하며, 앱 고유 `AppElementId`/`EventLocator`와 각 엔진의 임시 ID를 분리해 렌더 음표를 안정적으로 매핑한다
+  - 확대·축소·이동 중 viewport 좌표를 scene 좌표로 한 번만 변환하고, 두 손가락 제스처 중 음표 입력을 커밋하지 않는다
+  - 같은 시스템의 마디는 공유된 보표 기준선·오선 간격을 사용하고, 마디 좌우 경계를 onset anchor로 사용해 입력 음표가 첫 기존 음표에 붙지 않게 한다
 - [x] M8-05 MIDI/샘플 기반 로컬 재생과 Bar/Beat Cursor
   - ~~alphaTab SoundFont~~ → `flutter_notemus` MidiMapper + 네이티브 시퀀서(현재 사인파 음색, YDP SF2 재연결은 후속)
   - 재생·일시정지·정지·탐색과 마디 하이라이트 커서를 하나의 타임라인으로 연결
   - 재생 중 현재 시스템이 화면 아래 안전 영역을 벗어나면 현재 마디가 보이도록 자동 스크롤은 후속
   - 재생 막대가 보일 때 네이티브 오디오 백엔드를 초기화한다
-- [x] M8-06 Section 반복 횟수와 순서를 저장하는 Playback Sequence
-  - 사용자 UX는 INTRO/VERSE 구간 표식 대신 마디 물리 복제·이동·삭제로 단순화했다
+- [~] M8-06 Section 지정·반복 횟수와 순서를 저장하는 Playback Sequence
+  - 마디에 INTRO/VERSE/PRE/CHORUS/BRIDGE/OUTRO를 지정하고, 지정한 시스템 범위에는 첫 마디 표식을 보존한다
+  - Section 표식과 Arrangement 순서·재생 횟수는 MusicXML에 섞지 않고 프로젝트 manifest/sidecar에 저장한다. `measureUid`를 기준으로 범위를 지정하고 `playCount`는 총 재생 횟수로 정의한다
+  - DigitalScoreScreen의 구조 패널과 Verovio 오버레이를 연결했다. 에뮬레이터에서 CHORUS 지정·반복 2회·Playback 재생 중 원본 화면 유지를 확인했으며, 저장·재열기 smoke는 남아 있다
   - 원본 MusicXML은 유지하고 연주용·추가 버전은 `score_versions/<songId>/`에 별도 저장한다
-  - AppBar에서 원본과 버전을 셀렉트로 고르고 `버전 추가`로 복제본을 만든다
-  - 기존 Playback Sequence JSON sidecar는 읽기 호환만 유지하고 화면 UI에서는 쓰지 않는다
+  - AppBar에서 원본과 저장된 버전을 셀렉트로 고르고 별도 `버전 추가` 버튼은 제공하지 않는다. `수정` 진입 시 이름을 받고, 저장 시 수정본을 새 버전으로 생성·활성화한다
   - 쓰기 모드에서 음가/쉼표는 음표 그림으로 고르고, 손가락을 뗄 때까지 고스트로 위치를 보여 준다
   - 빈 오선·아래음자리(왼손)에도 마디·스태프 기하 hit-test로 음을 넣는다
   - 마디를 누르면 +/−/복제/드래그 도구가 나오고, 드래그 중에는 마디 고스트가 따라간다
-  - 조판과 흰 종이는 794×1123 A4 용지 단위로 구성하고 시스템이 하단을 넘으면 다음 종이로 옮긴다. 화면 너비에 동일 비율로 줄이고 종이 사이는 회색이며 핀치로 확대·이동한다
+  - 조판 화면은 Verovio native A4 `2100×2970` page를 화면 폭으로 균일 축소해 페이지 사이 간격·상하 레터박스 없이 연속 표시한다. PDF는 `PdfPageFormat.a4`로 별도 출력하며, 화면은 핀치로 확대·이동한다
   - 오선을 누르면 그 줄 전체를 주황 박스가 감싼다
 - [x] M8-07 목표 조성·반음 단위 이조와 코드·조표 재구성
   - 반음 또는 목표 조로 음표·harmony·keyFifths를 한 명령으로 옮긴다
@@ -271,8 +303,20 @@
   - PDF 완료 기준: 작성·수정, 현재 조·이조, 반주·편곡 프로필과 Playback Sequence 순서·반복을 실제 펼친 선형 Grand Staff로 조판
   - Android 로컬에서 새 PDF로 저장하고 앱·일반 PDF Viewer에서 재열기 검증, 원본 Score Document는 보존
   - 구현: 내보내기 메뉴는 PDF·`.musicxml`·프로젝트 zip·MIDI만 제공한다. `.mxl`·`.xml`은 가져오기 호환성에만 유지한다. Android 재열기는 B-017
+- [~] M8-10 드럼·피아노 제품 셸 분리와 Lomse + Verovio 피아노 편집기 도입
+  - Android `drum`/`piano` flavor와 별도 Application ID·앱 이름을 사용하며 저장소는 복제하지 않는다
+  - 드럼 셸에는 PDF Viewer·메트로놈 등 기존 드럼 도구를 유지하고, 피아노 셸에는 Library/PDF Viewer와 MusicXML 편집 진입만 둔다
+  - 피아노 편집은 Lomse C++ runtime을 opaque-handle FFI bridge로 연결하고, Flutter 기존 UI가 선택·입력·편집 command를 호출한다
+  - Lomse는 편집·Undo/Redo, Verovio는 SVG·HitMap·PDF 렌더링을 담당한다. MusicXML export 후 Verovio를 최신 revision으로 reload한다
+  - `AppElementId`와 `EventLocator`를 도입하고 Verovio `xml:id`·Lomse `ImoId`는 세션 전용 매핑으로만 사용한다
+  - Lomse import → note/voice/staff/tuplet/tie/slur edit → MusicXML export → Verovio render 왕복을 먼저 검증한다
+  - Smoosic WebView 구현은 Lomse 왕복 PoC 통과 전까지 fallback으로만 남기고, PoC 통과 후 피아노 셸에서 제거한다
+  - Android 실기기에서 3단·다중 Voice·10~20페이지의 edit→export→render p50/p95 latency와 메모리를 측정한다
+  - 피아노 셸에서는 Tap Tempo·Tempo Trainer·Setlist·Jam을 제외한다
 
 ## Future
+
+제품 경계상 Future의 피아노 확장 기능은 드럼 앱의 핵심 화면에 섞지 않는다. 현재는 같은 저장소의 Android flavor와 별도 앱 셸로 분리했으며, 출시 단계에서 필요하면 이 셸을 별도 앱 프로젝트로 옮긴다. PDF→MusicXML OMR과 AI 편곡은 검수 가능한 서버/worker 파이프라인이 준비될 때까지 후순위다.
 
 - [ ] F-01 파트별 악보와 공통 Timeline 자동 매핑
 - [ ] F-02 Jam Session Cue 전송
@@ -281,7 +325,11 @@
 - [ ] F-05 자동 PDF 마디 인식 개선
 - [ ] F-06 서버 OMR 기반 드럼·피아노 음표 인식
 - [ ] F-07 서버 PDF → MusicXML 자동 변환과 사용자 검수
-- [ ] F-08 스트링·오르간·브라스 고급 AI 편곡
+  - PDF 원본은 보존하고 OMR 결과를 후보 MusicXML로 만든 뒤, 마디·음표·음자리표·박자표를 사용자가 확인/수정한 다음 Native Digital Score로 편입한다.
+- [ ] F-08 단선 멜로디 → 3단 멜로디+피아노 반주 및 스트링·오르간·패드·브라스 고급 편곡
+  - 기본 변환 결과는 멜로디 1단 + 피아노 오른손 1단 + 피아노 왼손 1단이다. 피아노 단독용 2단 Grand Staff 보기도 함께 제공한다.
+  - 3단의 최하단은 낮은음자리표를 기본 추천하고, 보표 분할점·음역·코드·반주 리듬은 사용자가 조정한다.
+  - 반주 파트는 악기 역할·보이싱·리듬 패턴과 분리해 MusicXML 다중 파트로 저장하고, 실제 음색 재생은 별도 MIDI 프로그램/사운드뱅크 계층에서 처리한다.
 - [ ] F-09 음악 자동 Beat 분석
 - [ ] F-10 자동 BPM 변화 감지
 - [ ] F-11 자동 Audio Sync

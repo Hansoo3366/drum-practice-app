@@ -1,0 +1,11 @@
+lomse_logger.cpp, line 63. INFO: [lomse::Logger::init] lomse log path=lomse-log.txt
+lomse_other.cpp, line 110. INFO: [lomse::FontSelector::find_font] key=enLiberation serif00, Path=/var/folders/x2/w5tj62zj02d1pw2q0t7q8p6r0000gn/T/tmp.VEhqKl0mfr/lomse/fonts/LiberationSerif-Regular.ttf
+lomse_other.cpp, line 54. INFO: [lomse::FontSelector::find_font] key=anyBravura00, Path=/var/folders/x2/w5tj62zj02d1pw2q0t7q8p6r0000gn/T/tmp.VEhqKl0mfr/lomse/fonts/Bravura.otf
+lomse_spacing_algorithm_gourlay.cpp, line 567. INFO: [lomse::SpAlgGourlay::determine_spacing_parameters] Using default values for spacing parameters: alpha=0.547, Fopt=1.4, Smin =324, h=1, q=1, e=0, s=0, total=2, dmin=64, Dmin=16
+lomse_interactor.cpp, line 164. INFO: [lomse::Interactor::create_graphic_model] gmodel build time = 2 ms.
+lomse_spacing_algorithm_gourlay.cpp, line 567. INFO: [lomse::SpAlgGourlay::determine_spacing_parameters] Using default values for spacing parameters: alpha=0.547, Fopt=1.4, Smin =324, h=1, q=1, e=0, s=0, total=2, dmin=64, Dmin=16
+lomse_interactor.cpp, line 164. INFO: [lomse::Interactor::create_graphic_model] gmodel build time = 0 ms.
+lomse_spacing_algorithm_gourlay.cpp, line 567. INFO: [lomse::SpAlgGourlay::determine_spacing_parameters] Using default values for spacing parameters: alpha=0.547, Fopt=1.4, Smin =324, h=1, q=1, e=0, s=0, total=2, dmin=64, Dmin=16
+lomse_interactor.cpp, line 164. INFO: [lomse::Interactor::create_graphic_model] gmodel build time = 0 ms.
+lomse_spacing_algorithm_gourlay.cpp, line 567. INFO: [lomse::SpAlgGourlay::determine_spacing_parameters] Using default values for spacing parameters: alpha=0.547, Fopt=1.4, Smin =324, h=1, q=1, e=0, s=0, total=2, dmin=64, Dmin=16
+lomse_interactor.cpp, line 164. INFO: [lomse::Interactor::create_graphic_model] gmodel build time = 0 ms.

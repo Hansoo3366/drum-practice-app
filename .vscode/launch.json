@@ -7,6 +7,17 @@
       "type": "dart",
       "program": "lib/main.dart",
       "toolArgs": [
+        "--flavor=drum",
+        "--dart-define-from-file=dart_defines.json"
+      ]
+    },
+    {
+      "name": "Piano Score",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/piano_main.dart",
+      "toolArgs": [
+        "--flavor=piano",
         "--dart-define-from-file=dart_defines.json"
       ]
     }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
@@ -16,13 +17,17 @@ import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/performance_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_editor.dart';
+import 'package:page_a_diddle/features/digital_score/domain/score_layout.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_transpose.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/staff_note_input.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/arrangement_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_score_view.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/playback_sequence_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_editor_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_playback_bar.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_transpose_panel.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
 
 class DigitalScoreScreen extends ConsumerStatefulWidget {
   const DigitalScoreScreen({required this.songId, super.key});
@@ -35,7 +40,7 @@ class DigitalScoreScreen extends ConsumerStatefulWidget {
 
 class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   final _playback = PianoScorePlaybackController();
-  final _scoreViewKey = GlobalKey<PianoScoreViewState>();
+  final _scoreViewKey = GlobalKey<VerovioScoreViewState>();
   final Map<String, MusicScoreEditor> _versionEditors = {};
   MusicScoreEditor? _originalEditor;
   String? _loadedSongId;
@@ -43,12 +48,17 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   String _activeVersionId = scoreVersionOriginalId;
   ArrangementProfile _arrangement = ArrangementProfile.off;
   ArrangementProfile _savedArrangement = ArrangementProfile.off;
+  PlaybackSequence _sequence = PlaybackSequence.empty;
+  PlaybackSequence _savedSequence = PlaybackSequence.empty;
+  List<ScoreSystemSpan> _systems = const [];
   bool _editing = false;
   bool _playbackEnabled = false;
   bool _saving = false;
+  String? _pendingVersionName;
   bool _exporting = false;
   bool _confirmingLeave = false;
   bool _showMeasureTools = false;
+  bool _showSequencePanel = false;
   int _partIndex = 0;
   int _measureIndex = 0;
   ScoreEventAddress? _selectedAddress;
@@ -70,7 +80,10 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   bool get _isDirty {
     final originalDirty = _originalEditor?.isDirty ?? false;
     final versionDirty = _versionEditors.values.any((editor) => editor.isDirty);
-    return originalDirty || versionDirty || _arrangement != _savedArrangement;
+    return originalDirty ||
+        versionDirty ||
+        _arrangement != _savedArrangement ||
+        _sequence != _savedSequence;
   }
 
   MusicScoreEditor _editorFor(DigitalScoreData data) {
@@ -78,14 +91,27 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       _originalEditor = MusicScoreEditor(data.score);
       _versionEditors.clear();
       _versionCatalog = data.versionCatalog;
-      _activeVersionId = scoreVersionOriginalId;
+      _activeVersionId = data.versionCatalog.activeId;
+      if (_activeVersionId != scoreVersionOriginalId &&
+          data.activeVersionScore != null) {
+        _versionEditors[_activeVersionId] = MusicScoreEditor(
+          data.activeVersionScore!,
+        );
+      } else {
+        _activeVersionId = scoreVersionOriginalId;
+      }
       _loadedSongId = data.song.id;
       _arrangement = data.arrangement;
       _savedArrangement = data.arrangement;
+      _sequence = data.sequence;
+      _savedSequence = data.sequence;
       _partIndex = 0;
       _measureIndex = 0;
       _selectedAddress = null;
       _showMeasureTools = false;
+      _showSequencePanel = false;
+      _systems = const [];
+      _pendingVersionName = null;
     }
     return _editor!;
   }
@@ -99,18 +125,19 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     return version.name;
   }
 
-  MusicScore _viewScore(MusicScore written) {
+  MusicScore _performanceScore(MusicScore written) {
     return displayedDigitalScore(
       written: written,
-      editing: _editing,
+      editing: _editing || _showSequencePanel,
       playbackEnabled: _playbackEnabled,
-      sequence: PlaybackSequence.empty,
-      arrangement: ArrangementProfile.off,
+      sequence: _sequence,
+      arrangement: _arrangement,
     );
   }
 
   Future<bool> _save(DigitalScoreData data, MusicScoreEditor editor) async {
     if (_saving) return false;
+    if (_pendingVersionName != null) return _saveNewVersion(data, editor);
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -120,13 +147,71 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
             songId: data.song.id,
             relativePath: data.song.sourcePath,
             score: editor.score,
+            sequence: _sequence,
             arrangement: _arrangement,
             versionId: _activeVersionId,
           );
       editor.markSaved();
       _savedArrangement = _arrangement;
+      _savedSequence = _sequence;
       if (!mounted) return true;
       setState(() {});
+      messenger.showSnackBar(SnackBar(content: Text(context.l10n.scoreSaved)));
+      return true;
+    } on Object {
+      if (!mounted) return false;
+      messenger.showSnackBar(SnackBar(content: Text(context.l10n.saveFailed)));
+      return false;
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<bool> _saveNewVersion(
+    DigitalScoreData data,
+    MusicScoreEditor editor,
+  ) async {
+    final name = _pendingVersionName?.trim();
+    if (name == null || name.isEmpty) return false;
+
+    setState(() => _saving = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final service = ref.read(digitalScoreEditorServiceProvider);
+      final previousSavedScore = _activeVersionId == scoreVersionOriginalId
+          ? data.score
+          : await service.loadVersionScore(
+              songId: data.song.id,
+              versionId: _activeVersionId,
+            );
+      if (!mounted) return false;
+      if (previousSavedScore == null) {
+        throw StateError('The active score version could not be reloaded.');
+      }
+      final source = editor.score;
+      final next = await service.addVersion(
+        songId: data.song.id,
+        source: source,
+        catalog: _versionCatalog,
+        name: name,
+      );
+      if (!mounted) return true;
+      final created = next.versions.last;
+      editor.resetTo(previousSavedScore);
+      _versionEditors[created.id] = MusicScoreEditor(source);
+      setState(() {
+        _versionCatalog = next;
+        _activeVersionId = created.id;
+        _pendingVersionName = null;
+        _editing = false;
+        _savedArrangement = _arrangement;
+        _savedSequence = _sequence;
+        _selectedAddress = null;
+        _showMeasureTools = false;
+        _partIndex = 0;
+        _measureIndex = 0;
+        _clampNavigation(_editor!.score);
+      });
       messenger.showSnackBar(SnackBar(content: Text(context.l10n.scoreSaved)));
       return true;
     } on Object {
@@ -150,8 +235,8 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       final exported = await const ScoreExportService().encode(
         written: written,
         title: data.song.title,
-        sequence: PlaybackSequence.empty,
-        arrangement: ArrangementProfile.off,
+        sequence: _sequence,
+        arrangement: _arrangement,
         kind: kind,
       );
       final savedPath = await FilePicker.saveFile(
@@ -400,9 +485,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
 
   void _moveStaffNote(AlphaTabNoteDraggedEvent hit) {
     final editor = _editor;
-    if (!_editing ||
-        _editorMode != ScoreEditorMode.select ||
-        editor == null) {
+    if (!_editing || _editorMode != ScoreEditorMode.select || editor == null) {
       return;
     }
     final address = findRenderedNoteAddress(
@@ -490,88 +573,74 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     required DigitalScoreData data,
   }) async {
     if (versionId == _activeVersionId) return;
-    if (versionId != scoreVersionOriginalId) {
-      final existing = _versionEditors[versionId];
-      if (existing == null) {
-        final service = ref.read(digitalScoreEditorServiceProvider);
-        final score = await service.loadVersionScore(
-          songId: data.song.id,
-          versionId: versionId,
-        );
-        if (!mounted) return;
-        if (score == null) return;
-        _versionEditors[versionId] = MusicScoreEditor(score);
+    try {
+      if (versionId != scoreVersionOriginalId) {
+        final existing = _versionEditors[versionId];
+        if (existing == null) {
+          final service = ref.read(digitalScoreEditorServiceProvider);
+          final score = await service.loadVersionScore(
+            songId: data.song.id,
+            versionId: versionId,
+          );
+          if (!mounted) return;
+          if (score == null) return;
+          _versionEditors[versionId] = MusicScoreEditor(score);
+        }
       }
+      setState(() {
+        _activeVersionId = versionId;
+        _versionCatalog = _versionCatalog.copyWith(activeId: versionId);
+        _pendingVersionName = null;
+        _editing = false;
+        _selectedAddress = null;
+        _showMeasureTools = false;
+        _partIndex = 0;
+        _measureIndex = 0;
+        _clampNavigation(_editor!.score);
+      });
+      await _persistVersionCatalog(data.song.id);
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.saveFailed)));
     }
-    setState(() {
-      _activeVersionId = versionId;
-      _versionCatalog = _versionCatalog.copyWith(activeId: versionId);
-      _selectedAddress = null;
-      _showMeasureTools = false;
-      _partIndex = 0;
-      _measureIndex = 0;
-      _clampNavigation(_editor!.score);
-    });
-    unawaited(
-      ref
-          .read(digitalScoreEditorServiceProvider)
-          .saveVersionCatalog(data.song.id, _versionCatalog),
-    );
   }
 
-  Future<void> _addVersion(DigitalScoreData data) async {
+  Future<void> _beginEditing() async {
+    if (_saving || _editing) return;
     final number = ScoreVersionCatalog.nextVersionNumber(
       _versionCatalog.versions,
     );
-    final controller = TextEditingController(
-      text: context.l10n.scoreVersionN(number),
-    );
     final name = await showDialog<String>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(context.l10n.addScoreVersion),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            decoration: InputDecoration(hintText: context.l10n.scoreVersionName),
-            onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(context.l10n.cancel),
-            ),
-            TextButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(controller.text.trim()),
-              child: Text(context.l10n.save),
-            ),
-          ],
-        );
-      },
+      builder: (context) =>
+          _ScoreVersionDialog(initialName: context.l10n.scoreVersionN(number)),
     );
-    controller.dispose();
-    if (!mounted || name == null || name.isEmpty) return;
-    final source = _editor?.score ?? data.score;
-    final service = ref.read(digitalScoreEditorServiceProvider);
-    final next = await service.addVersion(
-      songId: data.song.id,
-      source: source,
-      catalog: _versionCatalog,
-      name: name,
-    );
-    if (!mounted) return;
-    final created = next.versions.last;
-    _versionEditors[created.id] = MusicScoreEditor(source);
+    if (!mounted || name == null || name.trim().isEmpty) return;
     setState(() {
-      _versionCatalog = next;
-      _activeVersionId = created.id;
+      _pendingVersionName = name.trim();
+      _editing = true;
+      _showSequencePanel = false;
       _selectedAddress = null;
       _showMeasureTools = false;
-      _partIndex = 0;
-      _measureIndex = 0;
-      _clampNavigation(_editor!.score);
+      _editorMode = ScoreEditorMode.select;
+    });
+  }
+
+  void _endEditing() {
+    if (!_editing) return;
+    final hasPendingChanges =
+        _editor?.isDirty == true ||
+        _arrangement != _savedArrangement ||
+        _sequence != _savedSequence;
+    setState(() {
+      _editing = false;
+      if (!hasPendingChanges) _pendingVersionName = null;
+      _selectedAddress = null;
+      _showMeasureTools = false;
+      final view = _scoreViewKey.currentState;
+      if (view != null) unawaited(view.cancelMeasureDrag());
     });
   }
 
@@ -597,18 +666,29 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     );
     if (!mounted || confirmed != true) return;
     final deletedId = _activeVersionId;
-    final next = await ref
-        .read(digitalScoreEditorServiceProvider)
-        .deleteVersion(
-          songId: data.song.id,
-          versionId: deletedId,
-          catalog: _versionCatalog,
-        );
+    late final ScoreVersionCatalog next;
+    try {
+      next = await ref
+          .read(digitalScoreEditorServiceProvider)
+          .deleteVersion(
+            songId: data.song.id,
+            versionId: deletedId,
+            catalog: _versionCatalog,
+          );
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.saveFailed)));
+      return;
+    }
     if (!mounted) return;
     _versionEditors.remove(deletedId);
     setState(() {
       _versionCatalog = next;
       _activeVersionId = scoreVersionOriginalId;
+      _pendingVersionName = null;
+      _editing = false;
       _selectedAddress = null;
       _showMeasureTools = false;
       _partIndex = 0;
@@ -617,9 +697,75 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     });
   }
 
+  Future<void> _persistVersionCatalog(String songId) async {
+    await ref
+        .read(digitalScoreEditorServiceProvider)
+        .saveVersionCatalog(songId, _versionCatalog);
+  }
+
   void _togglePlayback() {
     setState(() => _playbackEnabled = !_playbackEnabled);
     if (!_playbackEnabled) _playback.stop();
+  }
+
+  void _toggleSequencePanel() {
+    setState(() {
+      _showSequencePanel = !_showSequencePanel;
+      if (_showSequencePanel) _editing = false;
+      _selectedAddress = null;
+      _showMeasureTools = false;
+    });
+  }
+
+  void _updateSequence(PlaybackSequence next) {
+    if (_sequence == next) return;
+    setState(() => _sequence = next);
+  }
+
+  void _changeSequenceRepeats(int index, int repeats) {
+    if (index < 0 || index >= _sequence.items.length) return;
+    final items = _sequence.items.toList();
+    items[index] = items[index].copyWith(repeats: repeats);
+    _updateSequence(PlaybackSequence(items));
+  }
+
+  void _moveSequenceItem(int fromIndex, int toIndex) {
+    if (fromIndex < 0 ||
+        fromIndex >= _sequence.items.length ||
+        toIndex < 0 ||
+        toIndex >= _sequence.items.length) {
+      return;
+    }
+    final items = _sequence.items.toList();
+    final item = items.removeAt(fromIndex);
+    items.insert(toIndex, item);
+    _updateSequence(PlaybackSequence(items));
+  }
+
+  void _addSequenceSection(String section) {
+    if (_sequence.items.any((item) => item.section == section)) return;
+    _updateSequence(
+      PlaybackSequence([
+        ..._sequence.items,
+        PlaybackSequenceItem(section: section),
+      ]),
+    );
+  }
+
+  void _removeSequenceItem(int index) {
+    if (index < 0 || index >= _sequence.items.length) return;
+    final items = _sequence.items.toList()..removeAt(index);
+    _updateSequence(PlaybackSequence(items));
+  }
+
+  Future<void> _editArrangement(MusicScore score) async {
+    final next = await showArrangementSheet(
+      context,
+      profile: _arrangement,
+      score: score,
+    );
+    if (!mounted || next == null) return;
+    setState(() => _arrangement = next);
   }
 
   void _onMenuSelected(
@@ -630,6 +776,8 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     switch (action) {
       case _ScoreMenuAction.transpose:
         _transpose(score, originalFifths: data.originalFifths);
+      case _ScoreMenuAction.arrangement:
+        _editArrangement(score);
       case _ScoreMenuAction.exportMusicXml:
         _export(data, score, ScoreExportKind.musicXml);
       case _ScoreMenuAction.exportMidi:
@@ -714,7 +862,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
 
   void _selectMeasure(int measureIndex) {
     final editor = _editor;
-    if (!_editing || editor == null) return;
+    if ((!_editing && !_showSequencePanel) || editor == null) return;
     final measures = editor.score.parts.first.measures;
     if (measureIndex < 0 || measureIndex >= measures.length) return;
     setState(() {
@@ -839,9 +987,10 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                   ),
                 ),
                 IconButton(
-                  tooltip: context.l10n.addScoreVersion,
-                  onPressed: () => unawaited(_addVersion(value)),
-                  icon: const Icon(Icons.playlist_add_rounded),
+                  tooltip: context.l10n.playbackSequence,
+                  isSelected: _showSequencePanel,
+                  onPressed: _toggleSequencePanel,
+                  icon: const Icon(Icons.playlist_play_rounded),
                 ),
                 if (_activeVersionId != scoreVersionOriginalId)
                   IconButton(
@@ -852,17 +1001,9 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                 IconButton(
                   tooltip: context.l10n.scoreEdit,
                   isSelected: _editing,
-                  onPressed: () => setState(() {
-                    _editing = !_editing;
-                    if (!_editing) {
-                      _selectedAddress = null;
-                      _showMeasureTools = false;
-                      final view = _scoreViewKey.currentState;
-                      if (view != null) unawaited(view.cancelMeasureDrag());
-                    } else {
-                      _editorMode = ScoreEditorMode.select;
-                    }
-                  }),
+                  onPressed: _editing
+                      ? _endEditing
+                      : () => unawaited(_beginEditing()),
                   icon: const Icon(Icons.edit_note_rounded),
                   selectedIcon: const Icon(Icons.check_rounded),
                 ),
@@ -894,6 +1035,14 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                           contentPadding: EdgeInsets.zero,
                           leading: const Icon(Icons.swap_vert_rounded),
                           title: Text(context.l10n.scoreTranspose),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: _ScoreMenuAction.arrangement,
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.piano_rounded),
+                          title: Text(context.l10n.scoreArrangement),
                         ),
                       ),
                       const PopupMenuDivider(),
@@ -937,13 +1086,24 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
             body: Column(
               children: [
                 Expanded(
-                  child: PianoScoreView(
+                  child: VerovioScoreView(
                     key: _scoreViewKey,
-                    score: _viewScore(score),
+                    score: score,
+                    playbackScore: _playbackEnabled
+                        ? _performanceScore(score)
+                        : null,
+                    playbackSequence: _playbackEnabled
+                        ? _sequence
+                        : PlaybackSequence.empty,
+                    playbackArrangement: _playbackEnabled
+                        ? _arrangement
+                        : ArrangementProfile.off,
                     semanticsLabel: value.song.title,
                     playback: _playback,
                     playbackVisible: _playbackEnabled,
-                    highlightedMeasureIndex: _editing ? _measureIndex : null,
+                    highlightedMeasureIndex: (_editing || _showSequencePanel)
+                        ? _measureIndex
+                        : null,
                     oneFingerPan: !_editing,
                     inputMode: !_editing
                         ? 'off'
@@ -954,9 +1114,14 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                           },
                     inputDurationType: _inputDurationType,
                     inputRest: _editorMode == ScoreEditorMode.rest,
+                    inputAlter: _inputAlter,
                     onNoteTapped: _onNoteTapped,
                     onStaffTapped: _placeStaffNote,
                     onMeasureTapped: _selectMeasure,
+                    onSystemsChanged: (systems) {
+                      if (listEquals(_systems, systems)) return;
+                      setState(() => _systems = systems);
+                    },
                     onMeasureMoved: _moveMeasure,
                     onNoteDragged: _moveStaffNote,
                     onPlayerIssue: () {
@@ -977,6 +1142,11 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                         onPlayPause: () => _playback.playPause(),
                         onStop: () => _playback.stop(),
                         onSeek: (positionMs) => _playback.seek(positionMs),
+                        onEditSequence: _toggleSequencePanel,
+                        onEditArrangement: () =>
+                            unawaited(_editArrangement(score)),
+                        sequenceSelected: _showSequencePanel,
+                        arrangementSelected: _arrangement.isNotOff,
                       );
                     },
                   ),
@@ -987,6 +1157,27 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                     onRemove: _deleteMeasure,
                     onDuplicate: _duplicateMeasure,
                     onDrag: _startMeasureDrag,
+                  ),
+                if (_showSequencePanel)
+                  ScoreStructurePanel(
+                    score: score,
+                    sequence: _sequence,
+                    measureIndex: _measureIndex.clamp(
+                      0,
+                      math.max(0, score.measureCount - 1),
+                    ),
+                    onSectionChanged: (section) => _apply(
+                      UpdateSystemSectionCommand(
+                        measureIndex: _measureIndex,
+                        section: section,
+                        systems: _systems,
+                      ),
+                    ),
+                    onRepeatsChanged: _changeSequenceRepeats,
+                    onSectionMoved: _moveSequenceItem,
+                    onSectionAdded: _addSequenceSection,
+                    onSectionRemoved: _removeSequenceItem,
+                    onDone: _toggleSequencePanel,
                   ),
                 if (_editing)
                   ScoreEditorPanel(
@@ -1023,6 +1214,51 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
           ),
         );
       },
+    );
+  }
+}
+
+class _ScoreVersionDialog extends StatefulWidget {
+  const _ScoreVersionDialog({required this.initialName});
+
+  final String initialName;
+
+  @override
+  State<_ScoreVersionDialog> createState() => _ScoreVersionDialogState();
+}
+
+class _ScoreVersionDialogState extends State<_ScoreVersionDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialName,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(_controller.text.trim());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(context.l10n.scoreVersionName),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: InputDecoration(hintText: context.l10n.scoreVersionName),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(context.l10n.cancel),
+        ),
+        TextButton(onPressed: _submit, child: Text(context.l10n.save)),
+      ],
     );
   }
 }
@@ -1091,6 +1327,7 @@ enum _LeaveAction { discard, save }
 
 enum _ScoreMenuAction {
   transpose,
+  arrangement,
   exportMusicXml,
   exportMidi,
   exportPdf,

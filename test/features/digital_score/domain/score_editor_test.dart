@@ -82,6 +82,30 @@ void main() {
         hasLength(1),
       );
     });
+
+    test('resets to a clean snapshot after save-as-version', () {
+      final editor = MusicScoreEditor(_score());
+      editor.apply(
+        const InsertScoreEventCommand(
+          partIndex: 0,
+          measureIndex: 0,
+          event: MusicHarmony(
+            onset: 0,
+            staff: 1,
+            rootStep: PitchStep.c,
+            kind: 'major',
+          ),
+        ),
+      );
+      expect(editor.isDirty, isTrue);
+
+      final saved = _score(partCount: 2);
+      editor.resetTo(saved);
+
+      expect(editor.isDirty, isFalse);
+      expect(editor.canUndo, isFalse);
+      expect(editor.score.parts, hasLength(2));
+    });
   });
 
   group('measure commands', () {

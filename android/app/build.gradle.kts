@@ -31,6 +31,20 @@ android {
         manifestPlaceholders["appAuthRedirectScheme"] = "db-usuggo1fabglt8p"
     }
 
+    flavorDimensions += "product"
+    productFlavors {
+        create("drum") {
+            dimension = "product"
+            applicationId = "com.hansookim.pageadiddle"
+            resValue("string", "app_name", "Page-a-Diddle")
+        }
+        create("piano") {
+            dimension = "product"
+            applicationId = "com.hansookim.pianoscore"
+            resValue("string", "app_name", "Piano Score")
+        }
+    }
+
     buildTypes {
         release {
             // Replace with a release keystore before Play Store upload.

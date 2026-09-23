@@ -47,7 +47,9 @@ void main() {
       );
 
       expect(score.measureCount, 4);
+      expect(score.noteCount, 4);
       expect(expanded.measureCount, 9);
+      expect(expanded.noteCount, 9);
       expect(expanded.parts.single.measures.map(measurePlaybackSection), [
         'INTRO',
         'INTRO',
@@ -106,7 +108,7 @@ void main() {
     expect(PlaybackSequence.fromJson(null), PlaybackSequence.empty);
   });
 
-  test('previews the performance score outside editing', () {
+  test('keeps the written score visible until playback is enabled', () {
     final written = _score();
     final sequence = PlaybackSequence([
       PlaybackSequenceItem(section: 'INTRO', repeats: 4),
@@ -133,7 +135,7 @@ void main() {
         playbackEnabled: false,
         sequence: sequence,
       ).measureCount,
-      9,
+      4,
     );
     expect(
       displayedDigitalScore(

@@ -77,6 +77,18 @@ class MusicScoreEditor {
   void markSaved() {
     _savedCursor = _cursor;
   }
+
+  /// Replaces the in-memory editing history with a clean saved snapshot.
+  ///
+  /// Save-as-version uses this to leave the previous version unchanged after
+  /// its edited score has been copied into the newly created version.
+  void resetTo(MusicScore score) {
+    _states
+      ..clear()
+      ..add(score);
+    _cursor = 0;
+    _savedCursor = 0;
+  }
 }
 
 class InsertScoreEventCommand implements ScoreEditCommand {
@@ -364,9 +376,7 @@ class DuplicateMeasureCommand implements ScoreEditCommand {
           attributes: source.attributes.copyWith(
             clefs: Map<int, MusicClef>.from(source.attributes.clefs),
           ),
-          events: [
-            for (final event in source.events) _cloneEvent(event),
-          ],
+          events: [for (final event in source.events) _cloneEvent(event)],
         ),
       );
       return part.copyWith(measures: _renumber(measures));
@@ -377,10 +387,7 @@ class DuplicateMeasureCommand implements ScoreEditCommand {
 
 MusicEvent _cloneEvent(MusicEvent event) {
   return switch (event) {
-    final MusicNote note => note.copyWith(
-      pitch: note.pitch,
-      type: note.type,
-    ),
+    final MusicNote note => note.copyWith(pitch: note.pitch, type: note.type),
     final MusicDirection direction => direction.copyWith(),
     final MusicHarmony harmony => harmony.copyWith(),
   };

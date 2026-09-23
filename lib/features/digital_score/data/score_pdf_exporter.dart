@@ -189,7 +189,7 @@ class ScorePdfExporter {
   }) {
     final steps = (pitch.octave - 4) * 7 + pitch.step.index;
     final reference = bass ? -2 : 2; // F3 vs E4
-    return staffTop - ((reference - steps) * (lineGap / 2));
+    return staffTop - ((steps - reference) * (lineGap / 2));
   }
 
   String _harmonyLabel(MusicHarmony harmony) {

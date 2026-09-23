@@ -188,6 +188,8 @@ class MusicXmlCodec {
                   nest: () => _writeMeasure(
                     builder,
                     measure,
+                    partIndex: partIndex,
+                    measureIndex: measureIndex,
                     previousAttributes: previousAttributes,
                     fallbackTempo: partIndex == 0 && measureIndex == 0
                         ? score.tempoBpm
@@ -418,14 +420,12 @@ class MusicXmlCodec {
   void _writeMeasure(
     XmlBuilder builder,
     MusicMeasure measure, {
+    required int partIndex,
+    required int measureIndex,
     MusicAttributes? previousAttributes,
     double? fallbackTempo,
   }) {
-    _writeAttributes(
-      builder,
-      measure.attributes,
-      previous: previousAttributes,
-    );
+    _writeAttributes(builder, measure.attributes, previous: previousAttributes);
 
     final directions = measure.events.whereType<MusicDirection>().toList();
     if (fallbackTempo != null &&
@@ -442,33 +442,42 @@ class MusicXmlCodec {
       _writeHarmony(builder, harmony);
     }
 
-    final notes = measure.events.whereType<MusicNote>().toList();
+    final notes = <({int eventIndex, MusicNote note})>[
+      for (var eventIndex = 0; eventIndex < measure.events.length; eventIndex++)
+        if (measure.events[eventIndex] case final MusicNote note)
+          (eventIndex: eventIndex, note: note),
+    ];
     final voices = <String>[];
-    for (final note in notes) {
-      if (!voices.contains(note.voice)) voices.add(note.voice);
+    for (final entry in notes) {
+      if (!voices.contains(entry.note.voice)) voices.add(entry.note.voice);
     }
     for (var voiceIndex = 0; voiceIndex < voices.length; voiceIndex++) {
       final voice = voices[voiceIndex];
-      final voiceNotes = notes.where((note) => note.voice == voice).toList()
-        ..sort((a, b) {
-          final onsetOrder = a.onset.compareTo(b.onset);
-          if (onsetOrder != 0) return onsetOrder;
-          return a.staff.compareTo(b.staff);
-        });
+      final voiceNotes =
+          notes.where((entry) => entry.note.voice == voice).toList()
+            ..sort((a, b) {
+              final onsetOrder = a.note.onset.compareTo(b.note.onset);
+              if (onsetOrder != 0) return onsetOrder;
+              final staffOrder = a.note.staff.compareTo(b.note.staff);
+              return staffOrder == 0
+                  ? a.eventIndex.compareTo(b.eventIndex)
+                  : staffOrder;
+            });
       var cursor = 0;
       for (var index = 0; index < voiceNotes.length;) {
-        final onset = voiceNotes[index].onset;
+        final onset = voiceNotes[index].note.onset;
         if (onset > cursor) {
           _writeForward(
             builder,
             onset - cursor,
             voice,
-            voiceNotes[index].staff,
+            voiceNotes[index].note.staff,
           );
           cursor = onset;
         }
-        final simultaneous = <MusicNote>[];
-        while (index < voiceNotes.length && voiceNotes[index].onset == onset) {
+        final simultaneous = <({int eventIndex, MusicNote note})>[];
+        while (index < voiceNotes.length &&
+            voiceNotes[index].note.onset == onset) {
           simultaneous.add(voiceNotes[index]);
           index++;
         }
@@ -479,13 +488,19 @@ class MusicXmlCodec {
         ) {
           _writeNote(
             builder,
-            simultaneous[chordIndex],
-            chordContinuation: simultaneous[chordIndex].isChord,
+            simultaneous[chordIndex].note,
+            id: _noteXmlId(
+              partIndex: partIndex,
+              measureIndex: measureIndex,
+              eventIndex: simultaneous[chordIndex].eventIndex,
+            ),
+            chordContinuation: simultaneous[chordIndex].note.isChord,
           );
         }
         final end = simultaneous.fold<int>(
           cursor,
-          (maximum, note) => note.end > maximum ? note.end : maximum,
+          (maximum, entry) =>
+              entry.note.end > maximum ? entry.note.end : maximum,
         );
         cursor = end;
       }
@@ -561,9 +576,7 @@ class MusicXmlCodec {
           for (final entry in attributes.clefs.entries) {
             builder.element(
               'clef',
-              attributes: {
-                if (attributes.staves > 1) 'number': '${entry.key}',
-              },
+              attributes: {if (attributes.staves > 1) 'number': '${entry.key}'},
               nest: () {
                 builder.element('sign', nest: entry.value.sign);
                 builder.element('line', nest: entry.value.line.toString());
@@ -715,10 +728,12 @@ class MusicXmlCodec {
   void _writeNote(
     XmlBuilder builder,
     MusicNote note, {
+    required String id,
     required bool chordContinuation,
   }) {
     builder.element(
       'note',
+      attributes: {'id': id},
       nest: () {
         if (note.isGrace) builder.element('grace');
         if (chordContinuation) builder.element('chord');
@@ -756,6 +771,12 @@ class MusicXmlCodec {
       },
     );
   }
+
+  String _noteXmlId({
+    required int partIndex,
+    required int measureIndex,
+    required int eventIndex,
+  }) => 'p$partIndex-m$measureIndex-e$eventIndex';
 
   Uint8List _readMxl(Uint8List bytes) {
     late final Archive archive;

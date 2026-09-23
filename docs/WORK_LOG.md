@@ -2,6 +2,527 @@
 
 최신 작업을 문서 상단에 추가한다. 기존 기록은 수정하거나 삭제하지 않는다.
 
+## 2026-09-23 11:32 KST — FFI 어댑터 fallback APK 재검증
+
+- 작업자: Codex
+- 목표: Lomse native library를 아직 패키징하지 않은 상태에서 새 Dart FFI 어댑터가 piano fallback APK 빌드를 깨뜨리지 않는지 확인한다.
+- 검증:
+  - `rtk flutter build apk --debug --flavor piano -t lib/piano_main.dart --no-pub`: 통과.
+  - 결과: `build/app/outputs/flutter-apk/app-piano-debug.apk` 생성.
+  - 이 APK는 `libpage_lomse_bridge`가 포함되지 않으므로 기존 Smoosic editor가 계속 fallback으로 사용된다.
+- 남은 일: dependency lock을 실제 piano Gradle native packaging으로 연결한 뒤에만 FFI session을 editor/controller에 활성화한다.
+
+## 2026-09-23 11:30 KST — 피아노 Dart FFI session adapter와 dependency pin
+
+- 작업자: Codex
+- 목표: 피아노 flavor가 Lomse C ABI를 호출할 수 있는 Dart 경계를 추가하되, native library가 아직 APK에 없을 때 기존 fallback을 유지한다. 드럼 셸은 변경하지 않는다.
+- 변경 내용:
+  - `lib/features/piano/data/lomse_ffi_editor_session.dart`에 C ABI 함수 lookup, ABI version 확인, UTF-8 입력·export buffer 수명, revision·status·오류 처리, lazy `tryCreate()`를 구현했다.
+  - `pubspec.yaml`에 `ffi`를 직접 의존성으로 고정하고 FFI status/error/fallback 테스트를 추가했다.
+  - `native/lomse_bridge/dependencies.lock.yaml`에 검증한 Lomse `2067a01c…`, FreeType `42608f77…`, Android arm64/cmake/NDK 입력을 기록했다.
+  - `docs/ARCHITECTURE.md`, `docs/LOMSE_VEROVIO_POC.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `native/lomse_bridge/README.md`에 어댑터·fallback·다음 packaging 게이트를 반영했다.
+- 검증:
+  - `rtk flutter test test/features/piano/domain test/features/piano/data --reporter compact`: 12개 통과.
+  - `rtk flutter analyze lib/features/piano/data test/features/piano/data`: No issues found.
+  - native bridge host smoke와 Android arm64 standalone target build 결과는 직전 11:16 검증을 유지한다.
+  - native library가 없는 현재 piano debug APK도 기존 fallback 경로로 빌드 가능한 상태다.
+- 남은 일:
+  - lock 파일의 source를 reproducible하게 fetch/vendor하고 `piano` Gradle native packaging에 연결한다.
+  - FFI session을 MusicXML snapshot/Verovio controller와 연결하고 AppElementId/EventLocator target mapping을 구현한다.
+  - 3 Staff·다중 Voice·관계 기호 왕복과 Android 실기기 latency를 측정한 뒤 Smoosic 제거 여부를 결정한다.
+
+## 2026-09-23 11:16 KST — 피아노 Lomse bridge host·Android standalone PoC
+
+- 작업자: Codex
+- 목표: 피아노 셸만 Lomse 편집 runtime + Verovio viewer 구조로 전환하기 위한 최소 native bridge를 구현하고 host·Android arm64 빌드를 검증한다. 드럼 셸은 변경하지 않는다.
+- 변경 내용:
+  - `native/lomse_bridge/src/page_lomse_bridge.cpp`에 opaque C ABI의 session 생성·MusicXML load/export·LDP insert command·undo/redo·오류/버퍼 수명 처리를 구현했다. Lomse 내부 포인터와 ImoId는 ABI 밖으로 노출하지 않는다.
+  - `native/lomse_bridge/tests/page_lomse_bridge_smoke.cpp`에서 MusicXML load/export, `insert_ldp`, undo/redo revision 증가와 dispose를 검증하도록 정리했다.
+  - `native/lomse_bridge/README.md`, `docs/LOMSE_VEROVIO_POC.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`에 native build 결과와 아직 남은 Flutter 통합·매핑·왕복 검증 게이트를 반영했다.
+- 검증:
+  - Lomse 0.30.0 macOS standalone shared-library build: 통과.
+  - host `page_lomse_bridge_smoke`: MusicXML load/export, LDP insert, undo/redo 통과.
+  - 임시 Android arm64 FreeType cross-build를 주입한 Lomse 및 `page_lomse_bridge` Android arm64 standalone target build: 통과.
+  - 이 빌드는 아직 Flutter APK/Gradle/Dart FFI에 연결하지 않은 native target 검증이다.
+- 남은 일:
+  - Lomse 검증 commit과 Android FreeType을 재현 가능한 native dependency로 pin/vendor하고 piano flavor packaging에 연결한다.
+  - AppElementId/EventLocator target mapping과 MusicXML export→Verovio reload 왕복을 구현·검증한다.
+  - 3 Staff·다중 Voice·관계 기호 fixture 및 10~20페이지 Android p50/p95 latency를 측정한 뒤 Smoosic fallback 제거 여부를 결정한다.
+
+## 2026-09-23 10:55 KST — 피아노 Lomse/Verovio 경계와 native ABI 초안
+
+- 작업자: Codex
+- 목표: 피아노 셸만 Lomse 편집 runtime + Verovio viewer 구조로 전환하기 위한 앱 식별자·sidecar·command·native 경계를 고정한다. 드럼 셸은 변경하지 않는다.
+- 변경 내용:
+  - `드럼 악보 앱 기획서 v4.md`, `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/LOMSE_VEROVIO_POC.md`에 Lomse C++ FFI 편집·Verovio SVG/HitMap/PDF 렌더링, MusicXML snapshot, AppElementId/EventLocator, Verse/Chorus/Arrangement sidecar와 PoC 합격 조건을 반영했다.
+  - `lib/features/piano/domain/`에 `AppScoreElementKey`·`ScoreEventLocator`, `PianoScoreSidecar`, `LomseEditRequest`와 native session contract를 추가했다. 엔진 내부 xml:id/ImoId는 영구 키로 사용하지 않는다.
+  - `native/lomse_bridge/include/page_lomse_bridge.h`에 UTF-8 MusicXML·JSON command·revision·export buffer만 노출하는 opaque C ABI 초안을 추가하고, `native/lomse_bridge/README.md`에 piano flavor 전용 연결 순서와 현재 미연결 상태를 기록했다.
+  - sidecar arrangement가 선언되지 않은 section을 참조하지 않도록 검증하고 회귀 테스트를 추가했다.
+- 검증:
+  - `rtk flutter test test/features/piano/domain --reporter compact`: 9개 통과.
+  - `rtk flutter analyze lib/features/piano/domain test/features/piano/domain`: No issues found.
+  - `rtk flutter build apk --debug --flavor piano -t lib/piano_main.dart --no-pub`: 통과. 기존 피아노 fallback 셸 APK가 빌드된다.
+  - Lomse 저장소 임시 clone에서 MusicXML import/export, edition command, selection/cursor, undo/redo, 3개 이상 staff 모델을 확인했다.
+  - Android SDK의 `cmake 3.22.1`로 Lomse 0.30.0 macOS standalone shared-library build는 통과했다. Android arm64 NDK configure는 Lomse가 요구하는 Android용 FreeType 교차 의존성을 찾지 못해 중단됐다.
+- 남은 일:
+  - Android용 FreeType을 reproducible native dependency로 고정하고 검증된 Lomse commit을 native dependency로 연결한다.
+  - FreeType gate가 통과하면 C ABI 구현을 `piano` source set에 연결한다.
+  - 3 Staff·다중 Voice·Tuplet/Tie/Slur·Repeat/Volta fixture의 import→edit→export→Verovio 왕복을 검증한다.
+  - 10~20페이지 Android p50/p95 latency와 실제 편집 저장·재열기 smoke를 측정한 뒤 Smoosic fallback 제거 여부를 결정한다.
+
+## 2026-09-22 17:45 KST — Smoosic 내보내기 메뉴와 최종 flavor 빌드 검증
+
+- 작업자: Codex
+- 목표: 피아노 셸의 MusicXML 편집 흐름에 MusicXML·PDF 내보내기를 추가하고 드럼·피아노 flavor 빌드를 최종 확인한다.
+- 변경 내용:
+  - `lib/features/piano/presentation/smoosic_score_editor_screen.dart`에 Smoosic 결과를 MusicXML 또는 PDF로 저장하는 내보내기 메뉴를 연결했다.
+  - 피아노 셸의 기존 PDF Viewer·MusicXML 편집 경계와 Tap Tempo·Tempo Trainer·Setlist·Jam 제외 정책을 유지했다.
+- 검증:
+  - `flutter build apk --debug --flavor piano -t lib/piano_main.dart --no-pub`: 통과.
+  - `flutter build apk --debug --flavor drum -t lib/main.dart --no-pub`: 통과.
+  - 피아노 editor/router/app shell 대상 `flutter analyze --no-pub`: 통과.
+  - native layout·score version·blank piano score·editor service 테스트 16개: 통과.
+  - 기존 피아노 APK에서 셸·Smoosic MusicXML 로딩·Save 제목 팝업을 emulator-5554에서 확인했다. 내보내기 메뉴를 포함한 최신 APK는 재설치 중 `/data` 여유 공간 약 505MB와 `DELETE_FAILED_INTERNAL_ERROR`가 발생해 런타임 메뉴 smoke까지는 진행하지 못했다.
+- 남은 일:
+  - 에뮬레이터 저장공간/패키지 관리자 상태를 정리한 뒤 최신 APK에서 실제 음표 수정·MusicXML 저장·재열기와 내보내기를 검증한다.
+  - PDF→MusicXML OMR은 서버/worker가 필요한 Future로 유지한다.
+
+## 2026-09-22 17:25 KST — 드럼·피아노 flavor 셸과 Smoosic 피아노 편집기 도입
+
+- 작업자: Codex
+- 목표: 드럼은 기존 PDF Viewer·메트로놈 중심 셸로 유지하고, 피아노는 PDF·MusicXML·편집/내보내기 기능을 별도 Android flavor/app shell로 분리한다.
+- 변경 파일/디렉터리:
+  - `android/app/build.gradle.kts`, `android/app/src/main/AndroidManifest.xml`, `.vscode/launch.json`
+  - `lib/piano_main.dart`, `lib/app/piano_app.dart`, `lib/app/router/piano_app_router.dart`, `lib/app/widgets/piano_app_shell.dart`
+  - `lib/features/piano/presentation/smoosic_score_editor_screen.dart`, `lib/features/digital_score/presentation/score_entry_screen.dart`
+  - `assets/smoosic/`, `pubspec.yaml`, `README.md`
+  - `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/WORK_LOG.md`, `.omd/preferences.md`
+- 완료 내용:
+  - `drum` flavor는 `com.hansookim.pageadiddle`/`Page-a-Diddle`, `piano` flavor는 `com.hansookim.pianoscore`/`Piano Score`로 분리했다. 저장소는 복제하지 않는다.
+  - 피아노 셸에서는 Library와 Edit score만 노출하고 Tap Tempo·Tempo Trainer·Setlist·Jam 라우트를 제외했다. 기존 PDF는 `pdfrx` Viewer 경로를 유지한다.
+  - Smoosic release와 공식 HTML 선행 의존성인 jQuery, CSS/font/image 자산을 로컬 번들했다. optional SoundFont 로딩은 editor startup에서 건너뛴다.
+  - Flutter↔Smoosic MusicXML load/export bridge, 로컬 MusicXML 저장, 새 악보 제목 팝업을 연결했다. Smoosic application instance가 만들어지는 즉시 Flutter ready 상태를 전달하도록 보강했다.
+- 검증:
+  - `flutter build apk --debug --flavor piano -t lib/piano_main.dart --no-pub`: 통과.
+  - `flutter build apk --debug --flavor drum -t lib/main.dart`: 통과.
+  - `flutter analyze --no-pub`: 신규 오류 없음. 기존 `app_theme.dart` 불필요 import 1건과 `ScoreViewerScreen` 미사용 private method 4건 경고가 남았다.
+  - 관련 단위 테스트 16개(native layout, score version, blank piano score, editor service): 통과.
+  - `emulator-5554`에서 명시적 피아노 Activity로 설치·실행하고 Piano 셸, 실제 `Claire de lune` MusicXML의 Smoosic 편집 화면, Save 활성화, `Create score` 제목 입력 팝업을 확인했다. `monkey -p`는 동일 Activity 이름 때문에 드럼 패키지를 열 수 있어 검증 명령을 명시적 component 실행으로 고정했다.
+- 남은 일:
+  - Smoosic에서 실제 음표 수정 후 MusicXML 저장·재열기와 대형 악보의 모바일 레이아웃을 검증한다.
+  - PDF→MusicXML OMR은 서버/worker가 필요한 Future이며 현재 구현하지 않는다.
+
+## 2026-09-22 15:13 KST — 벤치마킹 기준 APK 설치·마우스 스크롤 smoke
+
+- 작업자: Codex
+- 목표: 벤치마킹 기준으로 바꾼 Verovio 뷰어를 에뮬레이터에서 설치하고 일반 마우스 스크롤이 확대를 일으키지 않는지 확인한다.
+- 변경/검증 대상:
+  - `build/app/outputs/flutter-apk/app-arm64-v8a-release.apk`
+  - `lib/features/digital_score/presentation/verovio_score_view.dart`
+- 완료 내용:
+  - release arm64 APK를 빌드했다. SHA-256은 `d26d977c76cb1ac74d860db0dfcb6b7b6fed9d128a2b90cb629ad82facdb57d`다.
+  - `emulator-5554`에 설치하고 Claire de lune를 열었다.
+  - Android mouse scroll 한 틱을 주입했을 때 악보가 세로로 이동하고 오선·음표 크기는 그대로인 것을 확인했다.
+  - 앱 PID `12113`이 유지됐고 FATAL EXCEPTION·AndroidRuntime·SIGSEGV·Verovio 오류는 확인되지 않았다.
+- 검증:
+  - `flutter build apk --release --split-per-abi`: 통과.
+  - `flutter test test/features/digital_score --reporter compact`: 111개 통과·기존 SoundFont 자산 누락 1개 실패.
+  - Ctrl/Cmd+휠·핀치·hover shadow note는 ADB만으로 재현하지 못해 미확인으로 남겼다.
+- 남은 일:
+  - 에뮬레이터 화면에서 Ctrl/Cmd+휠·핀치·입력 모드 hover 고스트를 직접 확인한다.
+
+## 2026-09-22 15:00 KST — 악보 뷰포트·입력 상호작용을 앱 벤치마킹 기준으로 통일
+
+- 작업자: Codex
+- 목표: 마우스 스크롤 때 악보 확대와 고스트 크기 변화가 발생하던 동작을 제거하고, 악보 앱의 검증된 입력 관례를 제품 기준으로 고정한다.
+- 참고 기준:
+  - MuseScore: 일반 휠 스크롤, Ctrl+휠 확대, Note Input의 shadow note·클릭 확정
+  - Dorico: 명시적 Note Input, 포인터 shadow notehead·클릭 확정
+  - forScore: 핀치 확대, 확대 상태 pan/scroll, 연주 중 제스처 단순화
+- 변경 파일:
+  - `lib/features/digital_score/presentation/verovio_score_view.dart`
+  - `드럼 악보 앱 기획서 v4.md`
+  - `docs/ROADMAP.md`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - Verovio 뷰어에 Flutter 표준 `trackpadScrollCausesScale: false`를 명시하고 일반 마우스 휠은 문서 이동, Ctrl/Cmd+휠은 확대가 되도록 입력 정책을 적용했다.
+  - 편집 모드에서는 마우스 hover로 음표·쉼표 고스트를 미리 보고 클릭/탭으로 확정하도록 연결했다.
+  - 스크롤 시 stale 고스트를 지워 스크롤에 따라 고스트가 커지거나 이전 좌표에 남는 상태를 막았다. 트랙패드 pan과 핀치 확대는 Flutter `InteractiveViewer` 경계를 유지한다.
+  - 자체 제스처 규칙을 추가하지 않는다는 원칙과 참고 앱별 동작을 기획서·로드맵·상태 문서에 기록했다.
+- 검증:
+  - `flutter analyze lib/features/digital_score/presentation/verovio_score_view.dart`: 통과.
+  - native layout·score version·editor service 대상 테스트 15개: 통과.
+  - `git diff --check`: 통과.
+- 남은 일:
+  - `emulator-5554` 최신 APK에서 일반 휠·Ctrl/Cmd+휠·핀치·hover 고스트가 기준대로 동작하는지 실제 smoke한다.
+  - 실제 동작 확인 후 M8-03/M8-04 진행 상태와 B-017을 갱신한다.
+
+## 2026-09-22 13:28 KST — 확대 입력 좌표·오선 기준선·버전 저장 UX 보강
+
+- 작업자: Codex
+- 목표: 확대·축소 후 음표가 엉뚱한 위치에 찍히는 문제와 마디별 오선 기준선 튐을 줄이고, 버전 추가 버튼 없이 수정 저장 흐름으로 새 버전을 만들도록 정리한다.
+- 변경 파일:
+  - `lib/features/digital_score/presentation/verovio_score_view.dart`
+  - `lib/features/digital_score/domain/native_score_layout.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `test/features/digital_score/domain/native_score_layout_test.dart`
+  - `드럼 악보 앱 기획서 v4.md`
+  - `docs/ROADMAP.md`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - `InteractiveViewer` 바깥 Pointer 이벤트를 viewport→scene으로 한 번만 변환하고, 두 손가락 제스처 중에는 고스트·음표 커밋을 막았다.
+  - 같은 시스템의 모든 마디가 첫 마디의 보표 top/line gap을 공유하도록 바꿨다. 쉼표와 음표가 없는 마디는 staff fitting을 오염시키지 않으며, 두 보표의 오선 간격도 공유한다.
+  - 실제 마디 콘텐츠 경계와 끝점을 onset anchor로 추가해 첫 기존 음표 위치로 잘못 스냅되는 입력을 보정했다. 임시 진단 로그는 제거했다.
+  - AppBar의 별도 `버전 추가` 흐름을 제거했다. `수정`을 누르면 버전 이름 팝업이 먼저 뜨고, 이름을 확정한 뒤 수정하며, 저장 시 현재 수정본을 새 버전으로 생성·활성화한다.
+  - 최종 arm64 release APK를 `emulator-5554`에 설치해 악보 표시, 수정 진입, 버전 이름 팝업, 편집 도구 표시와 버전 추가 버튼 부재를 확인했다. 확대 상태에서 음표를 입력해 dirty 상태를 만들고 `Version 1` 저장·활성화 후 앱을 강제 종료·재실행해 활성 버전 복원까지 확인했다.
+- 검증:
+  - `flutter test` 대상 15개 통과: native layout, score version, editor service.
+  - `flutter test test/features/digital_score --reporter compact`: 111개 통과·1개 실패. 실패는 기존 `alphatab_asset_test`의 `ydp-grand-piano.sf2` 자산 누락이다.
+  - 관련 `flutter analyze` 4개 항목 통과: No issues found.
+  - `flutter build apk --release --split-per-abi` 통과. arm64 APK 설치 성공.
+- 남은 일:
+  - 최종 APK에서 쉼표 입력·기존 음표 수정·undo/redo를 추가 smoke한다.
+  - Section/Playback Sequence 저장·재열기와 PDF 내보내기 결과를 이어서 확인한다.
+
+## 2026-09-22 10:56 KST — Verovio A4 page·원본 악보 표시·Section 반복 재생 수정
+
+- 작업자: Codex
+- 목표: 에뮬레이터에서 전자악보가 빈 스피너에 머무는 원인을 확인하고, 현재 Verovio FFI 조판이 A4 기준을 사용하는지 검증하며, Verse/Chorus 반복이 원본 악보를 훼손하지 않는지 상태를 정리한다.
+- 변경 파일:
+  - `lib/features/digital_score/presentation/verovio_score_view.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/domain/performance_score.dart`
+  - `test/features/digital_score/domain/playback_sequence_test.dart`
+  - `드럼 악보 앱 기획서 v4.md`
+  - `docs/ROADMAP.md`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - 기존 Verovio 옵션의 `pageWidth: 2100`은 A4 너비였지만 `pageHeight: 60000`과 `adjustPageHeight: true`가 한 페이지를 수 미터 길이로 만들 수 있음을 확인했다. native page를 1/100mm 기준 A4 `2100×2970`으로 제한하고 native 호출별 30초 타임아웃을 유지했다.
+  - 전체 페이지 렌더가 끝날 때까지 빈 스피너를 보여 주던 흐름을 페이지별 공개로 바꿨다. 첫 SVG·HitMap이 준비되면 즉시 화면에 표시하고 나머지 페이지를 순차적으로 붙인다. 이미 표시된 페이지가 있는 상태에서 후속 페이지가 실패해도 전체 악보를 오류 화면으로 바꾸지 않는다.
+  - `emulator-5554`에 debug APK를 설치해 `Claire de lune`와 `Fantaisie-Impromptu in C♯ Minor`를 각각 열었다. 두 악보 모두 높은음자리표·낮은음자리표·음표가 표시됐고, 이전의 빈 스피너·렌더 오류 화면은 재현되지 않았다.
+  - 화면은 Verovio native SVG page를 1/100mm 기준 A4 `2100×2970`으로 조판하고, 화면 폭으로 균일 축소해 페이지 사이 간격·상하 레터박스 없이 연속 표시한다. PDF는 `PdfPageFormat.a4`로 별도 출력한다.
+  - Verse/Chorus를 설정하거나 Playback을 켜도 화면은 원본 written score를 유지하도록 `DigitalScoreScreen`과 `VerovioScoreView`를 분리했다. 반복 재생은 Section 범위별 derived MIDI segment를 연결하고, 같은 이름의 Section이 여러 범위에 있어도 중복 확장하지 않는다.
+  - 에뮬레이터에서 CHORUS를 지정하고 반복 2회를 추가한 뒤 완료 후 원본 악보가 계속 보이는 것과, Playback ON에서 30초 이상 시간·마디 하이라이트가 진행되는 것을 확인했다.
+  - 재생이 꺼진 악보 화면에서는 Notemus 오디오 엔진을 미리 초기화하지 않고 재생 시점에만 준비하도록 바꿨다. 에뮬레이터의 오디오 초기화 스레드가 화면 진입 직후 CPU를 점유하던 경로를 차단했다.
+- 검증:
+  - `flutter analyze lib/features/digital_score/presentation/verovio_score_view.dart lib/features/digital_score/presentation/digital_score_screen.dart`: 통과.
+  - `flutter test test/features/digital_score --reporter compact`: 109개 통과, 기존 `ydp-grand-piano.sf2` 누락 1개 실패.
+  - `flutter build apk --release --split-per-abi`: 통과. `app-arm64-v8a-release.apk`를 `emulator-5554`에 설치해 `Claire de lune`와 `Fantaisie-Impromptu`를 열었고, 두 악보의 높은음자리표·낮은음자리표·음표를 확인했다.
+  - `emulator-5554`에서 CHORUS 지정·반복 2회·Playback 재생을 수동 검증했다. 원본 화면 유지, 빈 스피너 재발 없음, 재생 시간 증가·마디 하이라이트 진행을 확인했다.
+- 남은 일:
+  - 저장·재실행 시 Section/Playback Sequence와 활성 버전 복원, 음표 입력·수정·내보내기 smoke를 이어간다.
+
+## 2026-09-21 18:02 KST — 드럼 제품 유지·후속 피아노 앱 분리 전략 확정
+
+- 작업자: Codex
+- 목표: 현재 제품과 후속 피아노 제품의 경계를 문서에 명시하고, 에뮬레이터 설치·실행 및 서버·AI 의존성을 상태에 반영한다.
+- 변경 파일:
+  - `드럼 악보 앱 기획서 v4.md`
+  - `docs/ROADMAP.md`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - 현재 배포 제품은 Page-a-Diddle 드럼 앱으로 유지하고, 피아노 전자악보는 즉시 별도 저장소로 복제하지 않기로 결정했다.
+  - 추후 Flutter flavor 또는 별도 앱 셸로 피아노 제품을 분리하며 MusicXML·Verovio·버전 관리·로컬 저장·오디오 계층을 공유하도록 제품 경계를 명시했다.
+  - 현재 악보 뷰어·편집·재생에는 전용 서버·AI가 필요하지 않고, PDF→MusicXML OMR worker와 AI 편곡은 Future의 선택 범위로 정리했다.
+  - Pixel Fold API 35 에뮬레이터에 최신 debug APK를 설치하고 `com.hansookim.pageadiddle/.MainActivity` 실행, 앱 프로세스 유지와 fatal/Verovio 오류 부재를 확인했다. Galaxy S24 Ultra AVD는 `unknown skin name` 설정 오류로 부팅되지 않았다.
+- 검증:
+  - `flutter build apk --debug`: 통과.
+  - Pixel Fold API 35 `adb install -r` 및 MainActivity 실행: 통과.
+  - `flutter test`: 301개 통과, 기존 `alphatab_asset_test`의 `ydp-grand-piano.sf2` 누락 1개 실패.
+  - `flutter analyze`: 기존 이슈 5개만 유지.
+- 남은 일:
+  - 현재 드럼 앱의 M8 악보 코어 실기기 입력·재생·내보내기 smoke를 진행한다.
+  - 피아노 전용 앱 셸/flavor와 공유 코어의 실제 분리는 공통 악보 코어 안정화 후 시작한다.
+
+## 2026-09-21 17:37 KST — 3단 악보 요구 확정·편집 좌표와 고스트 개선
+
+- 작업자: Codex
+- 목표: 단선 멜로디 변환의 기본 결과를 멜로디·피아노 오른손·피아노 왼손 3단 악보로 확정하고, 원하는 위치에 음표가 들어가지 않던 편집 오류를 보강한다.
+- 변경 파일:
+  - `lib/features/digital_score/data/music_xml_codec.dart`
+  - `lib/features/digital_score/domain/native_score_layout.dart`
+  - `lib/features/digital_score/data/score_pdf_exporter.dart`
+  - `lib/features/digital_score/presentation/verovio_score_view.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `test/features/digital_score/data/music_xml_codec_test.dart`
+  - `test/features/digital_score/domain/native_score_layout_test.dart`
+  - `드럼 악보 앱 기획서 v4.md`
+  - `docs/ROADMAP.md`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - 단선 멜로디 변환 기본값을 멜로디 1단 + 피아노 오른손 1단 + 피아노 왼손 1단으로 기획서·로드맵·상태 문서에 반영했다. 2단 Grand Staff는 피아노 단독 보기로 유지한다.
+  - MusicXML 음표에 part·measure·event 기반 ID를 부여해 Verovio HitMap 음표와 내부 이벤트 주소가 엇갈리지 않도록 했다. ID를 사용할 수 없는 가져오기 결과는 가로 조판 순서로 fallback한다.
+  - 화면 위쪽을 높은 음, 아래쪽을 낮은 음으로 매핑하도록 음높이 좌표식을 수정했다. PDF 출력 좌표도 같은 방향으로 맞췄다.
+  - 실제 렌더 음표의 onset anchor와 보표 음표 중심을 사용해 입력 위치와 보표 간격을 보정했다.
+  - 주황색 원 고스트를 음가별 음표 머리·기둥·꼬리·임시표 형태로 교체하고 쉼표 고스트도 구분되는 형태로 표시하도록 했다.
+- 검증:
+  - 변경 대상 `flutter analyze`: 통과.
+  - MusicXML codec·native layout·staff input·score editor·A4 렌더 대상 테스트: 모두 통과.
+  - 전체 `flutter test`: 301개 통과, 기존 `alphatab_asset_test`의 `ydp-grand-piano.sf2` 누락 1개 실패.
+  - `flutter build apk --debug`: 성공.
+  - `git diff --check`: 통과.
+- 남은 일:
+  - ADB 기기 재연결 후 원하는 위치 음표·쉼표 입력, 기존 음표 선택·수정, 확대 상태 입력, 3단 변환 화면을 실기기에서 확인한다.
+  - 3단 변환 arranger와 멜로디 파트 + 피아노 2-staff 파트의 실제 MusicXML 생성기를 구현한다.
+
+## 2026-09-21 16:44 KST — 활성 버전 복원·악보 선택 수정·Section 구조 통합
+
+- 작업자: Codex
+- 목표: 버전관리와 악보 수정 불가 원인을 보강하고, 코러스/벌스 지정과 향후 OMR·양손 변환·악기별 반주 요구를 개발 범위로 정리한다.
+- 변경 파일:
+  - `lib/features/digital_score/data/digital_score_data.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/presentation/verovio_score_view.dart`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/ROADMAP.md`
+  - `docs/WORK_LOG.md`
+  - `드럼 악보 앱 기획서 v4.md`
+- 완료 내용:
+  - 버전 매니페스트의 `activeId`와 해당 MusicXML을 초기 로드에 반영해 앱 재실행 후 원본으로 되돌아가던 경로를 수정했다. 버전 파일이 없거나 손상되면 원본으로 안전하게 fallback한다.
+  - Verovio에서 음표를 탭한 뒤 마디 탭 콜백이 선택 주소를 지우던 순서를 제거해 기존 음표 선택·수정 시트 진입 경로를 복구했다. 편집 모드에서 한 손가락 패닝도 막아 입력 탭과 충돌을 줄였다.
+  - 기존 `ScoreStructurePanel`을 DigitalScoreScreen에 실제 연결했다. 마디를 선택해 INTRO/VERSE/PRE/CHORUS/BRIDGE/OUTRO를 지정하고, Playback Sequence의 반복·이동·삭제를 조작하며, Section 표식은 Flutter 오버레이로 표시한다.
+  - 저장·내보내기에서 로드된 Playback Sequence와 Arrangement Profile을 실제 전달하도록 연결했다. 현재 반주는 코드 기반 피아노 규칙형이며 스트링·오르간·패드·브라스는 Future 범위로 유지했다.
+  - 기획서와 로드맵에 PDF→OMR 후보 MusicXML→사용자 검수, 단선 멜로디→Grand Staff 변환, 멜로디 상단+반주 하단 다중 파트, 악기별 반주 역할을 명시했다.
+- 검증:
+  - `flutter analyze`: 신규 오류 없음. 기존 정보/경고 5건 유지.
+  - `flutter test`: 300개 통과, 기존 `alphatab_asset_test`의 `ydp-grand-piano.sf2` 누락 1개 실패.
+  - `flutter test test/features/digital_score/presentation/playback_sequence_panel_test.dart test/features/digital_score/presentation/score_playback_bar_test.dart test/features/digital_score/domain/playback_sequence_test.dart`: 통과.
+  - `flutter build apk --debug`: 성공.
+  - 현재 세션 `adb devices`에는 연결된 기기가 없어 최신 APK 설치·실기기 입력 smoke는 수행하지 못했다.
+- 남은 일:
+  - 실기기 재연결 후 활성 버전 재실행, 음표 탭→수정, 음표/쉼표 입력, Section 저장·재열기를 확인한다.
+  - OMR worker와 MusicXML 검수 화면, 단선→양손 arranger, 멜로디·반주 다중 파트 모델을 별도 설계한다.
+
+## 2026-09-21 15:59 KST — 버전 추가를 저장 시점 생성 흐름으로 변경
+
+- 작업자: Codex
+- 목표: 버전 이름을 빈 복사본 생성 전에 받지 않고, 사용자가 수정한 뒤 저장하는 시점에 받아 UX 순서를 정리한다.
+- 변경 파일:
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/domain/score_editor.dart`
+  - `test/features/digital_score/domain/score_editor_test.dart`
+  - `드럼 악보 앱 기획서 v4.md`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/ROADMAP.md`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - `버전 추가` 버튼은 파일을 즉시 만들지 않고 `새 버전으로 저장` 상태만 켠다. 선택 상태에서는 편집 모드로 진입하고 아이콘도 save-as 상태로 표시한다.
+  - 사용자가 음표를 수정한 뒤 저장을 누르면 그때 버전 이름 다이얼로그를 열고 현재 수정본으로 새 버전을 생성한다.
+  - 이름 입력을 취소하면 버전 파일·매니페스트를 만들지 않고 현재 수정 상태를 유지한다. 일반 저장은 기존 활성 버전을 덮어쓴다.
+  - 새 버전 생성 후 이전 활성 버전의 편집기 snapshot을 원래 저장 상태로 되돌리도록 `MusicScoreEditor.resetTo`와 회귀 테스트를 추가했다.
+- 검증:
+  - `flutter analyze`: 신규 오류 없음. 기존 lint 5건 유지.
+  - `flutter test test/features/digital_score/domain/score_editor_test.dart test/features/digital_score/data/digital_score_editor_service_test.dart`: 19개 통과.
+  - 전체 `flutter test`: 300개 통과, 기존 `alphatab_asset_test`의 `ydp-grand-piano.sf2` 누락 1개 실패.
+  - `flutter build apk --debug`: 성공, SM-S937N 재설치 성공.
+  - 실기기에서 `버전 추가 → 음표 수정 → 저장 → 버전 1 생성·전환 → 삭제`를 실행했고 오류 로그 없이 원본 상태로 복구했다.
+- 남은 일:
+  - 실기기 2페이지 이후·확대/이동·음표 입력·재생·내보내기·재열기 전체 smoke를 진행한다.
+
+## 2026-09-21 15:34 KST — 실기기 설치·버전 취소 assertion 재현 및 수정
+
+- 작업자: Codex
+- 목표: 최신 APK를 SM-S937N에 설치해 좌측 상단 텍스트 겹침과 버전 취소/저장 오류를 실제 확인한다.
+- 변경 파일:
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/ROADMAP.md`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - 최신 `build/app/outputs/flutter-apk/app-debug.apk`를 SM-S937N(R5CY43JMZ7N)에 `adb install -r`로 설치하고 앱을 실행했다.
+  - Clair 악보에서 음표·오선·낮은 음자리표·시스템 정렬과 좌측 상단 텍스트 겹침 해소를 캡처로 확인했다.
+  - 실기기에서 버전 추가 취소를 실행했을 때 `framework.dart`의 `_dependents.isEmpty` assertion이 재현됐다. 원인은 부모 메서드의 `finally`에서 TextEditingController를 다이얼로그 route가 완전히 제거되기 전에 dispose하던 수명 오류였다.
+  - `_ScoreVersionDialog` StatefulWidget이 controller를 소유하고 `dispose`하도록 수정한 뒤 취소를 재실행해 오류 없이 원래 악보로 복귀하는 것을 확인했다.
+  - 같은 기기에서 버전 1 저장·삭제도 실행했고, 테스트로 만든 버전은 삭제해 원본 상태로 복구했다.
+- 검증:
+  - `flutter analyze`: 신규 오류 없음. 기존 lint 5건 유지.
+  - `flutter test`: 299개 통과, 기존 `alphatab_asset_test`의 `ydp-grand-piano.sf2` 누락 1개 실패.
+  - `flutter build apk --debug`: 성공.
+  - `adb install -r`: 성공. 앱 PID 6932 유지, 취소·저장·삭제 후 `FATAL EXCEPTION`/`SIGSEGV` 로그 없음.
+- 남은 일:
+  - 실기기 2페이지 이후·확대/이동·음표 입력·재생·내보내기·재열기 smoke를 진행한다.
+
+## 2026-09-21 15:03 KST — 버전 저장 예외와 Verovio SVG 텍스트 겹침 보강
+
+- 작업자: Codex
+- 목표: 버전 생성 취소/저장 실패 경로에서 처리되지 않은 예외를 없애고, Verovio 악보 화면 좌측 상단에 겹쳐 나타나는 지시문·템포 텍스트를 정리한다.
+- 변경 파일:
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/data/digital_score_editor_service.dart`
+  - `lib/core/storage/song_file_storage.dart`
+  - `lib/features/digital_score/presentation/verovio_score_view.dart`
+  - `test/features/digital_score/data/digital_score_editor_service_test.dart`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/ROADMAP.md`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - 버전 대화상자 취소/빈 이름은 저장 호출 없이 종료하도록 유지하고, 버전 생성·전환·삭제와 매니페스트 저장 실패를 SnackBar로 회수했다.
+  - 버전 매니페스트를 원자 저장하고, 버전 파일 저장 뒤 매니페스트 저장이 실패하면 orphan 파일을 best-effort 삭제한다. 손상된 매니페스트는 원본 버전 카탈로그로 fallback한다.
+  - Flutter SVG가 중첩된 Verovio definition-scale 좌표에서 direction/tempo text를 잘못 배치하는 문제를 화면 정규화 단계에서 차단했다. 순수 마디 번호만 남기며 원본 MusicXML과 PDF 출력 경로는 변경하지 않았다. Verovio의 private-use SMuFL 템포 글리프는 플랫폼 음표 글리프로 치환했다.
+- 검증:
+  - `flutter analyze`: 신규 오류 없음. 기존 app_theme 불필요 import 1건과 ScoreViewer 미사용 private method 4건만 남음.
+  - `flutter test test/features/digital_score`: 107개 통과, 기존 `alphatab_asset_test`의 `ydp-grand-piano.sf2` 누락 1개 실패.
+  - 전체 `flutter test`: 299개 통과, 기존 `alphatab_asset_test`의 `ydp-grand-piano.sf2` 누락 1개 실패.
+  - `flutter test test/features/digital_score/data/digital_score_editor_service_test.dart`: 8개 통과.
+  - `flutter build apk --debug`: 성공.
+  - 최종 수정본은 `adb devices`에서 실기기가 사라져 이번 수정 후 APK 재설치·화면 캡처는 아직 수행하지 못했다. 직전 APK에서 원인 텍스트 겹침과 기존 악보 표시 상태를 확인했으며, 최종 실기기 smoke는 B-017로 남겼다.
+- 남은 일:
+  - 실기기 재연결 후 최신 APK 설치, 좌측 상단 겹침 해소, 버전 취소/저장 실패 UI, 2페이지 이후·입력·재생을 확인한다.
+
+## 2026-09-21 14:10 KST — Verovio FFI 기반 Native Digital Score 전환
+
+- 작업자: Codex
+- 목표: 직접 조판하던 Flutter 네이티브 악보 화면을 전문 악보 엔진 기반으로 교체하고, 화면 연속 조판과 PDF A4 출력을 분리한다.
+- 변경 파일:
+  - `pubspec.yaml`
+  - `pubspec.lock`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/presentation/verovio_score_view.dart`
+  - `docs/ARCHITECTURE.md`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/ROADMAP.md`
+  - `docs/WORK_LOG.md`
+  - `드럼 악보 앱 기획서 v4.md`
+- 완료 내용:
+  - `verovio_flutter: ^0.3.3`을 추가하고 상류 Verovio 6.2.1 FFI를 production DigitalScoreScreen에 연결했다.
+  - 내부 MusicScore→MusicXML→Verovio SVG·HitMap 흐름을 만들고, HitMap 좌표를 마디 강조·음표 선택·입력 오버레이에 공유했다.
+  - Verovio native page 번호의 1-based 규칙과 `verovio_flutter` combined helper의 첫 페이지 충돌을 앱에서 우회했다.
+  - Verovio의 nested `definition-scale` SVG와 CSS stroke를 `flutter_svg`가 그릴 수 있는 형태로 정규화했다.
+  - 화면은 A4 비율·레터박스·페이지 나눔 없는 연속 세로 문서로 유지하고, A4 크기·여백·페이지 나눔은 PDF 출력 경로로 한정했다.
+  - 기획서에 Verovio FFI를 Native Digital Score 표준 엔진으로 명시하고, CustomPainter 직접 조판을 production 경로에서 제외했다.
+- 검증:
+  - `flutter analyze`: 신규 오류 없음. 기존 불필요 import 정보 1건과 미사용 private method 경고 4건만 남음.
+  - `flutter test test/features/digital_score`: 106개 통과, 기존 `alphatab_asset_test`의 `ydp-grand-piano.sf2` 누락 1개 실패.
+  - `flutter build apk --debug`: 성공.
+  - `adb install -r`로 SM-S937N(`R5CY43JMZ7N`) 재설치 성공.
+  - Clair 악보 화면에서 오선·음표·낮은 음자리표·시스템 정렬이 표시되고 이전 native crash가 재현되지 않음을 확인.
+  - 진단 로그 제거 후 최종 APK를 다시 빌드·설치했으며 앱 프로세스 유지와 `SIGSEGV`/Fatal 로그 부재를 확인.
+- 남은 일:
+  - 2페이지 이후 화면·확대 이동·입력·재생 커서 smoke.
+  - PDF·MusicXML·프로젝트·MIDI 내보내기와 PDF 재열기 전체 smoke.
+  - 현재 피아노 MVP 이후 Verovio unpitched 드럼/퍼커션 입력 프로필 설계.
+
+## 2026-09-21 13:18 KST — 실기기 악보 품질 재검수: 출시 보류
+
+- 작업자: Codex
+- 목표: A4 화면 분리 후 실제 Grand Staff가 정상적인 악보로 보이는지 재검수한다.
+- 변경 파일:
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `test/features/digital_score/screen_score_layout_test.dart`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - `flutter_notemus`가 위·아래 스태프별로 계산한 서로 다른 오선 끝점을 공통 시스템 끝점으로 보정해, 같은 Grand Staff 안의 오선이 같은 바라인까지 이어지게 했다.
+  - 공통 끝점 계산 회귀 테스트를 추가했다.
+  - 실기기 캡처에서 시스템별 자연 폭이 크게 달라 우측 정렬이 고르지 않고, 낮은 스태프 음자리표/원본 clef 전환을 추가 검수해야 함을 확인했다.
+- 검증:
+  - 화면 레이아웃 테스트 통과
+  - `flutter analyze`: 신규 오류 없음, 기존 경고·정보 5개
+  - debug APK 빌드·SM-S937N(`R5CY43JMZ7N`) 재설치·실행 성공
+  - 공통 오선 끝점 보정 후 Clair 캡처 확인
+- 남은 일:
+  - 시스템 정당화(우측 정렬) 전략 확정
+  - 낮은 스태프 음자리표 글리프와 MusicXML clef 전환 검증
+  - 해결 전 native score 화면 출시 보류
+
+## 2026-09-21 13:03 KST — 화면 연속 조판과 PDF A4 레이아웃 분리
+
+- 작업자: Codex
+- 목표: 휴대폰 화면에 A4 페이지를 강제로 맞추면서 발생한 음표 축소·페이지 여백·오버플로 문제를 제거하고, A4는 PDF 출력에만 적용한다.
+- 변경 파일:
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `lib/features/digital_score/domain/score_layout.dart`
+  - `test/features/digital_score/screen_score_layout_test.dart`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/ROADMAP.md`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - 화면 조판에서 A4 페이지 배경, 페이지 나눔, 세로 레터박스, 전체 문서 균일 축소를 제거했다.
+  - Notemus의 `availableWidth`를 실제 화면 폭으로 전달하고, 오선 크기를 화면 논리 픽셀 기준으로 유지해 시스템을 연속 세로로 배치한다.
+  - 화면 입력·마디 강조·음표 선택 좌표를 같은 연속 시스템 geometry에 투영한다.
+  - 화면 확대 기본값은 1배로 바꾸고, 화면보다 넓은 시스템은 가로 이동이 가능하도록 문서 폭을 유지한다.
+  - `ScorePdfExporter`의 A4 출력 경로는 변경하지 않았다.
+- 검증:
+  - 화면 레이아웃 및 기존 A4 보조 회귀 테스트 9개 통과
+  - `flutter analyze`: 신규 오류 없음, 기존 경고·정보 5개
+  - debug APK 빌드 성공
+  - SM-S937N(`R5CY43JMZ7N`) 재설치·실행 및 Clair 연속 화면 캡처 확인
+- 남은 일:
+  - 템포 문구 중복 제거
+  - 2페이지 이후 입력·강조·재생 및 가로 이동 smoke
+  - A4 PDF 출력 파일 재열기 smoke
+
+## 2026-09-21 10:32 KST — A4 비율·오선 최소 크기·시스템 균일 축소
+
+- 작업자: Codex
+- 목표: A4 페이지 밖으로 튀어나오거나 휴대폰에서 지나치게 작아지는 음표를 종이 비율과 읽기성 기준에 맞춘다.
+- 변경 파일:
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `test/features/digital_score/a4_engraving_metrics_test.dart`
+  - `test/features/digital_score/a4_system_pagination_test.dart`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/ROADMAP.md`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - A4를 794×1123 고정 픽셀 크기가 아니라 화면에 균일 배율로 적용하는 794:1123 페이지 비율로 유지했다.
+  - 좁은 화면의 최종 화면상 오선 간격이 약 6dp 아래로 내려가지 않도록 조판용 `staffSpace`를 보정했다.
+  - Notemus onset 정렬로 A4 안쪽 폭을 넘는 시스템은 시스템 전체를 x/y 균일 축소해 음표 가로 비율을 보존하고 종이 밖 이탈을 막았다.
+  - 시스템별 배율을 페이지 나눔·마디 hit-test·음표 중심점·고스트·강조 좌표에 함께 적용했다.
+  - 중간 페이지마다 불필요하게 예약하던 마지막 하단 여백을 제거해 오선 최소 크기 적용 뒤에도 페이지를 과도하게 비우지 않도록 했다.
+- 검증:
+  - A4 fit/페이지 나눔/렌더 좌표/overflow 배율 대상 테스트 8개 통과
+  - `flutter analyze`: 신규 오류 없음, 기존 경고 5개
+  - 전체 `flutter test`: 297개 통과, `alphatab_asset_test`의 `ydp-grand-piano.sf2` 부재 1개 실패
+  - debug APK 빌드·SM-S937N(`R5CY43JMZ7N`) 재설치·실행 성공, Clair 첫 화면 캡처 확인
+- 남은 일:
+  - Andante/템포 중복 렌더 제거
+  - Clair/Fantaisie 2페이지 이후 마디 강조·입력·선택·재생 smoke
+  - 네이티브 YDP Grand Piano SoundFont 연결
+
+## 2026-09-21 09:31 KST — A4 렌더 좌표 정합성 보강
+
+- 작업자: Codex
+- 목표: A4 문서 전체를 화면 너비에 균일하게 맞추고, Notemus 실제 조판과 마디 강조·재생·입력·음표 선택 좌표를 일치시킨다.
+- 변경 파일:
+  - `lib/features/digital_score/presentation/piano_score_view.dart`
+  - `test/features/digital_score/a4_rendered_layout_test.dart`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/ROADMAP.md`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - 줄별 `canvas.scale(scaleX, 1)`을 제거해 음표·오선의 가로 비율 왜곡을 없앴다.
+  - Notemus가 시스템마다 다시 시작하는 로컬 마디 인덱스를 절대 마디 인덱스로 복원했다.
+  - 실제 페이지·시스템·마디선 위치로 `NativeScoreLayout`을 투영하고, 가능한 음표는 Notemus 실제 중심점을 선택 좌표로 사용했다.
+  - 재생 페이지·마디 강조, 음표/쉼표 입력 고스트, 마디 드래그가 같은 A4 좌표를 사용하도록 연결했다.
+  - A4 페이지 목록·문서 높이를 상태에 보관해 재생 중 불필요한 페이지 재계산을 줄이고, 줌 버튼을 SafeArea 안에 배치했다.
+- 검증:
+  - A4 fit/페이지 나눔/렌더 좌표 관련 테스트 7개 통과
+  - `flutter analyze`: 오류 없음, 기존 경고 5개
+  - 전체 `flutter test`: 296개 통과, 기존 SoundFont 자산 부재 테스트 1개 실패
+  - `git diff --check` 통과
+  - ADB 데몬 권한 문제로 Android 실기기 캡처·터치 smoke는 실행하지 못했다.
+- 남은 일:
+  - Andante/템포 중복 렌더 제거
+  - 새 빌드에서 Clair/Fantaisie 2페이지 좌표·세로 레터박스·입력·확대·재생 smoke(B-017)
+  - 네이티브 YDP Grand Piano SoundFont 연결
+
+## 2026-09-21 08:50 KST — A4 너비 맞춤 + 세로 레터박스
+
+- 작업자: Composer
+- 목표: 사용자 의도( A4 비율 유지, 너비에 맞춤, 세로 여백 허용)와 구현·문서 정렬
+- 변경:
+  - `a4FitWidthLetterboxTransform`: 균일 scale = viewW/794, 짧은 문서는 세로 중앙
+  - `PianoScoreView` 초기·맞춤·회전·docH 변경 시 refit
+  - `score_layout.dart` 주석, ROADMAP M8-03 문구
+  - `test/features/digital_score/a4_fit_width_letterbox_test.dart`
+- 검증: `flutter test test/features/digital_score/a4_fit_width_letterbox_test.dart` 2 passed
+- 남은 일: 줄마다 scaleX(조판 왜곡), native hit-test vs Notemus geometry
+
 ## 2026-09-20 22:45 KST — A4 시스템 단위 페이지 넘김
 
 - 작업자: GPT-5.6 Sol

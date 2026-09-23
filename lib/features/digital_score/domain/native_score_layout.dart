@@ -22,6 +22,9 @@ class NativeMeasureBox {
     required this.lineGap,
     required this.contentLeft,
     required this.contentWidth,
+    this.staffTops = const <int, double>{},
+    this.staffLineGaps = const <int, double>{},
+    this.onsetAnchors = const <NativeOnsetAnchor>[],
   });
 
   final int measureIndex;
@@ -31,6 +34,96 @@ class NativeMeasureBox {
   final double lineGap;
   final double contentLeft;
   final double contentWidth;
+
+  /// Rendered staff baselines keyed by MusicXML staff number.
+  ///
+  /// The legacy layout only knows about treble/bass positions. Verovio's
+  /// layout can provide measured positions for every staff, so input can use
+  /// the same geometry as the rendered SVG instead of guessing from a box.
+  final Map<int, double> staffTops;
+  final Map<int, double> staffLineGaps;
+  final List<NativeOnsetAnchor> onsetAnchors;
+
+  double staffTopFor(int staff) {
+    return staffTops[staff] ?? (staff >= 2 ? bassStaffTop : trebleStaffTop);
+  }
+
+  double lineGapFor(int staff) {
+    return staffLineGaps[staff] ?? lineGap;
+  }
+
+  double xForOnset(int onset, int capacity) {
+    if (onsetAnchors.isEmpty || capacity <= 0) {
+      return contentLeft +
+          10 +
+          (onset / math.max(1, capacity)) * (contentWidth - 20);
+    }
+    final anchors = onsetAnchors;
+    if (anchors.length == 1) {
+      final anchor = anchors.single;
+      return anchor.x +
+          ((onset - anchor.onset) / math.max(1, capacity)) *
+              math.max(12, contentWidth - 20);
+    }
+    if (onset <= anchors.first.onset) return anchors.first.x;
+    for (var index = 1; index < anchors.length; index++) {
+      final previous = anchors[index - 1];
+      final next = anchors[index];
+      if (onset <= next.onset) {
+        final span = math.max(1, next.onset - previous.onset);
+        final ratio = (onset - previous.onset) / span;
+        return previous.x + (next.x - previous.x) * ratio;
+      }
+    }
+    final previous = anchors[anchors.length - 2];
+    final last = anchors.last;
+    final span = math.max(1, last.onset - previous.onset);
+    return last.x + (onset - last.onset) / span * (last.x - previous.x);
+  }
+
+  int onsetForX(double x, int capacity) {
+    if (onsetAnchors.isEmpty || capacity <= 0) {
+      final ratio = ((x - contentLeft) / math.max(1, contentWidth)).clamp(
+        0.0,
+        0.999,
+      );
+      return (ratio * capacity).round();
+    }
+    final anchors = onsetAnchors;
+    if (anchors.length == 1) {
+      final anchor = anchors.single;
+      final width = math.max(12, contentWidth - 20);
+      return (anchor.onset + (x - anchor.x) / width * capacity).round().clamp(
+        0,
+        capacity,
+      );
+    }
+    if (x <= anchors.first.x) return anchors.first.onset;
+    for (var index = 1; index < anchors.length; index++) {
+      final previous = anchors[index - 1];
+      final next = anchors[index];
+      if (x <= next.x) {
+        final span = math.max(1.0, next.x - previous.x);
+        final ratio = (x - previous.x) / span;
+        return (previous.onset + (next.onset - previous.onset) * ratio)
+            .round()
+            .clamp(0, capacity);
+      }
+    }
+    final previous = anchors[anchors.length - 2];
+    final last = anchors.last;
+    final span = math.max(1.0, last.x - previous.x);
+    return (last.onset + (x - last.x) / span * (last.onset - previous.onset))
+        .round()
+        .clamp(0, capacity);
+  }
+}
+
+class NativeOnsetAnchor {
+  const NativeOnsetAnchor({required this.onset, required this.x});
+
+  final int onset;
+  final double x;
 }
 
 class NativeNotePlacement {
@@ -63,6 +156,7 @@ class NativeStaffHit {
     required this.onsetTicks,
     required this.midi,
     required this.ghostCenter,
+    required this.lineGap,
   });
 
   final int partIndex;
@@ -71,6 +165,7 @@ class NativeStaffHit {
   final int onsetTicks;
   final int midi;
   final Offset ghostCenter;
+  final double lineGap;
 }
 
 class NativeScoreLayout {
@@ -120,38 +215,31 @@ class NativeScoreLayout {
     final part = score.parts[partIndex];
     if (measureBox.measureIndex >= part.measures.length) return null;
     final measure = part.measures[measureBox.measureIndex];
-    final staff = _staffForY(point.dy, measureBox);
-    final staffTop = staff >= 2
-        ? measureBox.bassStaffTop
-        : measureBox.trebleStaffTop;
+    final staff = measure.attributes.staves <= 1
+        ? 1
+        : _staffForY(point.dy, measureBox);
+    final staffTop = measureBox.staffTopFor(staff);
+    final lineGap = measureBox.lineGapFor(staff);
     final midi = midiAtStaffY(
       point.dy,
       staffTop: staffTop,
-      lineGap: measureBox.lineGap,
+      lineGap: lineGap,
       bass: staff >= 2,
     );
     final capacity = measureCapacity(measure.attributes);
     final duration = durationForType(measure.attributes, durationType);
-    final ratio = measureBox.contentWidth <= 0
-        ? 0.0
-        : ((point.dx - measureBox.contentLeft) / measureBox.contentWidth).clamp(
-            0.0,
-            0.999,
-          );
-    final rawOnset = (ratio * capacity).round();
+    final rawOnset = measureBox.onsetForX(point.dx, capacity);
     final onset = clampOnsetForDuration(
       attributes: measure.attributes,
       onset: (rawOnset / math.max(1, duration)).round() * duration,
       duration: duration,
     );
     final ghost = Offset(
-      measureBox.contentLeft +
-          10 +
-          (onset / math.max(1, capacity)) * (measureBox.contentWidth - 20),
+      measureBox.xForOnset(onset, capacity),
       staffYForMidi(
         midi,
         staffTop: staffTop,
-        lineGap: measureBox.lineGap,
+        lineGap: lineGap,
         bass: staff >= 2,
       ),
     );
@@ -163,6 +251,7 @@ class NativeScoreLayout {
           .round(),
       midi: midi,
       ghostCenter: ghost,
+      lineGap: lineGap,
     );
   }
 }
@@ -215,7 +304,11 @@ NativeScoreLayout layoutNativeScore(
 
       final musicMeasure = part!.measures[measureIndex];
       final capacity = math.max(1, measureCapacity(musicMeasure.attributes));
-      for (var eventIndex = 0; eventIndex < musicMeasure.events.length; eventIndex++) {
+      for (
+        var eventIndex = 0;
+        eventIndex < musicMeasure.events.length;
+        eventIndex++
+      ) {
         final event = musicMeasure.events[eventIndex];
         if (event is! MusicNote) continue;
         final staff = event.staff.clamp(1, 2);
@@ -248,10 +341,7 @@ NativeScoreLayout layoutNativeScore(
     }
   }
 
-  final height = math.max(
-    systemCount * systemHeight + nativeTopMargin,
-    200.0,
-  );
+  final height = math.max(systemCount * systemHeight + nativeTopMargin, 200.0);
   return NativeScoreLayout(
     contentSize: Size(pageWidth, height),
     measures: measures,
@@ -261,7 +351,14 @@ NativeScoreLayout layoutNativeScore(
 }
 
 int _staffForY(double y, NativeMeasureBox box) {
-  final mid = (box.trebleStaffTop + 4 * box.lineGap + box.bassStaffTop) / 2;
+  final trebleTop = box.staffTopFor(1);
+  final bassTop = box.staffTopFor(2);
+  // Verovio's fitted anchors represent the lower line of the upper staff and
+  // the upper line of the lower staff (the anchor differs by clef).  The
+  // midpoint between those two anchors is the actual gap between staves.
+  // Adding four treble spaces here classified part of the bass staff as
+  // treble after zooming and made low-clef input feel vertically displaced.
+  final mid = (trebleTop + bassTop) / 2;
   return y >= mid ? 2 : 1;
 }
 
@@ -274,7 +371,7 @@ double staffYForMidi(
   final pitch = pitchFromMidi(midi);
   final steps = (pitch.octave - 4) * 7 + pitch.step.index;
   final reference = bass ? -2 : 2;
-  return staffTop - ((reference - steps) * (lineGap / 2));
+  return staffTop - ((steps - reference) * (lineGap / 2));
 }
 
 int midiAtStaffY(
@@ -285,7 +382,7 @@ int midiAtStaffY(
 }) {
   final half = lineGap / 2;
   final reference = bass ? -2 : 2;
-  final steps = (reference - ((staffTop - y) / half)).round();
+  final steps = (reference + ((staffTop - y) / half)).round();
   final octave = 4 + (steps / 7).floor();
   final rem = ((steps % 7) + 7) % 7;
   final step = PitchStep.values[rem];

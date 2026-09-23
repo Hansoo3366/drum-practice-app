@@ -80,9 +80,18 @@ class DigitalScoreEditorService {
   Future<ScoreVersionCatalog> loadVersionCatalog(String songId) async {
     final raw = await _storage.loadScoreVersionManifest(songId);
     if (raw == null || raw.trim().isEmpty) return ScoreVersionCatalog.empty;
-    final catalog = ScoreVersionCatalog.fromJson(
-      Map<String, dynamic>.from(jsonDecode(raw) as Map),
-    );
+    late final ScoreVersionCatalog catalog;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return ScoreVersionCatalog.empty;
+      catalog = ScoreVersionCatalog.fromJson(
+        Map<String, dynamic>.from(decoded),
+      );
+    } on Object {
+      // A cancelled/interrupted version write must not prevent the score from
+      // opening. The original score remains the safe fallback.
+      return ScoreVersionCatalog.empty;
+    }
     // Drop legacy auto-migrated "performance" unless the user renamed it.
     final filtered = catalog.versions
         .where((version) => version.id != scoreVersionLegacyPerformanceId)
@@ -90,8 +99,7 @@ class DigitalScoreEditorService {
     if (filtered.length == catalog.versions.length) return catalog;
     final cleaned = catalog.copyWith(
       versions: filtered,
-      activeId:
-          catalog.activeId == scoreVersionLegacyPerformanceId
+      activeId: catalog.activeId == scoreVersionLegacyPerformanceId
           ? scoreVersionOriginalId
           : catalog.activeId,
     );
@@ -153,13 +161,26 @@ class DigitalScoreEditorService {
         versionId ??
         'v${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
     final bytes = _codec.encode(source, MusicXmlFileFormat.musicXml);
-    await _storage.saveScoreVersionBytes(songId, id, bytes);
-    final next = catalog.copyWith(
-      activeId: id,
-      versions: [...catalog.versions, ScoreVersionRef(id: id, name: name)],
-    );
-    await saveVersionCatalog(songId, next);
-    return next;
+    try {
+      await _storage.saveScoreVersionBytes(songId, id, bytes);
+      final next = catalog.copyWith(
+        activeId: id,
+        versions: [
+          ...catalog.versions,
+          ScoreVersionRef(id: id, name: name),
+        ],
+      );
+      await saveVersionCatalog(songId, next);
+      return next;
+    } on Object {
+      // Do not leave an orphaned score file if the manifest write fails.
+      try {
+        await _storage.deleteScoreVersion(songId, id);
+      } on Object {
+        // Preserve the original failure for the UI; cleanup is best effort.
+      }
+      rethrow;
+    }
   }
 
   Future<PlaybackSequence> loadSequence(String songId) async {

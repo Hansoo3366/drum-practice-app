@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -162,7 +163,10 @@ class SongFileStorage {
   }
 
   Future<void> saveScoreVersionManifest(String songId, String jsonContent) {
-    return _saveSidecar(scoreVersionManifestPathFor(songId), jsonContent);
+    return replaceFile(
+      scoreVersionManifestPathFor(songId),
+      utf8.encode(jsonContent),
+    );
   }
 
   Future<List<int>?> loadScoreVersionBytes(

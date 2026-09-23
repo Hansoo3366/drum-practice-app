@@ -1,4 +1,6 @@
-/// A4 at 96dpi. Engrave at this size, then scale the page to the phone.
+/// A4 at 96dpi for print/PDF page layout only. The live score view uses a
+/// separate continuous, viewport-width layout and must not scale itself from
+/// these constants.
 const double scorePageWidthPx = 794;
 const double scorePageHeightPx = 1123;
 const double scorePageGapPx = 24;

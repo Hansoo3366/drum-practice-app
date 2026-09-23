@@ -14,8 +14,18 @@
 
 ```shell
 flutter pub get
-flutter run
+flutter run --flavor drum -t lib/main.dart
+
+# Piano shell / Lomse editor + Verovio viewer PoC
+flutter run --flavor piano -t lib/piano_main.dart
 ```
+
+Android 제품 셸은 두 flavor로 분리합니다.
+
+- `drum` / `com.hansookim.pageadiddle`: PDF 뷰어, 메트로놈 및 드럼 연습 기능
+- `piano` / `com.hansookim.pianoscore`: PDF 뷰어, MusicXML 라이브러리, Lomse 편집 엔진과 Verovio 뷰어 PoC
+
+피아노 셸에는 탭 템포, 템포 트레이너, 세트리스트, 합주 라우트를 넣지 않습니다.
 
 ## 품질 검사
 

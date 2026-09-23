@@ -14,14 +14,21 @@ class DigitalScoreData {
     required this.song,
     required this.score,
     this.versionCatalog = ScoreVersionCatalog.empty,
+    this.activeVersionScore,
     this.sequence = PlaybackSequence.empty,
     this.arrangement = ArrangementProfile.off,
     this.originalFifths = 0,
   });
 
   final Song song;
+
+  /// The immutable source score. Version editors are layered on top of it.
   final MusicScore score;
   final ScoreVersionCatalog versionCatalog;
+
+  /// The persisted active version, when the catalog points at a version.
+  /// `null` means the active score is the original source score.
+  final MusicScore? activeVersionScore;
   final PlaybackSequence sequence;
   final ArrangementProfile arrangement;
   final int originalFifths;
@@ -51,12 +58,31 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
         songId: songId,
         score: score,
       );
-      final versionCatalog = await editor.loadVersionCatalog(songId);
+      var versionCatalog = await editor.loadVersionCatalog(songId);
+      MusicScore? activeVersionScore;
+      if (versionCatalog.activeId != scoreVersionOriginalId) {
+        try {
+          activeVersionScore = await editor.loadVersionScore(
+            songId: songId,
+            versionId: versionCatalog.activeId,
+          );
+        } on Object {
+          activeVersionScore = null;
+        }
+        if (activeVersionScore == null) {
+          // A stale catalog must not prevent the original score from opening.
+          versionCatalog = versionCatalog.copyWith(
+            activeId: scoreVersionOriginalId,
+          );
+          await editor.saveVersionCatalog(songId, versionCatalog);
+        }
+      }
       await repository.markOpened(songId);
       return DigitalScoreData(
         song: song,
         score: score,
         versionCatalog: versionCatalog,
+        activeVersionScore: activeVersionScore,
         sequence: sequence,
         arrangement: arrangement,
         originalFifths: originalFifths,

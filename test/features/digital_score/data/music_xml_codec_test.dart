@@ -53,6 +53,7 @@ void main() {
 
       expect(xml, contains('<backup>'));
       expect(xml, contains('<duration>8</duration>'));
+      expect(xml, contains('id="p0-m0-e'));
       expect(second.title, first.title);
       expect(second.composer, first.composer);
       expect(second.tempoBpm, first.tempoBpm);

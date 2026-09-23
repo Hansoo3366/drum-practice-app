@@ -6,6 +6,7 @@ import 'package:page_a_diddle/core/database/app_database.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/digital_score_screen.dart';
 import 'package:page_a_diddle/features/library/data/song_repository.dart';
 import 'package:page_a_diddle/features/library/domain/score_type.dart';
+import 'package:page_a_diddle/features/piano/presentation/smoosic_score_editor_screen.dart';
 import 'package:page_a_diddle/features/score_viewer/presentation/score_viewer_screen.dart';
 
 class ScoreEntryScreen extends ConsumerWidget {
@@ -14,6 +15,7 @@ class ScoreEntryScreen extends ConsumerWidget {
     this.setlistId,
     this.startJam = false,
     this.stageMode = false,
+    this.useSmoosic = false,
     super.key,
   });
 
@@ -21,6 +23,7 @@ class ScoreEntryScreen extends ConsumerWidget {
   final String? setlistId;
   final bool startJam;
   final bool stageMode;
+  final bool useSmoosic;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -38,6 +41,9 @@ class ScoreEntryScreen extends ConsumerWidget {
           );
         }
         if (ScoreType.fromKey(value.scoreType) == ScoreType.musicXml) {
+          if (useSmoosic) {
+            return SmoosicScoreEditorScreen(songId: songId);
+          }
           return DigitalScoreScreen(songId: songId);
         }
         return ScoreViewerScreen(

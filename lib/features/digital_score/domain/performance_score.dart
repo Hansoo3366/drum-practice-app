@@ -10,7 +10,11 @@ MusicScore displayedDigitalScore({
   PlaybackSequence sequence = PlaybackSequence.empty,
   ArrangementProfile arrangement = ArrangementProfile.off,
 }) {
-  if (editing) return written;
+  // Section/arrangement editing must always use the written score.  The
+  // performance score is a derived view used only after the user explicitly
+  // turns playback on; this keeps the source notation stable while setting up
+  // Verse/Chorus order and prevents a failed expansion from replacing it.
+  if (editing || !playbackEnabled) return written;
   return composePerformanceScore(
     written,
     sequence: sequence,

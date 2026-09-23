@@ -131,57 +131,78 @@ void main() {
     },
   );
 
-  test('adds and deletes score versions without a default performance copy', () async {
-    const relativePath = 'scores/song.musicxml';
-    final file = await storage.resolve(relativePath);
-    await file.parent.create(recursive: true);
-    await file.writeAsString('original');
-    await service.save(
-      songId: 'song',
-      relativePath: relativePath,
-      score: _score(),
-    );
-    await storage.savePerformanceScore(
-      'song',
-      const MusicXmlCodec().encode(_score(fifths: 1), MusicXmlFileFormat.musicXml),
-    );
+  test(
+    'adds and deletes score versions without a default performance copy',
+    () async {
+      const relativePath = 'scores/song.musicxml';
+      final file = await storage.resolve(relativePath);
+      await file.parent.create(recursive: true);
+      await file.writeAsString('original');
+      await service.save(
+        songId: 'song',
+        relativePath: relativePath,
+        score: _score(),
+      );
+      await storage.savePerformanceScore(
+        'song',
+        const MusicXmlCodec().encode(
+          _score(fifths: 1),
+          MusicXmlFileFormat.musicXml,
+        ),
+      );
 
-    final catalog = await service.loadVersionCatalog('song');
-    expect(catalog.versions, isEmpty);
+      final catalog = await service.loadVersionCatalog('song');
+      expect(catalog.versions, isEmpty);
 
-    final added = await service.addVersion(
-      songId: 'song',
-      source: _score(fifths: 3),
-      catalog: catalog,
-      name: '연습용',
-    );
-    expect(added.versions.single.name, '연습용');
+      final added = await service.addVersion(
+        songId: 'song',
+        source: _score(fifths: 3),
+        catalog: catalog,
+        name: '연습용',
+      );
+      expect(added.versions.single.name, '연습용');
 
-    await service.save(
-      songId: 'song',
-      relativePath: relativePath,
-      score: _score(fifths: 4),
-      versionId: added.activeId,
-    );
-    final loaded = await service.loadVersionScore(
-      songId: 'song',
-      versionId: added.activeId,
-    );
-    expect(loaded?.parts.first.measures.first.attributes.keyFifths, 4);
+      await service.save(
+        songId: 'song',
+        relativePath: relativePath,
+        score: _score(fifths: 4),
+        versionId: added.activeId,
+      );
+      final loaded = await service.loadVersionScore(
+        songId: 'song',
+        versionId: added.activeId,
+      );
+      expect(loaded?.parts.first.measures.first.attributes.keyFifths, 4);
 
-    final deleted = await service.deleteVersion(
-      songId: 'song',
-      versionId: added.activeId,
-      catalog: added,
-    );
-    expect(deleted.versions, isEmpty);
-    expect(deleted.activeId, scoreVersionOriginalId);
-    final original = const MusicXmlCodec().decode(
-      await file.readAsBytes(),
-      fileName: relativePath,
-    );
-    expect(original.parts.first.measures.first.attributes.keyFifths, 0);
-  });
+      final deleted = await service.deleteVersion(
+        songId: 'song',
+        versionId: added.activeId,
+        catalog: added,
+      );
+      expect(deleted.versions, isEmpty);
+      expect(deleted.activeId, scoreVersionOriginalId);
+      final original = const MusicXmlCodec().decode(
+        await file.readAsBytes(),
+        fileName: relativePath,
+      );
+      expect(original.parts.first.measures.first.attributes.keyFifths, 0);
+    },
+  );
+
+  test(
+    'falls back to the original score when a version manifest is malformed',
+    () async {
+      final manifest = await storage.resolve(
+        storage.scoreVersionManifestPathFor('song'),
+      );
+      await manifest.parent.create(recursive: true);
+      await manifest.writeAsString('{not valid json');
+
+      final catalog = await service.loadVersionCatalog('song');
+
+      expect(catalog, ScoreVersionCatalog.empty);
+    },
+  );
 }
 
 MusicScore _score({int fifths = 0}) {
