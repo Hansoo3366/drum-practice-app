@@ -117,4 +117,95 @@ void main() {
     expect(box.xForOnset(0, 16), 10);
     expect(box.xForOnset(16, 16), 110);
   });
+
+  test('fallback treble top line is F5 and bottom line is E4', () {
+    const measure = Rect.fromLTWH(0, 0, 200, 200);
+    final frame = fallbackGrandStaffFrame(measure);
+    final e4 = midiAtStaffY(
+      frame.trebleStaffTop,
+      staffTop: frame.trebleStaffTop,
+      lineGap: frame.lineGap,
+      bass: false,
+    );
+    final f5 = midiAtStaffY(
+      frame.trebleStaffTop - 4 * frame.lineGap,
+      staffTop: frame.trebleStaffTop,
+      lineGap: frame.lineGap,
+      bass: false,
+    );
+
+    expect(e4, 64);
+    expect(f5, 77);
+  });
+
+  test('staff hit boxes pin treble E4 and bass A3', () {
+    const treble = Rect.fromLTWH(0, 10, 100, 40);
+    const bass = Rect.fromLTWH(0, 80, 100, 40);
+    final frame = grandStaffFrameFromStaffRects(const [
+      treble,
+      bass,
+    ], const Rect.fromLTWH(0, 0, 100, 140));
+
+    expect(frame.lineGap, 10);
+    expect(frame.trebleStaffTop, 50);
+    expect(frame.bassStaffTop, 80);
+    expect(
+      midiAtStaffY(
+        frame.bassStaffTop,
+        staffTop: frame.bassStaffTop,
+        lineGap: frame.lineGap,
+        bass: true,
+      ),
+      57,
+    );
+  });
+
+  test('onset 0 keeps the first note x instead of averaging with the clef', () {
+    final anchors = buildOnsetAnchors(
+      contentLeft: 10,
+      contentWidth: 100,
+      capacity: 4,
+      noteXs: {
+        0: [40],
+        2: [70],
+      },
+    );
+
+    expect(anchors.firstWhere((anchor) => anchor.onset == 0).x, 40);
+    expect(anchors.firstWhere((anchor) => anchor.onset == 2).x, 70);
+  });
+
+  test('a tap in the first quarter of the bar stays on beat one', () {
+    final score = blankPianoScore(title: 'Beat');
+    final layout = NativeScoreLayout(
+      contentSize: const Size(200, 120),
+      measures: const [
+        NativeMeasureBox(
+          measureIndex: 0,
+          rect: Rect.fromLTWH(0, 0, 200, 120),
+          trebleStaffTop: 40,
+          bassStaffTop: 90,
+          lineGap: 8,
+          contentLeft: 0,
+          contentWidth: 200,
+          onsetAnchors: [
+            NativeOnsetAnchor(onset: 0, x: 0),
+            NativeOnsetAnchor(onset: 4, x: 200),
+          ],
+        ),
+      ],
+      notes: const [],
+      systemStarts: const [0],
+    );
+
+    final hit = layout.hitStaff(
+      const Offset(40, 40),
+      durationType: 'quarter',
+      score: score,
+    );
+
+    expect(hit, isNotNull);
+    expect(hit!.onsetTicks, 0);
+    expect(hit.staff, 1);
+  });
 }

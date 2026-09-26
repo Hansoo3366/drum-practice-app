@@ -46,8 +46,8 @@ lib/
 
 - 저장소를 복제하지 않고 `drum`과 `piano` Android product flavor를 사용한다.
 - 드럼 진입점은 `lib/main.dart`, 앱 이름·Application ID는 `Page-a-Diddle`·`com.hansookim.pageadiddle`이다. 기존 PDF Viewer·메트로놈·드럼 연습 도구와 Setlist/Jam 화면은 이 셸에 남긴다.
-- 피아노 진입점은 `lib/piano_main.dart`, 앱 이름·Application ID는 `Piano Score`·`com.hansookim.pianoscore`이다. `PianoAppShell`은 Library와 MusicXML 편집만 노출하고 Tap Tempo·Tempo Trainer·Setlist·Jam은 라우팅하지 않는다.
-- 공통 Library의 PDF는 기존 `pdfrx` Viewer로 열고, MusicXML은 피아노 flavor에서 Lomse C++ FFI 편집 세션으로 연다. Flutter는 기존 UI·라우팅·로컬 파일·버전/sidecar 저장을 맡고, Lomse는 노테이션 편집 명령과 Undo/Redo를 맡는다.
+- 피아노 진입점은 `lib/piano_main.dart`, 앱 이름·Application ID는 `Piano Score`·`com.hansookim.pianoscore`이다. `PianoAppShell`은 Library를 노출하고 Tap Tempo·Tempo Trainer·Setlist·Jam은 라우팅하지 않는다. 음표 입력 탭은 `noteInputEnabled`가 false인 동안 숨긴다.
+- 공통 Library의 PDF는 기존 `pdfrx` Viewer로 연다. 피아노 MusicXML은 `DigitalScoreScreen`에서 Verovio로 읽는다. 음표 입력 코드는 Dart `MusicScore` Replace로 남아 있으나 D-164로 UI를 숨겼다. PDF/JPG 변환은 Google VM의 Audiveris HTTP API(`POST /convert`, 포트 8080)로 올리고, 피아노 Library `전자악보로 변환`이 MXL 곡을 만든다.
 - 드럼 셸은 현재 기능을 유지하고, Lomse FFI·3단 보표·MusicXML 왕복·피아노 편집 변경은 피아노 셸에만 반영한다. PDF→MusicXML OMR과 AI 편곡은 별도 서버/worker Future 경계다.
 
 ### 로컬 저장
@@ -61,11 +61,12 @@ lib/
 
 - PDF: `pdfrx`
 - Piano MusicXML editor: Lomse C++ library through a narrow Flutter FFI bridge. Flutter owns the editor UI; Lomse owns the runtime score model, edition commands, selection/cursor, and undo/redo. The bridge exposes opaque session handles and JSON-safe commands/results only; Flutter never stores or references Lomse `Imo*` objects directly.
-- Piano FFI adapter: `FfiLomseEditorSession` lazily opens `libpage_lomse_bridge` only in the piano editor path. If the optional native artifact is not packaged, it returns no session and the existing Smoosic fallback remains active. The adapter does not change the drum flavor.
+- Piano FFI adapter: `FfiLomseEditorSession` lazily opens `libpage_lomse_bridge` only in the piano editor path. If the native artifact is not packaged, it returns no session and the piano editor shows an unavailable state; Smoosic is not a runtime fallback. The adapter does not change the drum flavor.
 - Native Digital Score 조판: `verovio_flutter` FFI가 포함한 Verovio 6.2.1. 내부 MusicScore를 MusicXML로 직렬화하고 Verovio SVG·HitMap을 Flutter 화면에 전달한다. Native page는 1/100mm 기준 A4 `2100×2970`으로 제한하며, Flutter 화면에서는 페이지 사이 간격·레터박스 없이 화면 폭으로 균일 축소해 연속 문서로 붙인다. PDF의 여백·페이지 나눔은 `PdfPageFormat.a4` 출력 경로에서 별도로 관리한다.
 - Score session: MusicXML snapshot은 저장·버전·복구의 기준이고, Lomse session은 편집 런타임이다. Verovio `xml:id`와 Lomse `ImoId`는 세션 전용 엔진 핸들이며, 앱은 `AppElementId`와 `EventLocator`를 별도로 관리한다. Section/Arrangement는 MusicXML에 섞지 않고 프로젝트 manifest/sidecar에 보관한다.
-- Edit/render bridge: 사용자가 Verovio SVG/HitMap에서 선택한 요소를 `AppElementId`로 해석하고, locator로 Lomse 객체를 찾아 command를 실행한다. command 후 MusicXML을 export하고 Verovio를 새 revision으로 reload한다. 연속 입력은 command batch/debounce로 묶으며 오래된 render 결과는 폐기한다.
-- Native bridge PoC: Lomse import → edit command → MusicXML export → Verovio reload/render의 왕복 보존과 Android latency를 통과하기 전에는 기존 편집기를 제거하지 않는다. Lomse의 내부 API 및 LDP/LMD command 입력 의존성은 native bridge 내부에 격리한다.
+- Edit/render bridge: 피아노 음표 입력은 Verovio 좌표의 staff hit를 박·음높이로 양자화한 뒤 Dart `MusicScore`에 기록한다. 저장 때 MusicXML snapshot을 쓰고 Verovio가 그 snapshot을 다시 조판한다. 마디는 음표나 쉼표로 채워 두고, 화음·반음·옥타브·점음표·삭제는 같은 모델의 undo 스택에 올린다.
+- Native bridge PoC: Lomse import → edit command → MusicXML export → Verovio reload/render의 왕복 보존과 Android latency는 현재 Lomse 커스텀 편집기의 production gate로 계속 검증한다. Lomse의 내부 API 및 LDP/LMD command 입력 의존성은 native bridge 내부에 격리한다.
+- 현재 가능성 판정: Verovio viewer와 Lomse FFI 커스텀 편집기의 수직 슬라이스는 `verovio_flutter`·`libpage_lomse_bridge`가 piano APK에 포함되고, 대상 analyze·관련 테스트·drum/piano debug build·x86_64 Android emulator FFI smoke가 통과해 구현 가능성을 확인했다. staff tap target mapping까지 구현했으며, mapping edge case·명령 범위·왕복 구조 비교·대형 악보 latency는 남은 production gate다.
 - Native Digital Score 재생: `flutter_notemus`의 MusicXML 파싱·MIDI mapping과 네이티브 시퀀서 adapter를 조판 엔진과 분리한다.
 - 음악/메트로놈/Count-In: `flutter_soloud`의 오디오 clock
 - 외부 저장소: MVP 1은 OS File Picker, MVP 4부터 provider별 adapter

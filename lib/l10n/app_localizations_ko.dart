@@ -438,6 +438,46 @@ class AppLocalizationsKo extends AppLocalizations {
   String get importMusicXml => 'MusicXML 가져오기';
 
   @override
+  String get convertToDigitalScore => '전자악보로 변환';
+
+  @override
+  String get omrProfileStandard => '일반 악보';
+
+  @override
+  String get omrProfileChordsLyrics => '코드·가사 악보';
+
+  @override
+  String get convertingScore => '변환 중';
+
+  @override
+  String convertingScorePercent(int percent) {
+    return '변환 중 $percent%';
+  }
+
+  @override
+  String get convertFailed => '변환하지 못했습니다. VM을 켠 뒤 다시 시도하세요.';
+
+  @override
+  String get omrReview => '변환 검토';
+
+  @override
+  String omrHealthScore(int score) {
+    return '구조 점수 $score';
+  }
+
+  @override
+  String get omrReviewEmpty => '구조 문제는 없습니다.';
+
+  @override
+  String get omrAiRun => 'AI 검수';
+
+  @override
+  String get omrAiNeedKey => '의심 마디를 검수하려면 XAI_API_KEY를 넣으세요.';
+
+  @override
+  String get omrAiSaveKey => '키 저장';
+
+  @override
   String get importing => '가져오는 중…';
 
   @override
@@ -1548,6 +1588,27 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get addChordSymbol => '코드 추가';
+
+  @override
+  String get addChordTone => '화음';
+
+  @override
+  String get dottedDuration => '점음표';
+
+  @override
+  String get pitchUp => '반음 올리기';
+
+  @override
+  String get pitchDown => '반음 내리기';
+
+  @override
+  String get octaveUp => '옥타브 올리기';
+
+  @override
+  String get octaveDown => '옥타브 내리기';
+
+  @override
+  String get newPianoScore => '새 피아노 악보';
 
   @override
   String get addMeasure => '마디 추가';

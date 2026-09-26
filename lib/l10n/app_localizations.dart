@@ -908,6 +908,78 @@ abstract class AppLocalizations {
   /// **'Import MusicXML'**
   String get importMusicXml;
 
+  /// convertToDigitalScore
+  ///
+  /// In en, this message translates to:
+  /// **'Convert to digital score'**
+  String get convertToDigitalScore;
+
+  /// OMR profile for printed scores without chord symbols
+  ///
+  /// In en, this message translates to:
+  /// **'Standard score'**
+  String get omrProfileStandard;
+
+  /// OMR profile that recognizes chord symbols and lyrics
+  ///
+  /// In en, this message translates to:
+  /// **'Score with chords and lyrics'**
+  String get omrProfileChordsLyrics;
+
+  /// convertingScore
+  ///
+  /// In en, this message translates to:
+  /// **'Converting…'**
+  String get convertingScore;
+
+  /// convertingScorePercent
+  ///
+  /// In en, this message translates to:
+  /// **'Converting {percent}%'**
+  String convertingScorePercent(int percent);
+
+  /// convertFailed
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t convert. Start the VM and try again.'**
+  String get convertFailed;
+
+  /// omrReview
+  ///
+  /// In en, this message translates to:
+  /// **'Conversion review'**
+  String get omrReview;
+
+  /// omrHealthScore
+  ///
+  /// In en, this message translates to:
+  /// **'Structure score {score}'**
+  String omrHealthScore(int score);
+
+  /// omrReviewEmpty
+  ///
+  /// In en, this message translates to:
+  /// **'No structural problems found.'**
+  String get omrReviewEmpty;
+
+  /// omrAiRun
+  ///
+  /// In en, this message translates to:
+  /// **'Run AI review'**
+  String get omrAiRun;
+
+  /// omrAiNeedKey
+  ///
+  /// In en, this message translates to:
+  /// **'Paste an XAI_API_KEY to review suspicious measures.'**
+  String get omrAiNeedKey;
+
+  /// omrAiSaveKey
+  ///
+  /// In en, this message translates to:
+  /// **'Save key'**
+  String get omrAiSaveKey;
+
   /// importing
   ///
   /// In en, this message translates to:
@@ -992,7 +1064,7 @@ abstract class AppLocalizations {
   /// **'Create'**
   String get create;
 
-  /// createScore
+  /// Dialog title when saving a new piano score
   ///
   /// In en, this message translates to:
   /// **'Create score'**
@@ -3001,6 +3073,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Add chord'**
   String get addChordSymbol;
+
+  /// Add another pitch at the current beat
+  ///
+  /// In en, this message translates to:
+  /// **'Chord tone'**
+  String get addChordTone;
+
+  /// Lengthen the selected duration with an augmentation dot
+  ///
+  /// In en, this message translates to:
+  /// **'Dotted'**
+  String get dottedDuration;
+
+  /// Raise the selected note by a semitone
+  ///
+  /// In en, this message translates to:
+  /// **'Semitone up'**
+  String get pitchUp;
+
+  /// Lower the selected note by a semitone
+  ///
+  /// In en, this message translates to:
+  /// **'Semitone down'**
+  String get pitchDown;
+
+  /// Raise the selected note by an octave
+  ///
+  /// In en, this message translates to:
+  /// **'Octave up'**
+  String get octaveUp;
+
+  /// Lower the selected note by an octave
+  ///
+  /// In en, this message translates to:
+  /// **'Octave down'**
+  String get octaveDown;
+
+  /// Default title for a newly created piano score
+  ///
+  /// In en, this message translates to:
+  /// **'New piano score'**
+  String get newPianoScore;
 
   /// Short visible label for inserting a measure
   ///

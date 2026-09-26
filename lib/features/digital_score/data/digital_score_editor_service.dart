@@ -183,6 +183,50 @@ class DigitalScoreEditorService {
     }
   }
 
+  /// Preserve directions, harmony, lyrics and other XML outside edited notes.
+  Future<ScoreVersionCatalog> addXmlVersion({
+    required String songId,
+    required String musicXml,
+    required ScoreVersionCatalog catalog,
+    required String name,
+  }) async {
+    _codec.decodeXml(musicXml);
+    final current = await loadVersionCatalog(songId);
+    if (jsonEncode(current.toJson()) != jsonEncode(catalog.toJson())) {
+      throw const FormatException('버전이 변경되었습니다. 악보를 다시 여세요.');
+    }
+    final id = 'ai${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
+    try {
+      await _storage.saveScoreVersionBytes(songId, id, utf8.encode(musicXml));
+      final next = catalog.copyWith(
+        activeId: id,
+        versions: [
+          ...catalog.versions,
+          ScoreVersionRef(id: id, name: name),
+        ],
+      );
+      await saveVersionCatalog(songId, next);
+      return next;
+    } on Object {
+      try {
+        await _storage.deleteScoreVersion(songId, id);
+      } on Object {
+        /* Best effort. */
+      }
+      rethrow;
+    }
+  }
+
+  Future<String?> loadVersionXml(String songId, String versionId) async {
+    final bytes = await _storage.loadScoreVersionBytes(songId, versionId);
+    return bytes == null
+        ? null
+        : _codec.xmlString(
+            Uint8List.fromList(bytes),
+            fileName: '$versionId.musicxml',
+          );
+  }
+
   Future<PlaybackSequence> loadSequence(String songId) async {
     final raw = await _storage.loadPlaybackSequence(songId);
     if (raw == null || raw.trim().isEmpty) return PlaybackSequence.empty;

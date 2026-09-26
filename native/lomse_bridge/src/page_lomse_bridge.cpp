@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <cmath>
 #include <memory>
 #include <optional>
 #include <string>
@@ -50,11 +51,6 @@ SpInteractor get_interactor(Session* session) {
     return {};
   }
   return session->presenter->get_interactor_shared_ptr(0);
-}
-
-bool has_json_string(std::string_view json, std::string_view key) {
-  return json.find(std::string("\"") + std::string(key) + "\"") !=
-      std::string_view::npos;
 }
 
 std::optional<std::string> json_string_field(
@@ -126,6 +122,63 @@ std::optional<std::string> json_string_field(
     }
   }
   return std::nullopt;
+}
+
+std::optional<double> json_number_field(
+    std::string_view json,
+    std::string_view key) {
+  const std::string quoted_key = std::string("\"") + std::string(key) +
+      std::string("\"");
+  // A target contains a semantic locator with a staff field and a native
+  // cursor projection with another staff field. The last occurrence is the
+  // projection emitted by the Dart registry.
+  const std::size_t key_position = json.rfind(quoted_key);
+  if (key_position == std::string_view::npos) {
+    return std::nullopt;
+  }
+
+  std::size_t cursor = key_position + quoted_key.size();
+  while (cursor < json.size() &&
+         (json[cursor] == ' ' || json[cursor] == '\t' ||
+          json[cursor] == '\r' || json[cursor] == '\n')) {
+    ++cursor;
+  }
+  if (cursor >= json.size() || json[cursor] != ':') {
+    return std::nullopt;
+  }
+  ++cursor;
+  while (cursor < json.size() &&
+         (json[cursor] == ' ' || json[cursor] == '\t' ||
+          json[cursor] == '\r' || json[cursor] == '\n')) {
+    ++cursor;
+  }
+
+  const std::size_t value_start = cursor;
+  while (cursor < json.size()) {
+    const char current = json[cursor];
+    if ((current >= '0' && current <= '9') || current == '-' ||
+        current == '+' || current == '.' || current == 'e' ||
+        current == 'E') {
+      ++cursor;
+      continue;
+    }
+    break;
+  }
+  if (value_start == cursor) {
+    return std::nullopt;
+  }
+
+  try {
+    const std::string raw(json.substr(value_start, cursor - value_start));
+    std::size_t parsed = 0;
+    const double value = std::stod(raw, &parsed);
+    if (parsed != raw.size() || !std::isfinite(value)) {
+      return std::nullopt;
+    }
+    return value;
+  } catch (...) {
+    return std::nullopt;
+  }
 }
 
 page_lomse_status_t require_loaded(Session* session, const char* operation) {
@@ -278,23 +331,45 @@ page_lomse_status_t page_lomse_session_execute_json(
     return PAGE_LOMSE_STATUS_INVALID_ARGUMENT;
   }
 
-  // This first bridge slice intentionally supports only an LDP insertion at
-  // Lomse's current cursor. AppElementId/EventLocator selection is added in
-  // the next slice; it must not be faked with Lomse ImoId values.
-  if (*action != "insert_ldp") {
+  const bool is_insert = *action == "insert_ldp";
+  const bool is_delete = *action == "delete_staff_obj";
+  if (!is_insert && !is_delete) {
     set_error(session, "Unsupported Lomse edit action: " + *action);
     return PAGE_LOMSE_STATUS_UNSUPPORTED_COMMAND;
   }
-  const auto source = json_string_field(json, "source");
-  if (!source || source->empty()) {
+  const bool has_target = json.find("\"target\"") != std::string_view::npos;
+  if (is_delete && !has_target) {
+    set_error(session, "delete_staff_obj requires a target.");
+    return PAGE_LOMSE_STATUS_INVALID_ARGUMENT;
+  }
+  const auto source = is_insert ? json_string_field(json, "source")
+                                : std::optional<std::string>{};
+  if (is_insert && (!source || source->empty())) {
     set_error(session, "insert_ldp requires a non-empty LDP source value.");
     return PAGE_LOMSE_STATUS_INVALID_ARGUMENT;
   }
-  if (has_json_string(json, "target")) {
-    set_error(
-        session,
-        "insert_ldp target mapping is not implemented in this bridge slice.");
-    return PAGE_LOMSE_STATUS_UNSUPPORTED_COMMAND;
+  std::optional<double> instrument;
+  std::optional<double> staff;
+  std::optional<double> time;
+  if (has_target) {
+    // The app target remains semantic (AppElementId/EventLocator). The
+    // registry additionally sends a validated score position so this bridge
+    // never has to expose or persist a Lomse ImoId.
+    if (!json_string_field(json, "id") ||
+        !json_string_field(json, "partId") ||
+        !json_string_field(json, "measureUid")) {
+      set_error(session, "insert_ldp target identity is incomplete.");
+      return PAGE_LOMSE_STATUS_INVALID_ARGUMENT;
+    }
+    instrument = json_number_field(json, "instrument");
+    staff = json_number_field(json, "staff");
+    time = json_number_field(json, "time");
+    if (!instrument || !staff || !time || *instrument < 0.0 ||
+        *staff < 0.0 || *time < 0.0 || std::floor(*instrument) != *instrument ||
+        std::floor(*staff) != *staff) {
+      set_error(session, "insert_ldp target cursor coordinates are invalid.");
+      return PAGE_LOMSE_STATUS_INVALID_ARGUMENT;
+    }
   }
 
   try {
@@ -313,10 +388,21 @@ page_lomse_status_t page_lomse_session_execute_json(
     }
     cursor->to_start();
     cursor->enter_element();
-    interactor->exec_command(new CmdAddNoteRest(
-        *source,
-        k_edit_mode_replace,
-        "Piano insert"));
+    if (has_target) {
+      interactor->exec_command(new CmdCursor(
+          static_cast<TimeUnits>(*time),
+          static_cast<int>(*instrument),
+          static_cast<int>(*staff),
+          "Piano target"));
+    }
+    if (is_insert) {
+      interactor->exec_command(new CmdAddNoteRest(
+          *source,
+          k_edit_mode_replace,
+          "Piano insert"));
+    } else {
+      interactor->exec_command(new CmdDeleteStaffObj("Piano delete"));
+    }
     if (!interactor->should_enable_edit_undo()) {
       set_error(session, "Lomse rejected the LDP insertion command.");
       return PAGE_LOMSE_STATUS_EDIT_ERROR;

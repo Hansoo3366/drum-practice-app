@@ -56,8 +56,6 @@ dependencies:
   wakelock_plus: ^1.4.0
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.4.0
-  webview_flutter: ^4.10.0
-  webview_flutter_android: ^4.12.0
   url_launcher: ^6.3.2
   package_info_plus: ^9.0.1
   flutter_svg: ^2.3.0
@@ -124,13 +122,6 @@ flutter:
     - assets/sounds/
     - assets/brands/
     - assets/icons/
-    - assets/smoosic/
-    - assets/smoosic/release/
-    - assets/smoosic/release/html/
-    - assets/smoosic/release/styles/
-    - assets/smoosic/release/styles/font_metrics/
-    - assets/smoosic/release/styles/fonts/
-    - assets/smoosic/release/styles/images/
 
   fonts:
     - family: SUIT

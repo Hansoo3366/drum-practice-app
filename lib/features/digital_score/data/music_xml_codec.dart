@@ -30,6 +30,14 @@ class MusicXmlCodec {
     return decodeXml(utf8.decode(xmlBytes, allowMalformed: false));
   }
 
+  String xmlString(Uint8List bytes, {String? fileName}) {
+    final compressed =
+        _looksLikeZip(bytes) ||
+        (fileName?.toLowerCase().endsWith('.mxl') ?? false);
+    final xmlBytes = compressed ? _readMxl(bytes) : bytes;
+    return utf8.decode(xmlBytes, allowMalformed: false);
+  }
+
   MusicScore decodeXml(String source) {
     final document = _parseXml(source, label: 'MusicXML');
     final root = _scorePartwiseOf(document.rootElement);
@@ -260,6 +268,29 @@ class MusicXmlCodec {
             child,
             'tie',
           ).map((element) => element.getAttribute('type')).toSet();
+          final notations = _firstChild(child, 'notations');
+          final tied = notations == null
+              ? const <String>{}
+              : _children(
+                  notations,
+                  'tied',
+                ).map((element) => element.getAttribute('type')).toSet();
+          final slurs = notations == null
+              ? const <String>{}
+              : _children(
+                  notations,
+                  'slur',
+                ).map((element) => element.getAttribute('type')).toSet();
+          final beams = _children(child, 'beam')
+              .map(
+                (element) => MusicBeam(
+                  number:
+                      int.tryParse(element.getAttribute('number') ?? '') ?? 1,
+                  value: element.innerText.trim(),
+                ),
+              )
+              .where((beam) => beam.value.isNotEmpty)
+              .toList(growable: false);
           events.add(
             MusicNote(
               onset: onset,
@@ -271,8 +302,11 @@ class MusicXmlCodec {
               dots: _children(child, 'dot').length,
               isGrace: isGrace,
               isChord: isChord,
-              tieStart: ties.contains('start'),
-              tieStop: ties.contains('stop'),
+              tieStart: ties.contains('start') || tied.contains('start'),
+              tieStop: ties.contains('stop') || tied.contains('stop'),
+              slurStart: slurs.contains('start'),
+              slurStop: slurs.contains('stop'),
+              beams: beams,
             ),
           );
           previousNoteOnset = onset;
@@ -768,6 +802,38 @@ class MusicXmlCodec {
           builder.element('dot');
         }
         builder.element('staff', nest: note.staff.toString());
+        for (final beam in note.beams) {
+          builder.element(
+            'beam',
+            attributes: {'number': '${beam.number}'},
+            nest: beam.value,
+          );
+        }
+        if (note.tieStart || note.tieStop || note.slurStart || note.slurStop) {
+          builder.element(
+            'notations',
+            nest: () {
+              if (note.tieStop) {
+                builder.element('tied', attributes: {'type': 'stop'});
+              }
+              if (note.tieStart) {
+                builder.element('tied', attributes: {'type': 'start'});
+              }
+              if (note.slurStop) {
+                builder.element(
+                  'slur',
+                  attributes: {'type': 'stop', 'number': '1'},
+                );
+              }
+              if (note.slurStart) {
+                builder.element(
+                  'slur',
+                  attributes: {'type': 'start', 'number': '1'},
+                );
+              }
+            },
+          );
+        }
       },
     );
   }

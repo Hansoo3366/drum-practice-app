@@ -1,6 +1,430 @@
 # 작업 로그
 
+## 2026-09-26T23:08:31+09:00 — 원본 PDF 대조 기반 AI 승인 보정
+
+- 작업자: Codex
+- 목표: 사용자가 지정한 원본 PDF 마디와 후보 MusicXML을 비교하고 승인한 수정만 별도 버전에 반영한다.
+- 관련 로드맵: F-07e/f 구현 완료, 실제 검증은 F-07d/g. 전체 체크리스트 82/109(75%), Future 5/23(22%); 보류 2개도 기존 집계 방식대로 전체에 포함한다.
+- 변경 파일: `omr_ai_patch.dart`, `omr_page_crop.dart`, `omr_ai_reviewer.dart`, `digital_score_editor_service.dart`, `digital_score_data.dart`, `digital_score_screen.dart`, `omr_correction_screen.dart`, 신규 patch/correction/widget 테스트 3파일, 상태 문서 3종.
+- 완료 내용:
+  - 변환 검토에서 원본 대조 화면을 열고 활성 버전의 파트·마디와 PDF 페이지·드래그 영역을 직접 지정한다. MusicXML 페이지 구분이 없어도 수동 지정은 가능하다. 확인한 crop 이미지와 XML 정보를 기존 xAI client로 보내며 전송·API 요금을 안내한다.
+  - 정확한 part/measure/note ID와 XML snapshot·현재 값에 묶인 제안만 적용한다. 음높이와 단성부의 단순 음가(type/duration/dot 동시 변경)를 지원하며 다성부/화음/연음/붙임줄 음가·쉼표 전환·기타 유형은 차단한다. confidence는 정답률이나 자동 승인 기준으로 사용하지 않는다.
+  - 원본 crop과 Verovio 수정 전후 마디 미리보기, 기본 미선택 체크박스, 버전 이름, 승인 저장을 연결했다. inherited attributes를 유지한 preview-only XML은 저장하지 않는다.
+  - 원본 PDF/MusicXML은 덮어쓰지 않고 raw XML 별도 버전을 저장·활성화한다. 코드·가사·지시와 기존 ID를 보존하며 버전 뷰어도 raw XML을 사용한다. undo는 수정 파일 삭제 없이 이전 버전을 활성화하며, 화면 종료 후에는 기존 버전 선택기로 복귀할 수 있다.
+  - 편집 중·미저장 변경이 있으면 AI 보정을 시작하지 않는다. 매니페스트가 달라지면 저장을 거부하고 매니페스트 저장 실패 시 새 파일만 정리한다. 구조 점수·품질 보고는 원본 변환본 기준으로 유지했다.
+- 검증:
+  - `flutter test --no-pub`: patch/correction/page_crop/review/editor_service/omr_correction_screen/music_xml_codec/score_version 8파일 **44개 통과**.
+  - 모의 HTTP·PDF renderer·메모리 저장소로 영역 지정→전송 확인→선택 승인→별도 저장→undo UI를 테스트했다. 실제 파일 저장 테스트로 원본 보존·raw XML·stale catalog 거부·manifest 실패 rollback을 확인했다.
+  - 대상 `flutter analyze --no-pub` 10파일: 신규 오류 없음, 기존 `digital_score_screen.dart::_measureIndexFor` 미사용 경고 1건으로 exit code 1. 최종 Dart format 통과.
+  - `flutter build apk --debug --flavor piano -t lib/piano_main.dart --no-pub` 통과: `build/app/outputs/flutter-apk/app-piano-debug.apk`. 기존 Gradle/AGP/Kotlin 향후 지원 경고는 유지한다.
+- 남은 일: APK 기기 설치, 실제 PDF 영역 선택·native 마디 미리보기·API 모델/키/응답·재열기·버전 복귀 smoke 및 정답 마디 비교·오수정·호출 비용 측정. 실제 AI 요청은 실행하지 않았다. 서버와 update.sh는 변경하지 않아 추가 VM 업로드는 필요 없고 이번 기능은 앱 재설치가 필요하다.
+
+## 2026-09-26 11:33 KST — 서버 PDF 다중 DPI 인식 후보와 보수적 선택
+
+- 작업자: Codex
+- 목표: 사용자 구조 점수 30 보고에 대해 점수 계산이 아닌 실제 서버 OMR 인식 경로를 개선한다.
+- 관련 로드맵: F-07, F-07a~d. 4개 구현/검증 단위 추가 후 진행률은 80/106(75%)이며 실제 인식률 검증 F-07d는 미완료다.
+- 변경 파일: `server/omr/omr_server.py`, `test_omr_server.py`, `update.sh`, `README.md`, 상태 문서 3종.
+- 완료 내용:
+  - 공식 Audiveris 스캐닝 지침과 ImageLoading.pdfResolution 상수를 확인해 PDF를 300/400 DPI로 각각 인식한다. 이미지는 기존 단일 경로다. 추가 Python 패키지는 없다.
+  - MusicXML backup/forward·화음·박자/분할 상속·합산 박자·못갖춘마디를 반영한 구조 검사와 누락 방어를 추가했다. 파트별 마디 수·페이지 수가 같고 음표 수 98% 이상, 박자 정보 유지, 구조 지표가 악화되지 않으면서 하나 이상 개선된 후보만 선택한다. 불확실하면 baseline을 유지한다. 원본 음표나 쉼표를 임의로 고치지 않는다.
+  - 후보별 MXL·OMR·로그, recognition.json, 인증된 diagnostics API를 남긴다. 여러 악장의 첫 파일만 반환하는 경로를 차단했다. 재시도 실패는 유효한 baseline을 폐기하지 않는다.
+  - Java worker는 기본 한 작업씩 실행하고, 두 후보에 총 시간 예산을 나눈다. 기본 총 제한은 1,200초다. timeout 시 Linux process group을 종료해 Java/Xvfb를 함께 정리한다.
+  - 루트 업로드용 update.sh에 systemd 환경 파일 drop-in·pipeline 식별자 확인을 추가했다. 다중 DPI 변경에는 앱 재설치가 필요 없다.
+- 검증: `python -m unittest discover -s server/omr -p 'test_*.py' -v` 28개 통과, Python py_compile·Git Bash update.sh 구문 검사 통과. 기존 로컬 KakaoTalk MXL 검사에서 19마디·94음표·97음표/쉼표와 리듬 문제 1개를 집계했다. 이것은 사용자 최신 변환본 또는 정답 악보가 아니며 실제 Audiveris 실행 테스트도 아니다.
+- 남은 일: VM에 두 파일을 재업로드·실행해 health의 pdf-multipass-v1을 확인하고 같은 PDF를 재변환한다. 후보별 로그·MXL·recognition.json 및 Audiveris 버전을 확보해 정답 MusicXML과 실제 음높이·음가 개선/시간/메모리를 비교한다. 사용자 최신 MXL·로그는 요청했으나 아직 제공되지 않았다. 앱 구조 점수 계산과 수정·확정 UI는 이번 변경 범위 밖이다.
+
+## 2026-09-26 10:31 KST — VM 루트 업로드 배포 경로 정리
+
+- 작업자: Codex
+- 목표: 사용자가 VM의 루트 디렉터리에만 파일을 올릴 수 있는 조건에서 OMR 서버 갱신 절차를 제공한다.
+- 관련 로드맵: F-07
+- 변경 파일: `server/omr/update.sh`, `server/omr/README.md`, 상태 문서 3종.
+- 완료 내용: 새 `update.sh`가 스크립트와 같은 업로드 디렉터리 또는 인자로 받은 디렉터리에서 `omr_server.py`를 확인·설치하고 서비스를 재시작·health 확인한다. `compare_musicxml.py`는 같은 위치에 있을 때만 설치한다. `/root`와 `/` 명령을 README에 명시했다.
+- 검증: Git Bash `bash -n server/omr/update.sh` 통과, Python 서버 unittest 5개 통과. Windows WSL Bash는 E_ACCESSDENIED로 실행되지 않았으나 Git Bash로 구문 검사를 했다. VM 배포·재시작·health는 아직 실행하지 않았다.
+- 남은 일: 사용자 VM에 `omr_server.py`와 새 `update.sh`를 업로드해 실행한다. 비교를 VM에서 수행할 경우에만 `compare_musicxml.py`를 함께 올린다. 한국어 OCR 언어 설정이 필요하면 `install.sh` systemd 변경을 별도로 적용한다.
+
+## 2026-09-26 10:25 KST — OMR 인식 유형과 원본 페이지 검증
+
+- 작업자: Codex
+- 목표: PDF→MusicXML 오인식을 유형별로 비교하고, AI 검수가 잘못된 원본 마디를 보지 않도록 한다.
+- 관련 로드맵: F-07
+- 변경 파일: `server/omr/omr_server.py`, `install.sh`, `README.md`, `compare_musicxml.py`, 서버 테스트, `omr_convert_client.dart`, `omr_convert_service.dart`, `omr_convert_jobs.dart`, `omr_page_crop.dart`, `omr_ai_reviewer.dart`, `library_screen.dart`, l10n ARB/생성 파일, OMR 테스트, 상태 문서 3종.
+- 완료 내용:
+  - 일반/코드·가사 인식 유형을 선택해 서버로 전달하고, 후자에서 Audiveris chordNames/lyrics 스위치를 켠다. OCR 언어는 VM에 설치된 데이터에 맞춰 `OMR_OCR_LANGUAGES`로 지정한다.
+  - Audiveris `-save`와 로그를 작업 폴더에 남기고, 정답 MusicXML과 음높이·음가를 비교하는 CLI를 추가했다.
+  - AI 검수의 페이지당 16마디 가정을 제거했다. MusicXML `new-page`와 PDF 페이지 수가 일치할 때 해당 전체 페이지를 보낸다. 페이지 정보가 없으면 검수를 중단하고, 위치가 없는 전역 이슈는 AI에 보내지 않는다.
+  - 서버 README의 사용하지 않는 `pdf-to-mxl` 안내를 코드와 맞췄다. 샘플 Ditto PDF는 6페이지이며 텍스트 레이어의 음악 글꼴 일부가 깨져 추출된다.
+- 검증: Python unittest 5개·py_compile 통과, Flutter OMR 대상 테스트 9개 통과, 대상 Flutter analyze 6파일과 piano debug APK build 통과. 샘플 MXL 자기 비교 19/19마디·97/97 음표/쉼표 일치.
+- 남은 일: VM에 새 서버·systemd 설정을 배포하고 빌드된 APK를 테스트 기기에 설치한다. 같은 PDF를 두 유형으로 변환해 `.omr`·로그·MXL을 확보한 뒤 2~3페이지 정답 MusicXML과 비교한다. 검토 후 마디·음표 수정/확정 UI와 페이지 구분 없는 PDF의 수동 위치 지정은 F-07 후속이다.
+
+## 2026-09-26 02:20 KST — 원본 PDF 텍스트와 변환 MusicXML 대조
+
+- 작업자: Grok
+- 목표: 원본 PDF의 코드·가사 텍스트 레이어와 변환 결과를 비교해 재현율(%)을 낸다.
+- 변경 파일:
+  - `omr_source_match.dart`, `omr_pdf_text.dart`, `omr_quality.dart`
+  - `song_file_storage.dart`, `omr_convert_jobs.dart`, `omr_convert_service.dart`
+  - `digital_score_data.dart`, `digital_score_screen.dart`
+  - `test/.../omr_source_match_test.dart`
+- 완료 내용:
+  - 변환 때 원본 PDF를 저장한다. 검토 화면에 코드/가사 맞춘 개수와 재현율을 보여 준다. 음표 정답률은 정답 MusicXML이 없어 포함하지 않는다. 스캔 이미지는 텍스트 레이어가 없으면 대조하지 않는다.
+- 검증: `omr_source_match_test`. 앱 재설치 후 PDF를 다시 변환해야 원본이 붙는다.
+- 남은 일: 재변환 후 검토 화면의 원본 대조 % 확인.
+
+## 2026-09-26 01:55 KST — 변환 검토 목록을 규칙별로 묶음
+
+- 작업자: Grok
+- 목표: 이슈 66개가 한 줄씩 나열되지 않게 하고, 옥타브 도약·쉼표 마디 오탐을 줄인다.
+- 변경 파일: `omr_quality.dart`, `omr_quality_analyzer.dart`, `digital_score_data.dart`, `digital_score_screen.dart`
+- 완료 내용: 같은 규칙은 접어서 보여 준다. 옥타브 점프와 쉼표만 있는 마디는 빼인다. sidecar version 2로 다시 검사한다.
+- 검증: analyzer 테스트 4개 통과.
+- 남은 일: 앱 재설치 후 검토 화면 확인.
+
+## 2026-09-26 01:40 KST — OMR 구조 정확도 검토
+
+- 작업자: Grok
+- 목표: 변환된 MusicXML의 마디 길이·붙임줄·코드·가사·박자·조표를 검사하고 연습 화면에 보여 준다.
+- 변경 파일:
+  - `lib/features/digital_score/domain/omr_quality.dart`, `omr_quality_analyzer.dart`
+  - `lib/core/storage/song_file_storage.dart`
+  - `lib/features/digital_score/data/digital_score_data.dart`, `omr_convert_service.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/l10n/app_en.arb`, `lib/l10n/app_ko.arb`
+  - `test/features/digital_score/domain/omr_quality_analyzer_test.dart`
+- 완료 내용:
+  - V001 마디 길이, V003 붙임줄, V005 빔, V006 음높이 점프, V007 빈 마디, 코드/가사/박자/조표 누락을 검사한다. 구조 점수와 이슈 목록을 sidecar에 저장하고, 앱바에 변환 검토 버튼을 둔다. 원본 대비 음표 정답률은 아직 아니다.
+- 검증: `omr_quality_analyzer_test` 3개 통과.
+- 남은 일: 앱 재설치 후 변환 곡에서 검토 목록 확인. 원본 PDF와 픽셀 단위 대조·AI 검수는 다음이다.
+
+## 2026-09-26 01:20 KST — 후반 단계 진행률이 멈추던 문제
+
+- 작업자: Grok
+- 목표: 86%·95%에서 오래 멈춰 보이던 막대를, 실제 오래 걸리는 리듬/페이지 단계에 맞춰 천천히 움직이게 한다.
+- 변경 파일: `server/omr/omr_server.py`
+- 완료 내용: 앞단계 가중치를 낮추고 RHYTHMS/CURVES/PAGE를 키웠다. 같은 단계 안에서도 시간이 지나면 막대가 그 구간 끝까지 다가간다.
+- 검증: 서버 파일만 갱신하면 된다. 앱 재설치는 필요 없다.
+- 남은 일: `omr_server.py` 업로드 후 `bash ~/update-omr.sh`.
+
+## 2026-09-26 01:05 KST — 진행률이 시스템/로그 때문에 뒤로 가던 문제
+
+- 작업자: Grok
+- 목표: 페이지뿐 아니라 시스템마다 단계가 다시 시작되고, `| BINARY` 같은 일반 로그가 퍼센트를 16%로 끌어내리던 것을 막는다.
+- 변경 파일: `server/omr/omr_server.py`, `lib/features/digital_score/data/omr_convert_jobs.dart`
+- 완료 내용: 단계는 `StepMonitoring | NAME` 줄만 쓴다. 서버·앱 모두 진행률을 줄이지 않는다.
+- 검증: 로직 수정. `omr_server.py` 재업로드와 앱 재설치가 필요하다.
+- 남은 일: `bash ~/update-omr.sh` 후 변환에서 퍼센트가 올라가기만 하는지 확인.
+
+## 2026-09-26 00:55 KST — 변환 진행률이 뒤로 가지 않게 수정
+
+- 작업자: Grok
+- 목표: 여러 장 PDF에서 51% → 16%처럼 줄어들던 진행률을 고친다.
+- 변경 파일: `server/omr/omr_server.py`
+- 완료 내용: 장마다 LOAD부터 다시 시작해도 퍼센트는 줄지 않는다. Stub/Sheet 번호로 전체 장 진행을 나눈다.
+- 검증: 로직 수정. VM에 `omr_server.py`를 다시 올리고 `bash ~/update-omr.sh` 해야 한다.
+- 남은 일: 사용자가 서버 파일을 갱신한 뒤 변환에서 퍼센트가 올라가기만 하는지 확인.
+
+## 2026-09-26 00:40 KST — VM OMR 서버 갱신 스크립트
+
+- 작업자: Grok
+- 목표: SSH로 올린 omr_server.py를 /opt/omr에 복사하고 서비스를 다시 켜는 반복 절차를 고정한다.
+- 변경 파일: `server/omr/update.sh`
+- 완료 내용: 홈/`omr-src`에서 새 서버 파일을 찾아 설치한다. `job_status`가 없으면 거부한다.
+- 검증: 스크립트 내용 확인. VM에서 한 번 설치한 뒤 `bash ~/update-omr.sh`로 반복한다.
+- 남은 일: 사용자가 스크립트를 VM에 두고 새 서버를 올린다.
+
+## 2026-09-26 00:20 KST — 변환 진행률, 서버 작업, 원본 MusicXML 조판
+
+- 작업자: Grok
+- 목표: 실제 진행률 표시, 앱이 백그라운드여도 변환 유지, 코드·가사·조표가 화면에 남게 한다.
+- 변경 파일:
+  - `server/omr/omr_server.py`
+  - `lib/features/digital_score/data/omr_convert_client.dart`, `omr_convert_service.dart`, `omr_convert_jobs.dart`
+  - `lib/features/digital_score/data/music_xml_codec.dart`, `digital_score_data.dart`
+  - `lib/features/digital_score/presentation/verovio_score_view.dart`, `digital_score_screen.dart`
+  - `lib/features/library/presentation/library_screen.dart`
+  - `lib/l10n/app_en.arb`, `lib/l10n/app_ko.arb`
+- 완료 내용:
+  - 변환은 VM 작업으로 돌아가고 `GET /jobs` 가 Audiveris 단계로 퍼센트를 준다. 앱은 폴링하고, 죽어도 작업 id를 저장해 다시 이어받는다. 연습 화면은 원본 MusicXML을 Verovio에 넘겨 코드·가사·지시가 codec 왕복에서 빠지지 않게 한다.
+- 검증: 클라이언트 테스트. VM에 새 `omr_server.py` 를 올리고 앱을 재설치해야 한다.
+- 남은 일: VM 서비스 재시작, 앱 재설치, Ditto 변환에서 진행률과 기호 표시 확인. OMR이 못 읽은 기호는 엔진 한계다.
+
+## 2026-09-25 23:50 KST — 변환을 목록 진행 표시로 백그라운드 처리
+
+- 작업자: Grok
+- 목표: 변환 중 화면을 막지 않고, 악보 목록 제목 아래에 진행 표시를 둔다.
+- 변경 파일:
+  - `lib/features/digital_score/data/omr_convert_jobs.dart`
+  - `lib/features/library/presentation/library_screen.dart`
+  - `test/features/digital_score/data/omr_convert_jobs_test.dart`
+- 완료 내용:
+  - 막는 다이얼로그를 없앴다. 변환 중 항목이 리스트 맨 위에 뜨고 이름 아래 `LinearProgressIndicator`가 돈다. 다른 곡은 그대로 연다. 끝나면 실제 곡으로 바뀌고, 실패하면 그 줄에 오류가 남는다.
+- 검증: `omr_convert_jobs_test`·`omr_convert_client_test` 통과. 앱 재설치 후 실기기 확인이 남았다.
+- 남은 일: 피아노 앱 재설치 후 Ditto PDF 변환이 목록에서 돌아가는지 확인.
+
+## 2026-09-25 22:20 KST — OMR VM 외부 IP 갱신
+
+- 작업자: Grok
+- 목표: 방화벽 사용 설정 후 바뀐 외부 IP로 앱이 변환 서버에 붙게 한다.
+- 변경 파일:
+  - `lib/features/digital_score/data/omr_convert_config.dart`
+  - `android/app/src/main/res/xml/network_security_config.xml`
+  - `server/omr/README.md`
+- 완료 내용:
+  - `http://34.10.15.222:8080/health` 가 200 `{"ok":true}` 를 반환한다. 예전 `136.65.134.89`는 더 이상 쓰지 않는다.
+- 검증: 이 환경에서 health HTTP 200. 앱 재설치 후 Library 변환은 남아 있다.
+- 남은 일: 피아노 앱 재설치, Library에서 JPG 변환 시험. VM을 끄면 IP가 또 바뀐다.
+
+## 2026-09-25 21:46 KST — PDF/JPG → MXL 변환 API와 앱 진입
+
+- 작업자: Grok
+- 목표: VM에서 변환 API를 제공하고, 피아노 Library에서 전자악보로 변환을 시작한다.
+- 변경 파일:
+  - `server/omr/omr_server.py`, `server/omr/install.sh`, `server/omr/README.md`
+  - `lib/app/product.dart`, `lib/piano_main.dart`
+  - `lib/features/digital_score/data/omr_convert_*.dart`, `omr_source_picker.dart`
+  - `lib/features/library/presentation/library_screen.dart`
+  - `android/app/src/main/res/xml/network_security_config.xml`
+  - `lib/l10n/app_en.arb`, `lib/l10n/app_ko.arb`
+  - `test/features/digital_score/data/omr_convert_client_test.dart`
+- 완료 내용:
+  - `POST /convert`, `GET /health` Flask worker. 토큰 `piano-omr-dev`, 포트 8080.
+  - 피아노 Library + 에 「전자악보로 변환」을 넣었다. PDF/JPG/PNG를 올려 MXL 곡으로 저장한다.
+- 검증: `omr_convert_client_test` 포함 대상 테스트 12개 통과. VM API 설치와 실기기 변환은 SSH가 없어 여기선 못 했다.
+- 남은 일: VM 시작, 방화벽 tcp:8080, `install.sh`, 피아노 앱 재설치 후 변환 확인. 끈 뒤 켜기는 다음.
+
+## 2026-09-25 20:56 KST — 가져온 MusicXML의 빔·붙임줄·이음줄 표시
+
+- 작업자: Grok
+- 목표: Audiveris 변환본에 있는 8분음표 빔과 이음줄을 연습 화면에 그린다.
+- 변경 파일:
+  - `lib/features/digital_score/domain/music_score.dart`
+  - `lib/features/digital_score/data/music_xml_codec.dart`
+  - `lib/features/digital_score/presentation/verovio_score_view.dart`
+  - `test/features/digital_score/data/music_xml_codec_test.dart`
+- 완료 내용:
+  - 변환 MXL에는 beam 74, tie 26, slur 4가 있었다. 앱이 MusicScore로 다시 쓰면서 빔·`<tied>`·이음줄을 버려 Verovio가 선을 그리지 못했다.
+  - codec이 beam·tie·slur를 왕복하고, Verovio `autoBeam`을 켠다.
+- 검증: `flutter test test/features/digital_score/data/music_xml_codec_test.dart` 10개 통과. 에뮬레이터는 꺼져 있어 실기기 재설치는 못 했다.
+- 남은 일: 피아노 앱을 다시 설치한 뒤 같은 MXL을 열어 빔·붙임줄을 확인한다.
+
+## 2026-09-25 19:49 KST — 음표 입력 UI 숨김, PDF 변환 우선
+
+- 작업자: Grok
+- 목표: 음표 입력을 보류·숨기고, 기획서의 PDF→전자악보·구성·이조·3단·반주 순서로 전환한다.
+- 변경 파일:
+  - `lib/features/digital_score/domain/note_input_feature.dart`
+  - `lib/app/widgets/piano_app_shell.dart`
+  - `lib/app/router/piano_app_router.dart`
+  - `lib/features/library/presentation/library_screen.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`, `docs/ARCHITECTURE.md`, `드럼 악보 앱 기획서 v4.md`
+- 완료 내용:
+  - `noteInputEnabled=false`로 하단 Edit score 탭, Library 악보 만들기, 연습 화면 연필 버튼을 숨겼다. `/editor`는 Library로 보낸다. 입력 코드는 삭제하지 않았다.
+  - 조옮김·Verse/Chorus 패널·내보내기 메뉴는 그대로 둔다.
+  - 현재 단계를 F-07 PDF→MusicXML로 바꿨다. Google VM Audiveris worker가 다음 구현이다.
+- 검증: 대상 analyze. UI 숨김은 플래그·라우트·버튼 가시성으로 확인했다. 에뮬레이터 재설치는 하지 않았다.
+- 남은 일: VM 접속 정보 수령, Audiveris 설치, PDF→MXL API, 앱 변환 진입.
+
+## 2026-09-25 19:31 KST — 음표 입력 위치를 오선·박에 맞춤
+
+- 작업자: Grok
+- 목표: 탭한 오선 줄과 박에 음표가 들어가도록 입력 좌표를 고친다.
+- 변경 파일:
+  - `lib/features/digital_score/domain/native_score_layout.dart`
+  - `lib/features/digital_score/domain/note_input.dart`
+  - `lib/features/digital_score/domain/blank_piano_score.dart`
+  - `lib/features/digital_score/presentation/verovio_score_view.dart`
+  - `test/features/digital_score/domain/native_score_layout_test.dart`
+- 완료 내용:
+  - 높은음자리표의 기준선을 가온음자리표 아래줄(E4)로 두고, 맨 윗줄 탭은 F5가 되게 했다.
+  - 박 위치는 반올림 대신 그 박 안에서 내림해서, 첫째 박 앞쪽을 눌러도 둘째 박으로 넘어가지 않게 했다.
+  - 빈 악보 divisions를 4로 올려 4분음표가 16분음표로 그려지지 않게 했다.
+  - Pixel 에뮬레이터에서 첫째 박 윗줄을 눌러 F5 4분음표가 들어가는 것을 확인했다.
+- 검증: `native_score_layout`·`note_input`·`blank_piano_score` 테스트 통과. 에뮬레이터에 재설치 후 탭 확인.
+- 남은 일: 화면 건반, 붙임줄 버튼, 잇단음표.
+
+## 2026-09-25 18:54 KST — 피아노 음표 입력을 MuseScore·Flat 계약으로 연결
+
+- 작업자: Grok
+- 목표: 피아노 전자악보 입력을 MuseScore Studio, Flat Replace, PiaScore 읽기/편집 분리에 맞춘다.
+- 변경 파일:
+  - `lib/features/digital_score/domain/note_input.dart`
+  - `lib/features/digital_score/domain/staff_note_input.dart`
+  - `lib/features/digital_score/domain/score_editor.dart`
+  - `lib/features/digital_score/presentation/digital_score_screen.dart`
+  - `lib/features/digital_score/presentation/score_editor_panel.dart`
+  - `lib/features/digital_score/presentation/verovio_score_view.dart`
+  - `lib/features/piano/presentation/piano_draft_editor_screen.dart`
+  - `lib/features/piano/presentation/piano_editor_screen.dart`
+  - `lib/app/router/piano_app_router.dart`
+  - `lib/l10n/app_en.arb`, `lib/l10n/app_ko.arb`
+  - `test/features/digital_score/domain/note_input_test.dart`
+  - `드럼 악보 앱 기획서 v4.md`, `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATUS.yaml`
+- 완료 내용:
+  - 라이브러리 MusicXML은 다시 Verovio 연습 화면으로 연다. 음표 입력은 편집 모드에서만 동작한다.
+  - 입력은 음길이를 먼저 고르고, 탭한 박의 같은 성부를 교체한다. 짧아진 자리는 쉼표가 채우고, 삭제도 쉼표를 되돌린다. 마디를 넘는 음은 붙임줄로 다음 마디에 잇는다.
+  - 화음 토글, 점음표, 반음, 옥타브, `A`–`G`, `3`–`7`, `0`을 연결했다. 두 손가락 제스처 중에는 음을 넣지 않고 악보를 이동할 수 있다.
+  - 하단 Edit score는 빈 그랜드 스태프에 같은 입력을 쓰고, 저장하면 Library 곡으로 연다.
+  - 같은 voice가 양손에 있어도 다른 오선을 화음으로 묶지 않도록 화음 정규화를 오선 단위로 바꿨다.
+- 검증:
+  - `flutter test test/features/digital_score/domain/note_input_test.dart test/features/digital_score/domain/staff_note_input_test.dart test/features/digital_score/domain/score_editor_test.dart test/features/digital_score/presentation/score_editor_panel_test.dart` 26개 통과.
+  - 대상 `flutter analyze --no-pub` 이슈 없음.
+  - Android 에뮬레이터에서 실제 탭·저장 smoke는 하지 못했다.
+- 남은 일: 에뮬레이터 입력 smoke, 화면 건반, 붙임줄 버튼, 잇단음표, Claire 한 음 수정 후 왕복 비교.
+
+## 2026-09-25 18:02 KST — 피아노 Lomse staff target mapping 수직 슬라이스
+
+- 작업자: Codex
+- 목표: 피아노 전용 Lomse 커스텀 편집기에서 오선 탭 위치를 앱 소유의 의미 기반 타깃으로 변환하고, 네이티브 Lomse 커서로 연결한다.
+- 변경 파일:
+  - `lib/features/piano/domain/app_score_element_registry.dart`
+  - `lib/features/piano/domain/lomse_editor_contract.dart`
+  - `lib/features/piano/presentation/lomse_piano_editor_screen.dart`
+  - `native/lomse_bridge/src/page_lomse_bridge.cpp`
+  - `native/lomse_bridge/tests/page_lomse_bridge_smoke.cpp`
+  - `test/features/piano/domain/app_score_element_registry_test.dart`
+  - `docs/PROJECT_STATUS.yaml`, `docs/ROADMAP.md`, `docs/LOMSE_VEROVIO_POC.md`, `docs/ARCHITECTURE.md`, `드럼 악보 앱 기획서 v4.md`, `native/lomse_bridge/README.md`
+- 완료 내용:
+  - MusicXML snapshot마다 `measureUid`, staff, voice, onsetTicks를 재계산하는 `AppScoreElementRegistry`를 추가했다. Lomse 내부 ID를 저장하지 않고 `AppElementId`·`EventLocator`를 앱 모델로 유지한다.
+  - staff tap은 semantic target과 disposable Lomse cursor projection으로 변환되며, bridge는 target 입력을 검증한 뒤 `CmdCursor`와 `CmdAddNoteRest`를 실행한다.
+  - Smoosic은 피아노 제품의 런타임·의존성·라우트에서 제외된 상태를 유지했고 drum flavor에는 변경을 적용하지 않았다.
+- 검증:
+  - 선별 Flutter 테스트 50개 통과.
+  - 신규 registry·piano editor·FFI 관련 targeted analyze 통과.
+  - 전체 `flutter analyze --no-pub`에서 기존 warning 5개만 재현됐고 신규 오류는 없었다.
+  - Lomse bridge `arm64-v8a`·`x86_64` Debug/Release 빌드 통과.
+  - Java 21 임시 runtime으로 piano debug APK 재빌드 통과.
+  - `Pixel_10_Pro_XL` 에뮬레이터에서 target insert/export revision `r2`, undo `r3`, redo `r4`, Verovio render 및 치명 로그 부재를 확인했다.
+- 남은 일:
+  - chord·voice·measure command 범위, chord/grace/cross-staff mapping edge case, fixture 왕복 구조 비교, 10~20페이지 latency를 production gate로 검증한다.
+
+## 2026-09-25 17:31 KST — 피아노 Lomse 커스텀 편집기 FFI·저장 재진입 smoke
+
+- 작업자: Codex
+- 목표: 사용자 결정대로 Smoosic을 피아노 제품 경로에서 제거하고, Lomse FFI 기반 커스텀 editor의 Android 동작과 저장 후 재진입을 확인한다.
+- 변경 파일:
+  - `lib/features/piano/presentation/lomse_piano_editor_screen.dart`
+  - `lib/features/digital_score/presentation/score_entry_screen.dart`
+  - `lib/features/piano/presentation/smoosic_score_editor_screen.dart` (삭제)
+  - `pubspec.yaml`, `pubspec.lock`
+  - `docs/ARCHITECTURE.md`
+  - `docs/LOMSE_VEROVIO_POC.md`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/ROADMAP.md`
+  - `docs/WORK_LOG.md`
+  - `드럼 악보 앱 기획서 v4.md`
+  - `native/lomse_bridge/README.md`
+- 완료 내용:
+  - `PianoEditorScreen`을 Lomse `LomseEditorSession`과 Verovio viewer를 연결한 피아노 전용 커스텀 화면으로 전환했다. Smoosic WebView 소스·webview 의존성·pubspec asset 연결·제품 라우트는 제거했다.
+  - 저장된 MusicXML을 `ScoreEntryScreen`의 `DigitalScoreData`로 미리 읽어 Lomse 화면에 전달하도록 바꿨다. 이로써 autoDispose provider가 초기화 중 폐기되는 재진입 오류를 제거했다.
+  - Lomse Android bridge를 `arm64-v8a`와 `x86_64`로 staging하고 piano APK에만 연결했다. drum APK에는 Lomse bridge/runtime이 없다.
+- 검증:
+  - 대상 `flutter analyze` 통과.
+  - Lomse FFI·domain·MusicXML·editor 관련 선별 테스트 44개 통과.
+  - Java 21 호환 임시 runtime을 사용한 direct Gradle `assemblePianoDebug`·`assembleDrumDebug` 통과.
+  - `Pixel_10_Pro_XL`(`emulator-5554`)에서 `Lomse r1→r2` insert/export, `r3` undo, `r4` redo와 Verovio 악보 렌더링을 확인했다.
+  - 새 악보를 Save해 Library에 `New piano score`로 생성하고 다시 열어 `Piano editor`·`Lomse r1`·악보 렌더링을 확인했다. logcat에 `FATAL EXCEPTION`·`SIGSEGV`·`page_lomse`·Ref disposed 오류가 없었다.
+- 남은 일:
+  - AppElementId/EventLocator target mapping, note/rest/chord/voice/measure command 확장, 3단·다중 Voice fixture 왕복 구조 비교, 10~20페이지 Android latency를 검증한다.
+  - 에뮬레이터의 Android 16KB page-size compatibility 안내는 앱 오류가 아니지만, 네이티브 의존성 전체의 16KB 정렬은 별도 출시 품질 점검으로 남긴다.
+
+## 2026-09-25 16:41 KST — 피아노 Smoosic 편집기·MusicXML 내보내기 에뮬레이터 smoke
+
+- 작업자: Codex
+- 목표: 피아노 전용 APK에서 Smoosic WebView가 로드되고 MusicXML 내보내기 경로가 Android 파일 선택기와 연결되는지 확인한다.
+- 변경 파일:
+  - `docs/ROADMAP.md`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/LOMSE_VEROVIO_POC.md`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - `Piano editor`에서 Smoosic의 Piano controls·Grand Staff와 MusicXML/PDF export menu가 표시됐다.
+  - MusicXML 선택 후 Android DocumentsUI 저장 화면이 열렸고 기본 이름으로 저장했다. `/sdcard/Download/New piano score.musicxml.xml`(1,351 bytes)이 생성됐다.
+  - 생성 파일을 에뮬레이터에서 읽어 XML 선언, `score-partwise`, `part-list`를 확인했고 저장 후 `MainActivity`로 복귀했다.
+- 검증:
+  - 내보내기 후 앱 프로세스가 유지됐고 logcat에서 `FATAL EXCEPTION`·`SIGSEGV`·`page_lomse` 오류가 없었다.
+  - 기본 파일명이 `New piano score.musicxml`인데 DocumentsUI 결과가 `New piano score.musicxml.xml`이 되는 확장자 이중 부여 현상을 확인했다. 파일 내용은 유효한 MusicXML이지만 파일명 정리는 별도 수정 후보로 남긴다.
+- 남은 일:
+  - Lomse FFI는 아직 UI/controller에 연결되지 않았으므로 이 결과를 native load/edit/export/undo/redo 왕복 성공으로 간주하지 않는다.
+
+## 2026-09-25 16:21 KST — 피아노 APK 에뮬레이터 설치·편집 화면 진입 smoke
+
+- 작업자: Codex
+- 목표: Android Studio 에뮬레이터에서 피아노 flavor APK의 설치·실행·편집 화면 진입과 치명적 오류를 확인한다.
+- 변경 파일:
+  - `docs/ROADMAP.md`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/LOMSE_VEROVIO_POC.md`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - `Pixel_10_Pro_XL` API 에뮬레이터를 elevated Android SDK 경로로 실행하고 `emulator-5554`가 `device` 상태임을 확인했다. AVD snapshot lock 권한 문제로 일반 sandbox 실행이 막혔지만 데이터를 초기화하지 않았다.
+  - `build/app/outputs/flutter-apk/app-piano-debug.apk`를 `adb install -r`로 설치하고 `com.hansookim.pianoscore/com.hansookim.pageadiddle.MainActivity`를 실행했다.
+  - `Piano Score` Library, 하단 `Edit score`, `Piano editor` 제목·Save/Export 버튼·WebView 영역을 확인했다.
+- 검증:
+  - 앱 프로세스가 유지됐고 진입 후 logcat에서 `FATAL EXCEPTION`, `AndroidRuntime`, `SIGSEGV`, `page_lomse` 오류가 없었다.
+  - 이번 smoke는 `PianoEditorScreen`의 기존 Smoosic fallback 화면 진입 검증이다. Lomse Dart FFI `load→execute_json→export→undo/redo`는 아직 UI/controller에 연결되지 않아 호출하지 않았다.
+- 남은 일:
+  - piano-only FFI host/controller와 AppElementId/EventLocator mapping을 연결한 뒤, 실제 Android에서 load/edit/export/undo/redo와 Verovio reload 왕복을 검증한다.
+
 최신 작업을 문서 상단에 추가한다. 기존 기록은 수정하거나 삭제하지 않는다.
+
+## 2026-09-25 16:02 KST — 피아노 전용 Lomse Android native packaging 연결
+
+- 작업자: Codex
+- 목표: 고정된 Lomse·FreeType을 Android arm64 native bridge로 빌드하고, `piano` flavor에만 패키징해 실제 APK 범위로 검증한다.
+- 변경 파일:
+  - `.gitignore`
+  - `android/app/build.gradle.kts`
+  - `native/lomse_bridge/CMakeLists.txt`
+  - `native/lomse_bridge/cmake/FindFreetype.cmake`
+  - `native/lomse_bridge/build_android.ps1`
+  - `native/lomse_bridge/README.md`
+  - `docs/ARCHITECTURE.md`
+  - `docs/LOMSE_VEROVIO_POC.md`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/ROADMAP.md`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - `dependencies.lock.yaml`의 Lomse `2067a01c…`·FreeType `42608f77…`를 `native/.cache`에 고정하고, CMake/NDK 스크립트가 같은 commit을 재확인하도록 했다.
+  - FreeType과 Lomse를 정적 링크해 bridge의 외부 C++ runtime만 `libc++_shared.so`로 남겼다. Gradle `piano` source set에만 JNI staging 디렉터리를 연결했다.
+  - `PianoEditorScreen`과 드럼 flavor의 기능·코드는 전환하지 않았다. Lomse target mapping·왕복·실기기 성능 게이트 전까지 기존 Smoosic fallback을 유지한다.
+- 검증:
+  - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File native\lomse_bridge\build_android.ps1 -Offline`: arm64-v8a bridge build/staging 통과.
+  - `flutter build apk --debug --flavor piano -t lib/piano_main.dart --no-pub`: 통과.
+  - `flutter build apk --debug --flavor drum -t lib/main.dart --no-pub`: 통과.
+  - APK zip inspection: piano에 `libpage_lomse_bridge.so`·`libc++_shared.so`·`libverovio_flutter.so`, drum에는 Verovio만 포함.
+  - `llvm-readelf`: bridge의 외부 shared dependency가 Android system library와 `libc++_shared.so`임을 확인.
+- 남은 일:
+  - 실제 Android 기기/에뮬레이터에서 packaged bridge Dart FFI load/edit/export/undo/redo smoke를 수행한다.
+  - AppElementId/EventLocator mapping, MusicXML export→Verovio reload 왕복, 3단·다중 Voice·10~20페이지 latency를 검증한 뒤 Smoosic 제거 여부를 결정한다.
+
+## 2026-09-25 15:29 KST — 에디터·뷰어 결정 문서 정리와 구현 가능성 재검토
+
+- 작업자: Codex
+- 목표: 에디터·뷰어의 제품 셸 경계와 현재 구현 상태를 기획서·아키텍처·로드맵에 맞추고, Verovio Viewer와 Lomse Editor의 구현 가능성을 다시 확인한다.
+- 변경 파일:
+  - `드럼 악보 앱 기획서 v4.md`
+  - `docs/ARCHITECTURE.md`
+  - `docs/LOMSE_VEROVIO_POC.md`
+  - `docs/ROADMAP.md`
+  - `docs/PROJECT_STATUS.yaml`
+  - `docs/WORK_LOG.md`
+- 완료 내용:
+  - 기획서의 초기 `TBD`/iOS 우선 표현을 현재 Android flavor 기준(`Page-a-Diddle`/`Piano Score`)으로 정리했다.
+  - 드럼 PDF/Smart Score 연주 Viewer의 1·2손가락 규칙과 피아노 Native Score의 Verovio·입력 벤치마킹 규칙이 서로 다른 적용 범위임을 명시했다.
+  - Verovio는 뷰어·조판, Lomse는 피아노 편집 runtime이라는 경계를 유지하고, Smoosic은 Lomse 왕복 PoC 전까지 fallback으로만 남도록 문서화했다.
+  - Verovio 경로는 현재 구현 가능, Lomse 경로는 native APK packaging·target mapping·왕복·실기기 latency 전까지 조건부 가능이라는 판정을 상태 문서에 기록했다.
+- 검증:
+  - `flutter pub get`으로 로컬 package config를 복구한 뒤 Verovio 대상 `flutter analyze`: No issues found
+  - 피아노 FFI/domain 및 전자악보 domain/editor 관련 테스트: 76개 통과
+  - `flutter build apk --debug --flavor piano -t lib/piano_main.dart --no-pub`: 통과
+  - `flutter build apk --debug --flavor drum -t lib/main.dart --no-pub`: 통과
+  - piano APK zip 목록에서 `libverovio_flutter.so` 포함과 `libpage_lomse_bridge.so` 미포함을 확인했다.
+- 남은 일:
+  - Lomse·FreeType dependency를 재현 가능하게 vendor/pin하고 `piano` Gradle native packaging에 연결한다.
+  - AppElementId/EventLocator mapping과 FFI session host/controller를 연결한다.
+  - 3단·다중 Voice·관계 기호 및 10~20페이지 Android edit→export→render 왕복/성능을 검증한 뒤 Smoosic 제거 여부를 결정한다.
 
 ## 2026-09-23 11:32 KST — FFI 어댑터 fallback APK 재검증
 

@@ -3,10 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/widgets/app_empty_state.dart';
 import 'package:page_a_diddle/core/database/app_database.dart';
+import 'package:page_a_diddle/features/digital_score/data/digital_score_data.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/digital_score_screen.dart';
 import 'package:page_a_diddle/features/library/data/song_repository.dart';
 import 'package:page_a_diddle/features/library/domain/score_type.dart';
-import 'package:page_a_diddle/features/piano/presentation/smoosic_score_editor_screen.dart';
+import 'package:page_a_diddle/features/piano/presentation/lomse_piano_editor_screen.dart';
 import 'package:page_a_diddle/features/score_viewer/presentation/score_viewer_screen.dart';
 
 class ScoreEntryScreen extends ConsumerWidget {
@@ -15,7 +16,7 @@ class ScoreEntryScreen extends ConsumerWidget {
     this.setlistId,
     this.startJam = false,
     this.stageMode = false,
-    this.useSmoosic = false,
+    this.useLomse = false,
     super.key,
   });
 
@@ -23,7 +24,7 @@ class ScoreEntryScreen extends ConsumerWidget {
   final String? setlistId;
   final bool startJam;
   final bool stageMode;
-  final bool useSmoosic;
+  final bool useLomse;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -41,8 +42,20 @@ class ScoreEntryScreen extends ConsumerWidget {
           );
         }
         if (ScoreType.fromKey(value.scoreType) == ScoreType.musicXml) {
-          if (useSmoosic) {
-            return SmoosicScoreEditorScreen(songId: songId);
+          if (useLomse) {
+            final data = ref.watch(digitalScoreDataProvider(songId));
+            return data.when(
+              loading: () => const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              ),
+              error: (_, _) => _ScoreEntryError(
+                onRetry: () => ref.invalidate(digitalScoreDataProvider(songId)),
+              ),
+              data: (scoreData) => LomsePianoEditorScreen(
+                songId: songId,
+                initialData: scoreData,
+              ),
+            );
           }
           return DigitalScoreScreen(songId: songId);
         }

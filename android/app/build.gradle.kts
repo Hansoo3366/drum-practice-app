@@ -45,6 +45,15 @@ android {
         }
     }
 
+    // The native Lomse bridge is supplied by the piano build script into the
+    // ignored build/ directory. Keeping this source set flavor-specific means
+    // drum variants never see or package the piano-only bridge.
+    sourceSets {
+        getByName("piano") {
+            jniLibs.srcDir(file("../../build/native/piano-jni-libs"))
+        }
+    }
+
     buildTypes {
         release {
             // Replace with a release keystore before Play Store upload.

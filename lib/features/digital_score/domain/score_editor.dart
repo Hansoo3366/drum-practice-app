@@ -520,11 +520,13 @@ void _validateEvent(MusicMeasure measure, MusicEvent event) {
 }
 
 List<MusicEvent> _normalizeNoteChords(List<MusicEvent> events) {
-  final groups = <(String, int), List<int>>{};
+  final groups = <(String, int, int), List<int>>{};
   for (var index = 0; index < events.length; index++) {
     final event = events[index];
     if (event is! MusicNote || event.isGrace) continue;
-    groups.putIfAbsent((event.voice, event.onset), () => []).add(index);
+    groups
+        .putIfAbsent((event.voice, event.onset, event.staff), () => [])
+        .add(index);
   }
   final normalized = events.toList();
   for (final indexes in groups.values) {

@@ -44,9 +44,8 @@ class LomseBridgeException implements Exception {
 /// Lazy loader for the piano-only native bridge.
 ///
 /// The library is intentionally opened only when the piano editor asks for
-/// the Lomse session. This keeps the drum flavor independent from the
-/// optional native dependency and lets the current Smoosic editor remain a
-/// fallback while the bridge is not packaged in the APK.
+/// the Lomse session. This keeps the drum flavor independent from the native
+/// Lomse dependency while keeping the piano editor's native boundary small.
 class LomseFfiBridge {
   LomseFfiBridge._(this.library)
     : _abiVersion = library.lookupFunction<_AbiVersionNative, _AbiVersionDart>(
@@ -173,9 +172,8 @@ class LomseFfiBridge {
 /// Dart implementation of the piano Lomse editor session contract.
 ///
 /// This class is usable only when `libpage_lomse_bridge` is packaged with the
-/// piano flavor. `tryCreate` returns null when that optional library is not
-/// available, which is the expected state until the pinned Lomse dependency
-/// is wired into the Android APK.
+/// piano flavor. `tryCreate` returns null when the piano artifact is missing
+/// or cannot be opened, allowing the screen to show a recoverable error.
 class FfiLomseEditorSession implements LomseEditorSession {
   FfiLomseEditorSession._(this._bridge, this._handle);
 

@@ -21,9 +21,8 @@ void main() {
   test('does not require the optional bridge library in fallback builds', () {
     final session = FfiLomseEditorSession.tryCreate();
 
-    // The checked-in Flutter build does not package Lomse yet. Once the piano
-    // flavor links it, this assertion remains valid because the session may
-    // be created successfully instead.
+    // Host-side Flutter tests do not load the Android piano JNI artifact.
+    // The Android piano flavor links it and is covered by the emulator smoke.
     expect(session == null || session.revision == 0, isTrue);
     session?.dispose();
   });

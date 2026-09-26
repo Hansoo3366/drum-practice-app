@@ -6,7 +6,7 @@ MusicScore blankPianoScore({
   double? tempoBpm,
 }) {
   final attributes = MusicAttributes(
-    divisions: 1,
+    divisions: 4,
     keyFifths: 0,
     keyMode: 'major',
     time: const MusicTimeSignature(beats: 4, beatType: 4),
@@ -29,8 +29,20 @@ MusicScore blankPianoScore({
             number: '1',
             attributes: attributes,
             events: [
-              MusicNote(onset: 0, duration: 4, voice: '1', staff: 1),
-              MusicNote(onset: 0, duration: 4, voice: '2', staff: 2),
+              MusicNote(
+                onset: 0,
+                duration: 16,
+                voice: '1',
+                staff: 1,
+                type: 'whole',
+              ),
+              MusicNote(
+                onset: 0,
+                duration: 16,
+                voice: '2',
+                staff: 2,
+                type: 'whole',
+              ),
             ],
           ),
         ],

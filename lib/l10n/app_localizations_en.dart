@@ -439,6 +439,47 @@ class AppLocalizationsEn extends AppLocalizations {
   String get importMusicXml => 'Import MusicXML';
 
   @override
+  String get convertToDigitalScore => 'Convert to digital score';
+
+  @override
+  String get omrProfileStandard => 'Standard score';
+
+  @override
+  String get omrProfileChordsLyrics => 'Score with chords and lyrics';
+
+  @override
+  String get convertingScore => 'Converting…';
+
+  @override
+  String convertingScorePercent(int percent) {
+    return 'Converting $percent%';
+  }
+
+  @override
+  String get convertFailed => 'Couldn\'t convert. Start the VM and try again.';
+
+  @override
+  String get omrReview => 'Conversion review';
+
+  @override
+  String omrHealthScore(int score) {
+    return 'Structure score $score';
+  }
+
+  @override
+  String get omrReviewEmpty => 'No structural problems found.';
+
+  @override
+  String get omrAiRun => 'Run AI review';
+
+  @override
+  String get omrAiNeedKey =>
+      'Paste an XAI_API_KEY to review suspicious measures.';
+
+  @override
+  String get omrAiSaveKey => 'Save key';
+
+  @override
   String get importing => 'Importing…';
 
   @override
@@ -1560,6 +1601,27 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get addChordSymbol => 'Add chord';
+
+  @override
+  String get addChordTone => 'Chord tone';
+
+  @override
+  String get dottedDuration => 'Dotted';
+
+  @override
+  String get pitchUp => 'Semitone up';
+
+  @override
+  String get pitchDown => 'Semitone down';
+
+  @override
+  String get octaveUp => 'Octave up';
+
+  @override
+  String get octaveDown => 'Octave down';
+
+  @override
+  String get newPianoScore => 'New piano score';
 
   @override
   String get addMeasure => 'Add measure';

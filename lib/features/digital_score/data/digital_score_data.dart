@@ -1,10 +1,17 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:page_a_diddle/core/database/app_database.dart';
 import 'package:page_a_diddle/core/storage/song_file_storage.dart';
 import 'package:page_a_diddle/features/digital_score/data/digital_score_editor_service.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
+import 'package:page_a_diddle/features/digital_score/data/omr_pdf_text.dart';
 import 'package:page_a_diddle/features/digital_score/domain/arrangement_profile.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
+import 'package:page_a_diddle/features/digital_score/domain/omr_quality.dart';
+import 'package:page_a_diddle/features/digital_score/domain/omr_quality_analyzer.dart';
+import 'package:page_a_diddle/features/digital_score/domain/omr_source_match.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/library/data/song_repository.dart';
@@ -13,25 +20,34 @@ class DigitalScoreData {
   const DigitalScoreData({
     required this.song,
     required this.score,
+    this.sourceXml,
     this.versionCatalog = ScoreVersionCatalog.empty,
     this.activeVersionScore,
+    this.activeVersionXml,
     this.sequence = PlaybackSequence.empty,
     this.arrangement = ArrangementProfile.off,
     this.originalFifths = 0,
+    this.quality,
   });
 
   final Song song;
 
   /// The immutable source score. Version editors are layered on top of it.
   final MusicScore score;
+
+  /// Original MusicXML document, used so Verovio can keep chords, lyrics,
+  /// and directions that the editor model does not round-trip.
+  final String? sourceXml;
   final ScoreVersionCatalog versionCatalog;
 
   /// The persisted active version, when the catalog points at a version.
   /// `null` means the active score is the original source score.
   final MusicScore? activeVersionScore;
+  final String? activeVersionXml;
   final PlaybackSequence sequence;
   final ArrangementProfile arrangement;
   final int originalFifths;
+  final OmrQualityReport? quality;
 }
 
 final digitalScoreDataProvider = FutureProvider.autoDispose
@@ -47,10 +63,10 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
       if (!await file.exists() || await file.length() == 0) {
         throw StateError('MusicXML 파일을 찾을 수 없습니다.');
       }
-      final score = const MusicXmlCodec().decode(
-        await file.readAsBytes(),
-        fileName: file.path,
-      );
+      final bytes = await file.readAsBytes();
+      final codec = const MusicXmlCodec();
+      final sourceXml = codec.xmlString(bytes, fileName: file.path);
+      final score = codec.decodeXml(sourceXml);
       final editor = ref.watch(digitalScoreEditorServiceProvider);
       final sequence = await editor.loadSequence(songId);
       final arrangement = await editor.loadArrangement(songId);
@@ -60,11 +76,16 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
       );
       var versionCatalog = await editor.loadVersionCatalog(songId);
       MusicScore? activeVersionScore;
+      String? activeVersionXml;
       if (versionCatalog.activeId != scoreVersionOriginalId) {
         try {
           activeVersionScore = await editor.loadVersionScore(
             songId: songId,
             versionId: versionCatalog.activeId,
+          );
+          activeVersionXml = await editor.loadVersionXml(
+            songId,
+            versionCatalog.activeId,
           );
         } on Object {
           activeVersionScore = null;
@@ -78,13 +99,66 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
         }
       }
       await repository.markOpened(songId);
+      final quality = await _loadOrBuildQuality(
+        ref.watch(songFileStorageProvider),
+        songId: songId,
+        score: score,
+        sourceXml: sourceXml,
+      );
       return DigitalScoreData(
         song: song,
         score: score,
+        sourceXml: sourceXml,
         versionCatalog: versionCatalog,
         activeVersionScore: activeVersionScore,
+        activeVersionXml: activeVersionXml,
         sequence: sequence,
         arrangement: arrangement,
         originalFifths: originalFifths,
+        quality: quality,
       );
     });
+
+Future<OmrQualityReport> _loadOrBuildQuality(
+  SongFileStorage storage, {
+  required String songId,
+  required MusicScore score,
+  required String sourceXml,
+}) async {
+  final raw = await storage.loadOmrQuality(songId);
+  if (raw != null && raw.isNotEmpty) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final report = OmrQualityReport.fromJson(
+          Map<String, Object?>.from(decoded),
+        );
+        if (report.version >= OmrQualityReport.currentVersion) {
+          return report;
+        }
+      }
+    } on Object {
+      // Rebuild if the sidecar is unreadable.
+    }
+  }
+  var report = const OmrQualityAnalyzer().analyze(score, sourceXml: sourceXml);
+  final original = await storage.loadOmrSource(songId);
+  if (original != null && original.fileName.toLowerCase().endsWith('.pdf')) {
+    try {
+      final text = await const OmrPdfText().extract(
+        Uint8List.fromList(original.bytes),
+      );
+      report = report.copyWith(
+        sourceMatch: OmrSourceMatch.compare(
+          referenceText: text,
+          score: score,
+          musicXml: sourceXml,
+        ),
+      );
+    } on Object {
+      // Scanned PDFs or missing text layers skip the match.
+    }
+  }
+  await storage.saveOmrQuality(songId, jsonEncode(report.toJson()));
+  return report;
+}

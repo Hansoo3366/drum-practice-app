@@ -87,13 +87,13 @@ class NativeMeasureBox {
         0.0,
         0.999,
       );
-      return (ratio * capacity).round();
+      return (ratio * capacity).floor();
     }
     final anchors = onsetAnchors;
     if (anchors.length == 1) {
       final anchor = anchors.single;
       final width = math.max(12, contentWidth - 20);
-      return (anchor.onset + (x - anchor.x) / width * capacity).round().clamp(
+      return (anchor.onset + (x - anchor.x) / width * capacity).floor().clamp(
         0,
         capacity,
       );
@@ -106,7 +106,7 @@ class NativeMeasureBox {
         final span = math.max(1.0, next.x - previous.x);
         final ratio = (x - previous.x) / span;
         return (previous.onset + (next.onset - previous.onset) * ratio)
-            .round()
+            .floor()
             .clamp(0, capacity);
       }
     }
@@ -114,7 +114,7 @@ class NativeMeasureBox {
     final last = anchors.last;
     final span = math.max(1.0, last.x - previous.x);
     return (last.onset + (x - last.x) / span * (last.onset - previous.onset))
-        .round()
+        .floor()
         .clamp(0, capacity);
   }
 }
@@ -231,7 +231,7 @@ class NativeScoreLayout {
     final rawOnset = measureBox.onsetForX(point.dx, capacity);
     final onset = clampOnsetForDuration(
       attributes: measure.attributes,
-      onset: (rawOnset / math.max(1, duration)).round() * duration,
+      onset: (rawOnset / math.max(1, duration)).floor() * duration,
       duration: duration,
     );
     final ghost = Offset(
@@ -387,4 +387,105 @@ int midiAtStaffY(
   final rem = ((steps % 7) + 7) % 7;
   final step = PitchStep.values[rem];
   return MusicPitch(step: step, octave: octave).midi.clamp(21, 108);
+}
+
+/// Treble [staffTop] is E4 (bottom line). Bass [staffTop] is A3 (top line).
+class GrandStaffFrame {
+  const GrandStaffFrame({
+    required this.trebleStaffTop,
+    required this.bassStaffTop,
+    required this.lineGap,
+  });
+
+  final double trebleStaffTop;
+  final double bassStaffTop;
+  final double lineGap;
+}
+
+/// Guess staff lines from a Verovio measure box when no staff hit exists.
+///
+/// The measure rect's 19% line is the visual top of the treble staff (F5).
+/// Pitch mapping uses the bottom line (E4), four spaces below that.
+GrandStaffFrame fallbackGrandStaffFrame(Rect measure, {int staves = 2}) {
+  final height = math.max(36.0, measure.height);
+  final lineGap = math.max(3.0, height * (staves > 1 ? 0.045 : 0.09));
+  final trebleTopLine = measure.top + height * (staves > 1 ? 0.19 : 0.28);
+  final trebleStaffTop = trebleTopLine + 4 * lineGap;
+  final bassStaffTop = staves > 1
+      ? measure.top + height * 0.65
+      : trebleStaffTop;
+  return GrandStaffFrame(
+    trebleStaffTop: trebleStaffTop,
+    bassStaffTop: bassStaffTop,
+    lineGap: lineGap,
+  );
+}
+
+/// Map Verovio `staff` boxes onto the pitch grid.
+///
+/// Treble staff hits cover F5–E4, so the bottom edge is E4. Bass staff hits
+/// cover A3–G2, so the top edge is A3.
+GrandStaffFrame grandStaffFrameFromStaffRects(
+  List<Rect> staffRects,
+  Rect measure, {
+  int staves = 2,
+}) {
+  if (staffRects.isEmpty) {
+    return fallbackGrandStaffFrame(measure, staves: staves);
+  }
+  final sorted = [...staffRects]..sort((a, b) => a.top.compareTo(b.top));
+  final treble = sorted.first;
+  final lineGap = math.max(3.0, treble.height / 4);
+  final trebleStaffTop = treble.bottom;
+  final bassStaffTop = sorted.length > 1
+      ? sorted[1].top
+      : fallbackGrandStaffFrame(measure, staves: staves).bassStaffTop;
+  return GrandStaffFrame(
+    trebleStaffTop: trebleStaffTop,
+    bassStaffTop: bassStaffTop,
+    lineGap: lineGap,
+  );
+}
+
+double contentLeftAfterClefs({
+  required Rect measure,
+  required List<Rect> clefs,
+  int measureIndex = 0,
+}) {
+  var left = measure.left + math.min(12, measure.width * 0.08);
+  for (final clef in clefs) {
+    if (clef.right + 6 > left) left = clef.right + 6;
+  }
+  if (clefs.isEmpty && measureIndex == 0) {
+    left = math.max(left, measure.left + measure.width * 0.32);
+  }
+  final right = measure.left + measure.width - 8;
+  if (left > right - 16) {
+    left = measure.left + measure.width * 0.32;
+  }
+  return left;
+}
+
+List<NativeOnsetAnchor> buildOnsetAnchors({
+  required double contentLeft,
+  required double contentWidth,
+  required int capacity,
+  required Map<int, List<double>> noteXs,
+}) {
+  final merged = <int, List<double>>{
+    for (final entry in noteXs.entries) entry.key: [...entry.value],
+  };
+  if (!merged.containsKey(0)) {
+    merged[0] = [contentLeft];
+  }
+  if (!merged.containsKey(capacity)) {
+    merged[capacity] = [contentLeft + contentWidth];
+  }
+  return [
+    for (final entry in merged.entries)
+      NativeOnsetAnchor(
+        onset: entry.key,
+        x: entry.value.reduce((a, b) => a + b) / entry.value.length,
+      ),
+  ]..sort((a, b) => a.onset.compareTo(b.onset));
 }

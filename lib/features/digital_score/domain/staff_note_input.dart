@@ -13,9 +13,39 @@ const staffDurationLabels = {
   '16th': '1/16',
 };
 
-int durationForType(MusicAttributes attributes, String type) {
+const _sharpSpellings = <(PitchStep, int)>[
+  (PitchStep.c, 0),
+  (PitchStep.c, 1),
+  (PitchStep.d, 0),
+  (PitchStep.d, 1),
+  (PitchStep.e, 0),
+  (PitchStep.f, 0),
+  (PitchStep.f, 1),
+  (PitchStep.g, 0),
+  (PitchStep.g, 1),
+  (PitchStep.a, 0),
+  (PitchStep.a, 1),
+  (PitchStep.b, 0),
+];
+
+const _flatSpellings = <(PitchStep, int)>[
+  (PitchStep.c, 0),
+  (PitchStep.d, -1),
+  (PitchStep.d, 0),
+  (PitchStep.e, -1),
+  (PitchStep.e, 0),
+  (PitchStep.f, 0),
+  (PitchStep.g, -1),
+  (PitchStep.g, 0),
+  (PitchStep.a, -1),
+  (PitchStep.a, 0),
+  (PitchStep.b, -1),
+  (PitchStep.b, 0),
+];
+
+int durationForType(MusicAttributes attributes, String type, {int dots = 0}) {
   final divisions = attributes.divisions;
-  return switch (type) {
+  var duration = switch (type) {
     'whole' => divisions * 4,
     'half' => divisions * 2,
     'quarter' => divisions,
@@ -23,6 +53,24 @@ int durationForType(MusicAttributes attributes, String type) {
     '16th' => math.max(1, (divisions / 4).round()),
     _ => divisions,
   };
+  if (dots > 0) {
+    final extra = duration ~/ 2;
+    if (extra > 0) duration += extra;
+  }
+  return duration;
+}
+
+/// Spells [midi] with sharps, or with flats when [preferFlats] is set.
+MusicPitch spellMidi(int midi, {bool preferFlats = false}) {
+  final clamped = midi.clamp(12, 127);
+  final spelled = (preferFlats
+      ? _flatSpellings
+      : _sharpSpellings)[clamped % 12];
+  return MusicPitch(
+    step: spelled.$1,
+    octave: (clamped ~/ 12) - 1,
+    alter: spelled.$2,
+  );
 }
 
 int onsetFromTicks(int onsetTicks, int divisions) {
@@ -31,43 +79,8 @@ int onsetFromTicks(int onsetTicks, int divisions) {
 
 MusicPitch pitchFromMidi(int midi, {int alter = 0}) {
   final clamped = midi.clamp(12, 127);
-  const sharps = <(PitchStep, int)>[
-    (PitchStep.c, 0),
-    (PitchStep.c, 1),
-    (PitchStep.d, 0),
-    (PitchStep.d, 1),
-    (PitchStep.e, 0),
-    (PitchStep.f, 0),
-    (PitchStep.f, 1),
-    (PitchStep.g, 0),
-    (PitchStep.g, 1),
-    (PitchStep.a, 0),
-    (PitchStep.a, 1),
-    (PitchStep.b, 0),
-  ];
-  const flats = <(PitchStep, int)>[
-    (PitchStep.c, 0),
-    (PitchStep.d, -1),
-    (PitchStep.d, 0),
-    (PitchStep.e, -1),
-    (PitchStep.e, 0),
-    (PitchStep.f, 0),
-    (PitchStep.g, -1),
-    (PitchStep.g, 0),
-    (PitchStep.a, -1),
-    (PitchStep.a, 0),
-    (PitchStep.b, -1),
-    (PitchStep.b, 0),
-  ];
-  final spelled = alter < 0 ? flats[clamped % 12] : sharps[clamped % 12];
-  if (alter == 0) {
-    return MusicPitch(
-      step: spelled.$1,
-      octave: (clamped ~/ 12) - 1,
-      alter: spelled.$2,
-    );
-  }
-  final natural = sharps[clamped % 12];
+  if (alter == 0) return spellMidi(clamped);
+  final natural = _sharpSpellings[clamped % 12];
   if (natural.$2 == 0) {
     return MusicPitch(
       step: natural.$1,
@@ -75,10 +88,28 @@ MusicPitch pitchFromMidi(int midi, {int alter = 0}) {
       alter: alter.clamp(-1, 1),
     );
   }
+  final spelled = alter < 0
+      ? _flatSpellings[clamped % 12]
+      : _sharpSpellings[clamped % 12];
   return MusicPitch(
     step: spelled.$1,
     octave: (clamped ~/ 12) - 1,
     alter: spelled.$2,
+  );
+}
+
+/// Moves one semitone. Upward motion spells with sharps, downward with flats.
+MusicPitch pitchBySemitone(MusicPitch pitch, int delta) {
+  if (delta == 0) return pitch;
+  return spellMidi(pitch.midi + delta, preferFlats: delta < 0);
+}
+
+MusicPitch pitchByOctave(MusicPitch pitch, int octaves) {
+  if (octaves == 0) return pitch;
+  return MusicPitch(
+    step: pitch.step,
+    alter: pitch.alter,
+    octave: (pitch.octave + octaves).clamp(0, 8),
   );
 }
 

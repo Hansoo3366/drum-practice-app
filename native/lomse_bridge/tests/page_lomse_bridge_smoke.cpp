@@ -62,7 +62,7 @@ int main() {
   page_lomse_buffer_free(exported);
 
   constexpr char kInsert[] =
-      R"json({"action":"insert_ldp","values":{"source":"(n D4 q v1 p1)"}})json";
+      R"json({"action":"insert_ldp","target":{"id":"score:test","locator":{"partId":"P1","measureUid":"measure:test","staff":1,"voice":"1","onsetTicks":960,"elementKind":"insertion"}},"values":{"source":"(n D4 q v1 p1)","cursor":{"instrument":0,"staff":0,"time":64}}})json";
   const page_lomse_status_t edit_status = page_lomse_session_execute_json(
       session,
       reinterpret_cast<const std::uint8_t*>(kInsert),
@@ -75,6 +75,16 @@ int main() {
   assert(revision == 3);
   assert(page_lomse_session_redo(session, &revision) == PAGE_LOMSE_STATUS_OK);
   assert(revision == 4);
+
+  constexpr char kDelete[] =
+      R"json({"action":"delete_staff_obj","target":{"id":"score:test","locator":{"partId":"P1","measureUid":"measure:test","staff":1,"voice":"1","onsetTicks":960,"elementKind":"note"}},"values":{"cursor":{"instrument":0,"staff":0,"time":64}}})json";
+  const page_lomse_status_t delete_status = page_lomse_session_execute_json(
+      session,
+      reinterpret_cast<const std::uint8_t*>(kDelete),
+      std::strlen(kDelete),
+      &revision);
+  assert(delete_status == PAGE_LOMSE_STATUS_OK);
+  assert(revision == 5);
   assert(last_error(session).empty());
 
   page_lomse_session_dispose(session);

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
 import 'package:page_a_diddle/app/widgets/app_layout.dart';
+import 'package:page_a_diddle/features/digital_score/domain/note_input_feature.dart';
 
 /// Navigation shell for the piano product.
 ///
@@ -29,11 +30,12 @@ class PianoAppShell extends StatelessWidget {
       selectedIcon: const Icon(Icons.library_music),
       label: context.l10n.library,
     ),
-    NavigationDestination(
-      icon: const Icon(Icons.edit_note_outlined),
-      selectedIcon: const Icon(Icons.edit_note),
-      label: context.l10n.editSong,
-    ),
+    if (noteInputEnabled)
+      NavigationDestination(
+        icon: const Icon(Icons.edit_note_outlined),
+        selectedIcon: const Icon(Icons.edit_note),
+        label: context.l10n.editSong,
+      ),
   ];
 
   @override
@@ -44,6 +46,9 @@ class PianoAppShell extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final useRail = constraints.maxWidth >= appWideLayoutBreakpoint;
+        if (destinations.length <= 1) {
+          return Scaffold(body: navigationShell);
+        }
         if (!useRail) {
           return Scaffold(
             body: navigationShell,

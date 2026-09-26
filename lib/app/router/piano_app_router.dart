@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/router/app_transitions.dart';
 import 'package:page_a_diddle/app/widgets/piano_app_shell.dart';
+import 'package:page_a_diddle/features/digital_score/domain/note_input_feature.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_entry_screen.dart';
 import 'package:page_a_diddle/features/library/presentation/library_screen.dart';
 import 'package:page_a_diddle/features/piano/presentation/piano_editor_screen.dart';
@@ -40,19 +41,26 @@ final pianoRouterProvider = Provider<GoRouter>((ref) {
               ),
             ],
           ),
-          StatefulShellBranch(
-            routes: [
-              GoRoute(
-                path: '/editor',
-                pageBuilder: (context, state) => fadePage(
-                  key: state.pageKey,
-                  child: const PianoEditorScreen(),
+          if (noteInputEnabled)
+            StatefulShellBranch(
+              routes: [
+                GoRoute(
+                  path: '/editor',
+                  pageBuilder: (context, state) => fadePage(
+                    key: state.pageKey,
+                    child: const PianoEditorScreen(),
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
         ],
       ),
+      if (!noteInputEnabled)
+        GoRoute(
+          path: '/editor',
+          parentNavigatorKey: _pianoRootNavigatorKey,
+          redirect: (_, _) => '/library',
+        ),
       GoRoute(
         path: '/score/:songId',
         parentNavigatorKey: _pianoRootNavigatorKey,
@@ -61,7 +69,7 @@ final pianoRouterProvider = Provider<GoRouter>((ref) {
           duration: const Duration(milliseconds: 340),
           child: ScoreEntryScreen(
             songId: state.pathParameters['songId']!,
-            useSmoosic: true,
+            useLomse: false,
           ),
         ),
       ),

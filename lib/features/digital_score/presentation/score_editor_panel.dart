@@ -19,6 +19,15 @@ class ScoreEditorPanel extends StatelessWidget {
     required this.selectedEvent,
     required this.inputDurationType,
     required this.inputAlter,
+    this.inputDots = 0,
+    this.inputChord = false,
+    this.editSelectionDuration = false,
+    this.onToggleDot,
+    this.onToggleChord,
+    this.onPitchDown,
+    this.onPitchUp,
+    this.onOctaveDown,
+    this.onOctaveUp,
     required this.onUndo,
     required this.onRedo,
     required this.onModeChanged,
@@ -36,6 +45,15 @@ class ScoreEditorPanel extends StatelessWidget {
   final MusicEvent? selectedEvent;
   final String inputDurationType;
   final int inputAlter;
+  final int inputDots;
+  final bool inputChord;
+  final bool editSelectionDuration;
+  final VoidCallback? onToggleDot;
+  final VoidCallback? onToggleChord;
+  final VoidCallback? onPitchDown;
+  final VoidCallback? onPitchUp;
+  final VoidCallback? onOctaveDown;
+  final VoidCallback? onOctaveUp;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final ValueChanged<ScoreEditorMode> onModeChanged;
@@ -196,7 +214,78 @@ class ScoreEditorPanel extends StatelessWidget {
                                 onSelected: (_) => onInputAlterChanged(alter),
                               ),
                             ),
+                        if (onToggleDot != null)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Tooltip(
+                              message: l10n.dottedDuration,
+                              child: ChoiceChip(
+                                label: const Text('·'),
+                                selected: inputDots > 0,
+                                showCheckmark: false,
+                                onSelected: (_) => onToggleDot!(),
+                              ),
+                            ),
+                          ),
+                        if (mode == ScoreEditorMode.note &&
+                            onToggleChord != null)
+                          Tooltip(
+                            message: l10n.addChordTone,
+                            child: ChoiceChip(
+                              label: Icon(
+                                Icons.queue_music_outlined,
+                                size: 20,
+                                color: inputChord
+                                    ? AppColors.accent
+                                    : AppColors.ink,
+                              ),
+                              selected: inputChord,
+                              showCheckmark: false,
+                              onSelected: (_) => onToggleChord!(),
+                            ),
+                          ),
                       ],
+                    ),
+                  ),
+                if (editSelectionDuration)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: SizedBox(
+                      height: 42,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          for (final type in staffDurationTypes)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Tooltip(
+                                message: staffDurationLabels[type]!,
+                                child: ChoiceChip(
+                                  label: NoteDurationIcon(
+                                    durationType: type,
+                                    color: inputDurationType == type
+                                        ? AppColors.accent
+                                        : AppColors.ink,
+                                  ),
+                                  selected: inputDurationType == type,
+                                  showCheckmark: false,
+                                  onSelected: (_) =>
+                                      onDurationTypeChanged(type),
+                                ),
+                              ),
+                            ),
+                          if (onToggleDot != null)
+                            Tooltip(
+                              message: l10n.dottedDuration,
+                              child: ChoiceChip(
+                                label: const Text('·'),
+                                selected: inputDots > 0,
+                                showCheckmark: false,
+                                onSelected: (_) => onToggleDot!(),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 const SizedBox(height: 8),
@@ -214,6 +303,34 @@ class ScoreEditorPanel extends StatelessWidget {
                         onPressed: canRedo ? onRedo : null,
                         icon: const Icon(Icons.redo_rounded),
                       ),
+                      if (onPitchDown != null)
+                        IconButton(
+                          tooltip: l10n.pitchDown,
+                          onPressed: onPitchDown,
+                          icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                        ),
+                      if (onPitchUp != null)
+                        IconButton(
+                          tooltip: l10n.pitchUp,
+                          onPressed: onPitchUp,
+                          icon: const Icon(Icons.keyboard_arrow_up_rounded),
+                        ),
+                      if (onOctaveDown != null)
+                        IconButton(
+                          tooltip: l10n.octaveDown,
+                          onPressed: onOctaveDown,
+                          icon: const Icon(
+                            Icons.keyboard_double_arrow_down_rounded,
+                          ),
+                        ),
+                      if (onOctaveUp != null)
+                        IconButton(
+                          tooltip: l10n.octaveUp,
+                          onPressed: onOctaveUp,
+                          icon: const Icon(
+                            Icons.keyboard_double_arrow_up_rounded,
+                          ),
+                        ),
                       const Spacer(),
                       TextButton.icon(
                         onPressed: onAddChord,

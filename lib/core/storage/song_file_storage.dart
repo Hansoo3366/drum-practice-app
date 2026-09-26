@@ -91,6 +91,12 @@ class SongFileStorage {
   String originalKeyPathFor(String songId) =>
       path.join('original_keys', '$songId.json');
 
+  String omrQualityPathFor(String songId) =>
+      path.join('omr_quality', '$songId.json');
+
+  String omrSourcePathFor(String songId, String extension) =>
+      path.join('omr_sources', '$songId$extension');
+
   Future<void> saveAnnotations(String songId, String jsonContent) async {
     final relativePath = annotationPathFor(songId);
     final fullPath = path.join(
@@ -137,6 +143,50 @@ class SongFileStorage {
 
   Future<String?> loadOriginalKey(String songId) async {
     return _loadSidecar(originalKeyPathFor(songId));
+  }
+
+  Future<void> saveOmrQuality(String songId, String jsonContent) async {
+    await _saveSidecar(omrQualityPathFor(songId), jsonContent);
+  }
+
+  Future<String?> loadOmrQuality(String songId) async {
+    return _loadSidecar(omrQualityPathFor(songId));
+  }
+
+  Future<void> saveOmrSource({
+    required String songId,
+    required String fileName,
+    required List<int> bytes,
+  }) async {
+    final extension = path.extension(fileName).toLowerCase();
+    final safe = extension.isEmpty ? '.bin' : extension;
+    await replaceFile(omrSourcePathFor(songId, safe), bytes);
+    await _saveSidecar(
+      path.join('omr_sources', '$songId.json'),
+      jsonEncode({'fileName': fileName, 'extension': safe}),
+    );
+  }
+
+  Future<({String fileName, List<int> bytes})?> loadOmrSource(
+    String songId,
+  ) async {
+    final meta = await _loadSidecar(path.join('omr_sources', '$songId.json'));
+    var extension = '.pdf';
+    var fileName = '$songId.pdf';
+    if (meta != null && meta.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(meta);
+        if (decoded is Map) {
+          fileName = decoded['fileName']?.toString() ?? fileName;
+          extension = decoded['extension']?.toString() ?? extension;
+        }
+      } on Object {
+        // Fall through to the default name.
+      }
+    }
+    final file = await resolve(omrSourcePathFor(songId, extension));
+    if (!await file.exists() || await file.length() == 0) return null;
+    return (fileName: fileName, bytes: await file.readAsBytes());
   }
 
   Future<bool> hasPerformanceScore(String songId) async {

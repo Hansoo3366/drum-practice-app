@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
+import 'package:page_a_diddle/app/product.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
 import 'package:page_a_diddle/app/widgets/app_empty_state.dart';
 import 'package:page_a_diddle/app/widgets/compact_controls.dart';
@@ -11,6 +14,10 @@ import 'package:page_a_diddle/core/format/relative_time.dart';
 import 'package:page_a_diddle/core/storage/storage_provider.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_import_service.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_picker.dart';
+import 'package:page_a_diddle/features/digital_score/data/omr_convert_client.dart';
+import 'package:page_a_diddle/features/digital_score/data/omr_convert_jobs.dart';
+import 'package:page_a_diddle/features/digital_score/data/omr_source_picker.dart';
+import 'package:page_a_diddle/features/digital_score/domain/note_input_feature.dart';
 import 'package:page_a_diddle/features/library/data/folder_repository.dart';
 import 'package:page_a_diddle/features/library/data/label_repository.dart';
 import 'package:page_a_diddle/features/library/data/pdf_picker.dart';
@@ -51,11 +58,12 @@ class LibraryScreen extends ConsumerWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: const Icon(Icons.edit_note_rounded),
-              title: Text(context.l10n.createScore),
-              onTap: () => Navigator.pop(context, _LibraryAddAction.create),
-            ),
+            if (noteInputEnabled)
+              ListTile(
+                leading: const Icon(Icons.edit_note_rounded),
+                title: Text(context.l10n.createScore),
+                onTap: () => Navigator.pop(context, _LibraryAddAction.create),
+              ),
             ListTile(
               leading: const Icon(Icons.picture_as_pdf_outlined),
               title: Text(context.l10n.importPdf),
@@ -67,6 +75,12 @@ class LibraryScreen extends ConsumerWidget {
               onTap: () =>
                   Navigator.pop(context, _LibraryAddAction.importMusicXml),
             ),
+            if (isPianoProduct)
+              ListTile(
+                leading: const Icon(Icons.document_scanner_outlined),
+                title: Text(context.l10n.convertToDigitalScore),
+                onTap: () => Navigator.pop(context, _LibraryAddAction.convert),
+              ),
           ],
         ),
       ),
@@ -79,7 +93,47 @@ class LibraryScreen extends ConsumerWidget {
         await _importFromSource(context, ref, ScoreImportKind.pdf);
       case _LibraryAddAction.importMusicXml:
         await _importFromSource(context, ref, ScoreImportKind.musicXml);
+      case _LibraryAddAction.convert:
+        await _convertToDigitalScore(context, ref);
     }
+  }
+
+  Future<void> _convertToDigitalScore(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final file = await ref.read(omrSourcePickerProvider).pick();
+    if (file == null || !context.mounted) return;
+    final profile = await showModalBottomSheet<OmrRecognitionProfile>(
+      context: context,
+      useSafeArea: true,
+      builder: (sheetContext) => Padding(
+        padding: sheetContentPadding(sheetContext, top: 16, bottom: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.piano_rounded),
+              title: Text(sheetContext.l10n.omrProfileStandard),
+              onTap: () =>
+                  Navigator.pop(sheetContext, OmrRecognitionProfile.standard),
+            ),
+            ListTile(
+              leading: const Icon(Icons.lyrics_rounded),
+              title: Text(sheetContext.l10n.omrProfileChordsLyrics),
+              onTap: () => Navigator.pop(
+                sheetContext,
+                OmrRecognitionProfile.chordsLyrics,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (profile == null || !context.mounted) return;
+    await ref
+        .read(omrConvertJobsProvider.notifier)
+        .enqueue(file, folderId: _currentImportFolderId(ref), profile: profile);
   }
 
   Future<void> _createMusicXml(BuildContext context, WidgetRef ref) async {
@@ -199,9 +253,7 @@ class LibraryScreen extends ConsumerWidget {
       }
     } on Object catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
               kind == ScoreImportKind.musicXml
@@ -218,6 +270,7 @@ class LibraryScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final l10n = context.l10n;
     final songs = ref.watch(librarySongsProvider);
+    final convertJobs = ref.watch(omrConvertJobsProvider);
     final selectedFilter = ref.watch(libraryFilterProvider);
     final labelFilter = ref.watch(libraryLabelFilterProvider);
     final selection = ref.watch(librarySelectionProvider);
@@ -274,142 +327,158 @@ class LibraryScreen extends ConsumerWidget {
           const SizedBox(width: 4),
         ],
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1080),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 720;
-              final mainColumn = Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
-                    child: SearchBar(
-                      hintText: l10n.searchHint,
-                      leading: Icon(
-                        Icons.search_rounded,
-                        color: colors.onSurfaceVariant,
-                      ),
-                      elevation: const WidgetStatePropertyAll(0),
-                      backgroundColor: WidgetStatePropertyAll(
-                        colors.surfaceContainer,
-                      ),
-                      padding: const WidgetStatePropertyAll(
-                        EdgeInsets.symmetric(horizontal: 14),
-                      ),
-                      onChanged: ref.read(libraryQueryProvider.notifier).update,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  if (!wide) ...[
-                    const LibraryFolderSelector(),
-                    const SizedBox(height: 10),
-                  ],
-                  SizedBox(
-                    height: 36,
-                    child: ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      scrollDirection: Axis.horizontal,
-                      itemCount: LibraryFilter.values.length,
-                      separatorBuilder: (_, _) => const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        final filter = LibraryFilter.values[index];
-                        final selected = filter == selectedFilter;
-                        return FilterChip(
-                          label: Text(filter.label(l10n)),
-                          selected: selected,
-                          showCheckmark: false,
-                          onSelected: (_) => ref
-                              .read(libraryFilterProvider.notifier)
-                              .update(filter),
-                          selectedColor: AppColors.accent.withValues(
-                            alpha: 0.16,
+      body: Stack(
+        children: [
+          const _ConvertResume(),
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1080),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final wide = constraints.maxWidth >= 720;
+                  final mainColumn = Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+                        child: SearchBar(
+                          hintText: l10n.searchHint,
+                          leading: Icon(
+                            Icons.search_rounded,
+                            color: colors.onSurfaceVariant,
                           ),
-                          labelStyle: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13,
-                            color: selected
-                                ? AppColors.ink
-                                : colors.onSurfaceVariant,
+                          elevation: const WidgetStatePropertyAll(0),
+                          backgroundColor: WidgetStatePropertyAll(
+                            colors.surfaceContainer,
                           ),
-                          side: BorderSide(
-                            color: selected ? AppColors.accent : colors.outline,
+                          padding: const WidgetStatePropertyAll(
+                            EdgeInsets.symmetric(horizontal: 14),
                           ),
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                        );
-                      },
-                    ),
-                  ),
-                  if (labelFilter != null) ...[
-                    const SizedBox(height: 8),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: InputChip(
-                          label: Text('#$labelFilter'),
-                          onDeleted: () => ref
-                              .read(libraryLabelFilterProvider.notifier)
-                              .update(null),
-                          visualDensity: VisualDensity.compact,
+                          onChanged: ref
+                              .read(libraryQueryProvider.notifier)
+                              .update,
                         ),
                       ),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  songs.when(
-                    data: (items) => items.isEmpty
-                        ? const SizedBox.shrink()
-                        : Padding(
-                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                l10n.libraryCountFilter(
-                                  items.length,
-                                  selectedFilter.label(l10n),
-                                ),
-                                style: Theme.of(context).textTheme.labelMedium
-                                    ?.copyWith(
-                                      color: colors.onSurfaceVariant,
-                                      fontWeight: FontWeight.w700,
-                                    ),
+                      const SizedBox(height: 10),
+                      if (!wide) ...[
+                        const LibraryFolderSelector(),
+                        const SizedBox(height: 10),
+                      ],
+                      SizedBox(
+                        height: 36,
+                        child: ListView.separated(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          scrollDirection: Axis.horizontal,
+                          itemCount: LibraryFilter.values.length,
+                          separatorBuilder: (_, _) => const SizedBox(width: 8),
+                          itemBuilder: (context, index) {
+                            final filter = LibraryFilter.values[index];
+                            final selected = filter == selectedFilter;
+                            return FilterChip(
+                              label: Text(filter.label(l10n)),
+                              selected: selected,
+                              showCheckmark: false,
+                              onSelected: (_) => ref
+                                  .read(libraryFilterProvider.notifier)
+                                  .update(filter),
+                              selectedColor: AppColors.accent.withValues(
+                                alpha: 0.16,
                               ),
+                              labelStyle: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                                color: selected
+                                    ? AppColors.ink
+                                    : colors.onSurfaceVariant,
+                              ),
+                              side: BorderSide(
+                                color: selected
+                                    ? AppColors.accent
+                                    : colors.outline,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                            );
+                          },
+                        ),
+                      ),
+                      if (labelFilter != null) ...[
+                        const SizedBox(height: 8),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: InputChip(
+                              label: Text('#$labelFilter'),
+                              onDeleted: () => ref
+                                  .read(libraryLabelFilterProvider.notifier)
+                                  .update(null),
+                              visualDensity: VisualDensity.compact,
                             ),
                           ),
-                    loading: () => const SizedBox.shrink(),
-                    error: (_, _) => const SizedBox.shrink(),
-                  ),
-                  Expanded(
-                    child: songs.when(
-                      data: (items) => items.isEmpty
-                          ? _EmptyLibrary(
-                              onImport: () => _importScore(context, ref),
-                            )
-                          : _SongList(items: items),
-                      loading: () =>
-                          const Center(child: CircularProgressIndicator()),
-                      error: (error, stackTrace) => const _LibraryError(),
-                    ),
-                  ),
-                ],
-              );
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      songs.when(
+                        data: (items) => items.isEmpty
+                            ? const SizedBox.shrink()
+                            : Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  0,
+                                  20,
+                                  4,
+                                ),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    l10n.libraryCountFilter(
+                                      items.length,
+                                      selectedFilter.label(l10n),
+                                    ),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelMedium
+                                        ?.copyWith(
+                                          color: colors.onSurfaceVariant,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                  ),
+                                ),
+                              ),
+                        loading: () => const SizedBox.shrink(),
+                        error: (_, _) => const SizedBox.shrink(),
+                      ),
+                      Expanded(
+                        child: songs.when(
+                          data: (items) => items.isEmpty && convertJobs.isEmpty
+                              ? _EmptyLibrary(
+                                  onImport: () => _importScore(context, ref),
+                                )
+                              : _SongList(items: items),
+                          loading: () =>
+                              const Center(child: CircularProgressIndicator()),
+                          error: (error, stackTrace) => const _LibraryError(),
+                        ),
+                      ),
+                    ],
+                  );
 
-              if (!wide) {
-                return mainColumn;
-              }
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SizedBox(width: 236, child: LibraryFolderSidebar()),
-                  Expanded(child: mainColumn),
-                ],
-              );
-            },
+                  if (!wide) {
+                    return mainColumn;
+                  }
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SizedBox(width: 236, child: LibraryFolderSidebar()),
+                      Expanded(child: mainColumn),
+                    ],
+                  );
+                },
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -502,11 +571,15 @@ class _SongList extends ConsumerWidget {
     final selection = ref.watch(librarySelectionProvider);
     final selecting = selection.isNotEmpty;
 
+    final jobs = ref.watch(omrConvertJobsProvider);
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 28),
-      itemCount: items.length,
+      itemCount: jobs.length + items.length,
       itemBuilder: (context, index) {
-        final song = items[index];
+        if (index < jobs.length) {
+          return _ConvertJobTile(job: jobs[index]);
+        }
+        final song = items[index - jobs.length];
         final colors = Theme.of(context).colorScheme;
         final folder = song.folderId == null ? null : folderById[song.folderId];
         final labelsAsync = ref.watch(songLabelsProvider(song.id));
@@ -654,6 +727,116 @@ class _SongList extends ConsumerWidget {
   }
 }
 
+class _ConvertResume extends ConsumerStatefulWidget {
+  const _ConvertResume();
+
+  @override
+  ConsumerState<_ConvertResume> createState() => _ConvertResumeState();
+}
+
+class _ConvertResumeState extends ConsumerState<_ConvertResume>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ref.read(omrConvertJobsProvider.notifier).resume());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
+class _ConvertJobTile extends ConsumerWidget {
+  const _ConvertJobTile({required this.job});
+
+  final OmrConvertJob job;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = context.l10n;
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      child: Row(
+        children: [
+          const SizedBox(width: 40),
+          Container(
+            width: 52,
+            height: 64,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppColors.surfaceSoft,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Icon(
+              job.isRunning
+                  ? Icons.document_scanner_outlined
+                  : Icons.error_outline_rounded,
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  job.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  job.isRunning
+                      ? (job.progress > 0
+                            ? l10n.convertingScorePercent(job.progress)
+                            : l10n.convertingScore)
+                      : (job.error ?? l10n.convertFailed),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+                if (job.isRunning) ...[
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(
+                    value: job.progress > 0 ? job.progress / 100 : null,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (!job.isRunning)
+            CompactIconButton(
+              icon: Icons.close_rounded,
+              tooltip: l10n.close,
+              onPressed: () =>
+                  ref.read(omrConvertJobsProvider.notifier).dismiss(job.id),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _EmptyLibrary extends StatelessWidget {
   const _EmptyLibrary({required this.onImport});
 
@@ -687,4 +870,4 @@ class _LibraryError extends StatelessWidget {
   }
 }
 
-enum _LibraryAddAction { create, pdf, importMusicXml }
+enum _LibraryAddAction { create, pdf, importMusicXml, convert }

@@ -225,6 +225,51 @@ void main() {
       expect(RegExp('<chord').allMatches(encoded), isEmpty);
       expect(codec.decodeXml(encoded).noteCount, 3);
     });
+
+    test('round-trips beams, ties, and slurs for Verovio engraving', () {
+      const xml = '''
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
+  <part id="P1"><measure number="1">
+    <attributes><divisions>2</divisions>
+      <time><beats>4</beats><beat-type>4</beat-type></time>
+      <clef><sign>G</sign><line>2</line></clef>
+    </attributes>
+    <note>
+      <pitch><step>F</step><octave>4</octave></pitch>
+      <duration>1</duration><tie type="start"/><voice>1</voice><type>eighth</type>
+      <beam number="1">begin</beam>
+      <notations><tied type="start"/><slur type="start" number="1"/></notations>
+    </note>
+    <note>
+      <pitch><step>F</step><octave>4</octave></pitch>
+      <duration>1</duration><tie type="stop"/><voice>1</voice><type>eighth</type>
+      <beam number="1">end</beam>
+      <notations><tied type="stop"/><slur type="stop" number="1"/></notations>
+    </note>
+  </measure></part>
+</score-partwise>
+''';
+      final score = codec.decodeXml(xml);
+      final notes = score.parts.single.measures.single.events
+          .whereType<MusicNote>()
+          .toList();
+      expect(notes, hasLength(2));
+      expect(notes[0].beams.single.value, 'begin');
+      expect(notes[0].tieStart, isTrue);
+      expect(notes[0].slurStart, isTrue);
+      expect(notes[1].beams.single.value, 'end');
+      expect(notes[1].tieStop, isTrue);
+      expect(notes[1].slurStop, isTrue);
+
+      final encoded = utf8.decode(codec.encodeMusicXml(score));
+      expect(encoded, contains('<beam number="1">begin</beam>'));
+      expect(encoded, contains('<beam number="1">end</beam>'));
+      expect(encoded, contains('<tied type="start"/>'));
+      expect(encoded, contains('<tied type="stop"/>'));
+      expect(encoded, contains('<slur type="start" number="1"/>'));
+      expect(encoded, contains('<slur type="stop" number="1"/>'));
+    });
   });
 }
 

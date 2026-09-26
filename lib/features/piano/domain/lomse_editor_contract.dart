@@ -1,10 +1,10 @@
 import 'app_score_element.dart';
 
-/// JSON-safe edit request that will cross the future Lomse FFI boundary.
+/// JSON-safe edit request that crosses the Lomse FFI boundary.
 ///
-/// The native implementation is intentionally not coupled to this contract
-/// yet. Keeping the command surface small lets the Flutter UI and tests move
-/// ahead without exposing Lomse's internal C++ types.
+/// Targets stay app-owned (`AppScoreElementKey`/`ScoreEventLocator`); the
+/// native bridge receives only a disposable cursor projection in `values` and
+/// never exposes Lomse's internal C++ types.
 class LomseEditRequest {
   const LomseEditRequest({
     required this.action,

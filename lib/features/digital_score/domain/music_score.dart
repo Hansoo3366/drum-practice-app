@@ -237,6 +237,9 @@ class MusicNote extends MusicEvent {
     this.isChord = false,
     this.tieStart = false,
     this.tieStop = false,
+    this.slurStart = false,
+    this.slurStop = false,
+    this.beams = const [],
   }) {
     if (onset < 0) {
       throw const FormatException('A note onset cannot be negative.');
@@ -261,6 +264,9 @@ class MusicNote extends MusicEvent {
   final bool isChord;
   final bool tieStart;
   final bool tieStop;
+  final bool slurStart;
+  final bool slurStop;
+  final List<MusicBeam> beams;
 
   bool get isRest => pitch == null;
   int get end => onset + duration;
@@ -277,6 +283,9 @@ class MusicNote extends MusicEvent {
     bool? isChord,
     bool? tieStart,
     bool? tieStop,
+    bool? slurStart,
+    bool? slurStop,
+    List<MusicBeam>? beams,
   }) {
     return MusicNote(
       onset: onset ?? this.onset,
@@ -290,8 +299,18 @@ class MusicNote extends MusicEvent {
       isChord: isChord ?? this.isChord,
       tieStart: tieStart ?? this.tieStart,
       tieStop: tieStop ?? this.tieStop,
+      slurStart: slurStart ?? this.slurStart,
+      slurStop: slurStop ?? this.slurStop,
+      beams: beams ?? this.beams,
     );
   }
+}
+
+class MusicBeam {
+  const MusicBeam({this.number = 1, required this.value});
+
+  final int number;
+  final String value;
 }
 
 class MusicPitch {
