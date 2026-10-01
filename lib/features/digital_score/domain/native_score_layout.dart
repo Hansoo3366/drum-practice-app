@@ -136,6 +136,7 @@ class NativeNotePlacement {
     required this.midi,
     required this.center,
     required this.isRest,
+    this.bounds,
   });
 
   final int partIndex;
@@ -146,6 +147,9 @@ class NativeNotePlacement {
   final int? midi;
   final Offset center;
   final bool isRest;
+
+  /// Engraved box of the note, stem included for single notes.
+  final Rect? bounds;
 }
 
 class NativeStaffHit {
@@ -188,10 +192,29 @@ class NativeScoreLayout {
     return null;
   }
 
-  NativeNotePlacement? noteAt(Offset point, {double radius = 14}) {
+  NativeNotePlacement? noteAt(
+    Offset point, {
+    double radius = 14,
+    bool includeRests = false,
+  }) {
     NativeNotePlacement? best;
     var bestDist = radius * radius;
+    // A single note's box includes its stem, so its center can sit well away
+    // from the head at large zoom. Prefer the nearest box that holds the tap.
+    var inside = double.infinity;
     for (final note in notes) {
+      if (note.isRest && !includeRests) continue;
+      final bounds = note.bounds;
+      if (bounds == null || !bounds.inflate(4).contains(point)) continue;
+      final dist = (note.center - point).distanceSquared;
+      if (dist < inside) {
+        inside = dist;
+        best = note;
+      }
+    }
+    if (best != null) return best;
+    for (final note in notes) {
+      if (note.isRest && !includeRests) continue;
       final dx = note.center.dx - point.dx;
       final dy = note.center.dy - point.dy;
       final dist = dx * dx + dy * dy;

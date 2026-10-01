@@ -7,6 +7,7 @@ import 'package:page_a_diddle/app/icons/app_icons.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/l10n/locale_controller.dart';
 import 'package:page_a_diddle/app/l10n/locale_picker.dart';
+import 'package:page_a_diddle/app/product.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
 import 'package:page_a_diddle/app/theme/theme_controller.dart';
 import 'package:page_a_diddle/app/widgets/app_brand_mark.dart';
@@ -63,16 +64,15 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           _SectionHeader(l10n.sectionApp),
-          ListTile(
-            leading: Icon(Icons.language_rounded, color: colors.primary),
-            title: Text(l10n.language),
-            subtitle: Text(AppLocaleLabels.of(l10n, locale)),
-            onTap: () => pickAppLanguage(
-              context: context,
-              ref: ref,
-              current: locale,
+          // The piano app is Korean only.
+          if (!isPianoProduct)
+            ListTile(
+              leading: Icon(Icons.language_rounded, color: colors.primary),
+              title: Text(l10n.language),
+              subtitle: Text(AppLocaleLabels.of(l10n, locale)),
+              onTap: () =>
+                  pickAppLanguage(context: context, ref: ref, current: locale),
             ),
-          ),
           ListTile(
             leading: Icon(Icons.palette_outlined, color: colors.primary),
             title: Text(l10n.theme),
@@ -183,9 +183,9 @@ class SettingsScreen extends ConsumerWidget {
     final uri = Uri.parse(AppSupport.supportMailUri);
     final ok = await launchUrl(uri);
     if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.l10n.couldNotOpenMail)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.couldNotOpenMail)));
     }
   }
 }

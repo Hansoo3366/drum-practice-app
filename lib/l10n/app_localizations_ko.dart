@@ -1704,7 +1704,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get moveSectionLater => '구간 순서 아래로';
 
   @override
-  String get noSections => '먼저 이 마디에 구간을 붙이세요';
+  String get noSections => '마디를 눌러 구간을 나누세요';
 
   @override
   String get noHarmony => '코드 없음';
@@ -1750,4 +1750,248 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get playFailed => '재생할 수 없습니다';
+
+  @override
+  String get proofread => '교정';
+
+  @override
+  String proofreadBar(int number, int count) {
+    return '$number / $count마디';
+  }
+
+  @override
+  String get noteStepUp => '한 칸 위';
+
+  @override
+  String get noteStepDown => '한 칸 아래';
+
+  @override
+  String get noteSharp => '샤프';
+
+  @override
+  String get noteFlat => '플랫';
+
+  @override
+  String get noteNatural => '제자리표';
+
+  @override
+  String get deleteNote => '음표 삭제';
+
+  @override
+  String get restToNote => '음표로';
+
+  @override
+  String get previousNote => '이전 음';
+
+  @override
+  String get nextNote => '다음 음';
+
+  @override
+  String get previousBar => '이전 마디';
+
+  @override
+  String get nextBar => '다음 마디';
+
+  @override
+  String get chordSymbolHint => 'C, F#m7, B♭/D';
+
+  @override
+  String proofreadVersionName(int n) {
+    return '교정 $n';
+  }
+
+  @override
+  String get saveBeforeProofread => '먼저 변경 사항을 저장하거나 버리세요';
+
+  @override
+  String get goToBar => '마디 이동';
+
+  @override
+  String sectionBarRange(int start, int end) {
+    return '$start–$end마디';
+  }
+
+  @override
+  String get sectionOrder => '순서';
+
+  @override
+  String get sectionSolo => '솔로';
+
+  @override
+  String get sectionInterlude => '간주';
+
+  @override
+  String sectionBarPickEnd(int number) {
+    return '$number마디부터 · 뒤 마디를 누르면 범위가 늘어나요';
+  }
+
+  @override
+  String sectionRange(int start, int end) {
+    return '$start–$end마디 · 아래 줄을 누르면 거기까지 늘어나요';
+  }
+
+  @override
+  String get sectionStartHint => '마디를 누르면 그 마디부터 새 구간이 됩니다';
+
+  @override
+  String sectionInfo(String name, int start, int end) {
+    return '$name · $start–$end마디';
+  }
+
+  @override
+  String get sectionCustom => '직접 입력';
+
+  @override
+  String get sectionRemoveBoundary => '앞 구간과 합치기';
+
+  @override
+  String get sectionUnnamed => '이름 없음';
+
+  @override
+  String get sectionNameTitle => '구간 이름';
+
+  @override
+  String get playbackAsWritten => '적힌 순서대로 연주합니다';
+
+  @override
+  String playbackSummary(int bars, String time) {
+    return '$bars마디 · $time';
+  }
+
+  @override
+  String playbackSkipped(int count) {
+    return '$count마디는 연주하지 않음';
+  }
+
+  @override
+  String get buildOrderFromSections => '적힌 순서로 시작';
+
+  @override
+  String get resetPlaybackOrder => '적힌 순서로 되돌리기';
+
+  @override
+  String performanceVersionName(int n) {
+    return '연주용 $n';
+  }
+
+  @override
+  String repeatTimes(int count) {
+    return '×$count';
+  }
+
+  @override
+  String get sequenceUnsavedBody => '나가기 전에 연주 순서를 저장할까요?';
+
+  @override
+  String get saveSequenceFirst => '연주 순서를 먼저 저장하거나 버리세요';
+
+  @override
+  String get fetchAiVersion => 'AI 보정 받기';
+
+  @override
+  String get aiFetching => 'AI 보정을 받는 중이에요… 몇 분 걸릴 수 있어요.';
+
+  @override
+  String get aiFetchUnchanged => 'AI 검수 결과 고칠 곳이 없었어요.';
+
+  @override
+  String get aiFetchExpired => '서버에 이 변환 결과가 더 이상 없어요. AI 보정을 받으려면 다시 변환하세요.';
+
+  @override
+  String get aiFetchUnavailable => '지금은 서버에서 AI 검수를 쓸 수 없어요.';
+
+  @override
+  String get aiFetchFailed => 'AI 보정을 받지 못했어요.';
+
+  @override
+  String endingPass(int pass) {
+    return '$pass번째 반복';
+  }
+
+  @override
+  String get structureTabSections => '구간 나누기';
+
+  @override
+  String get structureTabOrder => '연주 순서';
+
+  @override
+  String get makeScoreFromOrder => '이 순서로 새 악보 만들기';
+
+  @override
+  String get openScoreFromOrder => '이 순서로 만든 악보 열기';
+
+  @override
+  String get scoreFromOrderKeepsThis => '지금 악보는 그대로 남아요.';
+
+  @override
+  String transposedVersionName(String key) {
+    return '$key 조옮김';
+  }
+
+  @override
+  String get makeThreeStaff => '피아노 반주 추가(3단)';
+
+  @override
+  String get threeStaffVersionName => '피아노 반주';
+
+  @override
+  String get threeStaffNeedsChords => '코드 기호가 없어 피아노 반주를 만들 수 없습니다';
+
+  @override
+  String get threeStaffNeedsMelody => '한 줄짜리 멜로디 악보에만 피아노 반주를 추가할 수 있습니다';
+
+  @override
+  String get pianoPartName => '피아노';
+
+  @override
+  String get pianoPattern => '오른손';
+
+  @override
+  String get pianoPatternHeld => '길게';
+
+  @override
+  String get pianoPatternBeats => '박마다';
+
+  @override
+  String get pianoPatternBroken => '분산';
+
+  @override
+  String get pianoRegister => '음역';
+
+  @override
+  String get pianoRegisterMiddle => '가운데';
+
+  @override
+  String get pianoRegisterLow => '낮게';
+
+  @override
+  String get pianoAskAdvice => 'AI 추천 받기';
+
+  @override
+  String get pianoAdviceFailed => '지금은 추천을 받을 수 없습니다';
+
+  @override
+  String get pianoSectionStyles => '구간별';
+
+  @override
+  String get pianoOneStyle => '전체 한 가지로';
+
+  @override
+  String pianoSectionStyle(int bar, String pattern, String register) {
+    return '$bar마디부터: $pattern · $register';
+  }
+
+  @override
+  String get pianoChordFixes => '확인할 코드';
+
+  @override
+  String get pianoNoChordFixes => '없음';
+
+  @override
+  String pianoChordFix(int bar, String current, String suggested) {
+    return '$bar마디: $current → $suggested';
+  }
+
+  @override
+  String get pianoMake => '만들기';
 }

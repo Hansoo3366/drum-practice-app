@@ -1706,7 +1706,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get moveSectionLater => 'Move section later';
 
   @override
-  String get noSections => 'Mark a section on this measure first';
+  String get noSections => 'Tap a bar to start a section';
 
   @override
   String get noHarmony => 'No chords';
@@ -1752,4 +1752,253 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get playFailed => 'Can\'t play';
+
+  @override
+  String get proofread => 'Proofread';
+
+  @override
+  String proofreadBar(int number, int count) {
+    return 'Bar $number of $count';
+  }
+
+  @override
+  String get noteStepUp => 'Step up';
+
+  @override
+  String get noteStepDown => 'Step down';
+
+  @override
+  String get noteSharp => 'Sharp';
+
+  @override
+  String get noteFlat => 'Flat';
+
+  @override
+  String get noteNatural => 'Natural';
+
+  @override
+  String get deleteNote => 'Delete note';
+
+  @override
+  String get restToNote => 'Make note';
+
+  @override
+  String get previousNote => 'Previous note';
+
+  @override
+  String get nextNote => 'Next note';
+
+  @override
+  String get previousBar => 'Previous bar';
+
+  @override
+  String get nextBar => 'Next bar';
+
+  @override
+  String get chordSymbolHint => 'C, F#m7, B♭/D';
+
+  @override
+  String proofreadVersionName(int n) {
+    return 'Proofread $n';
+  }
+
+  @override
+  String get saveBeforeProofread => 'Save or discard your changes first';
+
+  @override
+  String get goToBar => 'Go to bar';
+
+  @override
+  String sectionBarRange(int start, int end) {
+    return 'Bars $start–$end';
+  }
+
+  @override
+  String get sectionOrder => 'Order';
+
+  @override
+  String get sectionSolo => 'Solo';
+
+  @override
+  String get sectionInterlude => 'Interlude';
+
+  @override
+  String sectionBarPickEnd(int number) {
+    return 'Bar $number · tap the last bar too, or pick a name';
+  }
+
+  @override
+  String sectionRange(int start, int end) {
+    return 'Bars $start–$end · tap a later line to extend';
+  }
+
+  @override
+  String get sectionStartHint => 'Tap a bar to start a new section there';
+
+  @override
+  String sectionInfo(String name, int start, int end) {
+    return '$name · bars $start–$end';
+  }
+
+  @override
+  String get sectionCustom => 'Custom…';
+
+  @override
+  String get sectionRemoveBoundary => 'Merge with previous';
+
+  @override
+  String get sectionUnnamed => 'No name';
+
+  @override
+  String get sectionNameTitle => 'Section name';
+
+  @override
+  String get playbackAsWritten => 'Plays as written';
+
+  @override
+  String playbackSummary(int bars, String time) {
+    return '$bars bars · $time';
+  }
+
+  @override
+  String playbackSkipped(int count) {
+    return '$count bars not played';
+  }
+
+  @override
+  String get buildOrderFromSections => 'Start from the score\'s order';
+
+  @override
+  String get resetPlaybackOrder => 'Play as written';
+
+  @override
+  String performanceVersionName(int n) {
+    return 'Performance $n';
+  }
+
+  @override
+  String repeatTimes(int count) {
+    return '×$count';
+  }
+
+  @override
+  String get sequenceUnsavedBody => 'Save the playback order before leaving?';
+
+  @override
+  String get saveSequenceFirst => 'Save or discard the playback order first';
+
+  @override
+  String get fetchAiVersion => 'Get AI correction';
+
+  @override
+  String get aiFetching =>
+      'Getting the AI correction… this can take a few minutes.';
+
+  @override
+  String get aiFetchUnchanged => 'The AI review found nothing to change.';
+
+  @override
+  String get aiFetchExpired =>
+      'The server no longer has this conversion. Convert the score again to get an AI correction.';
+
+  @override
+  String get aiFetchUnavailable =>
+      'AI review is not available on the server right now.';
+
+  @override
+  String get aiFetchFailed => 'Could not get the AI correction.';
+
+  @override
+  String endingPass(int pass) {
+    return 'Pass $pass';
+  }
+
+  @override
+  String get structureTabSections => 'Sections';
+
+  @override
+  String get structureTabOrder => 'Order';
+
+  @override
+  String get makeScoreFromOrder => 'Make a score in this order';
+
+  @override
+  String get openScoreFromOrder => 'Open the score in this order';
+
+  @override
+  String get scoreFromOrderKeepsThis => 'This score stays as it is.';
+
+  @override
+  String transposedVersionName(String key) {
+    return 'Transposed to $key';
+  }
+
+  @override
+  String get makeThreeStaff => 'Add a piano part';
+
+  @override
+  String get threeStaffVersionName => 'With piano';
+
+  @override
+  String get threeStaffNeedsChords =>
+      'There are no chord symbols to make a piano part from';
+
+  @override
+  String get threeStaffNeedsMelody =>
+      'A piano part can only be added to a one-staff melody';
+
+  @override
+  String get pianoPartName => 'Piano';
+
+  @override
+  String get pianoPattern => 'Right hand';
+
+  @override
+  String get pianoPatternHeld => 'Held';
+
+  @override
+  String get pianoPatternBeats => 'Every beat';
+
+  @override
+  String get pianoPatternBroken => 'Broken';
+
+  @override
+  String get pianoRegister => 'Register';
+
+  @override
+  String get pianoRegisterMiddle => 'Middle';
+
+  @override
+  String get pianoRegisterLow => 'Low';
+
+  @override
+  String get pianoAskAdvice => 'AI suggestion';
+
+  @override
+  String get pianoAdviceFailed => 'No suggestion available right now';
+
+  @override
+  String get pianoSectionStyles => 'By section';
+
+  @override
+  String get pianoOneStyle => 'One style for all';
+
+  @override
+  String pianoSectionStyle(int bar, String pattern, String register) {
+    return 'From bar $bar: $pattern · $register';
+  }
+
+  @override
+  String get pianoChordFixes => 'Chords to check';
+
+  @override
+  String get pianoNoChordFixes => 'None';
+
+  @override
+  String pianoChordFix(int bar, String current, String suggested) {
+    return 'Bar $bar: $current → $suggested';
+  }
+
+  @override
+  String get pianoMake => 'Make';
 }

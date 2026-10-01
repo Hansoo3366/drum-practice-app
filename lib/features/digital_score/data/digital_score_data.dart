@@ -28,6 +28,7 @@ class DigitalScoreData {
     this.arrangement = ArrangementProfile.off,
     this.originalFifths = 0,
     this.quality,
+    this.omrJobId,
   });
 
   final Song song;
@@ -48,6 +49,9 @@ class DigitalScoreData {
   final ArrangementProfile arrangement;
   final int originalFifths;
   final OmrQualityReport? quality;
+
+  /// Server job that converted the song, while its AI version can be fetched.
+  final String? omrJobId;
 }
 
 final digitalScoreDataProvider = FutureProvider.autoDispose
@@ -68,7 +72,6 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
       final sourceXml = codec.xmlString(bytes, fileName: file.path);
       final score = codec.decodeXml(sourceXml);
       final editor = ref.watch(digitalScoreEditorServiceProvider);
-      final sequence = await editor.loadSequence(songId);
       final arrangement = await editor.loadArrangement(songId);
       final originalFifths = await editor.loadOrCaptureOriginalFifths(
         songId: songId,
@@ -98,6 +101,10 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
           await editor.saveVersionCatalog(songId, versionCatalog);
         }
       }
+      final sequence = await editor.loadSequence(
+        songId,
+        versionId: versionCatalog.activeId,
+      );
       await repository.markOpened(songId);
       final quality = await _loadOrBuildQuality(
         ref.watch(songFileStorageProvider),
@@ -116,6 +123,7 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
         arrangement: arrangement,
         originalFifths: originalFifths,
         quality: quality,
+        omrJobId: await ref.watch(songFileStorageProvider).loadOmrJobId(songId),
       );
     });
 

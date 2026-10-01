@@ -119,6 +119,18 @@ String keyTonicLabel(int fifths) {
   return labels[wrapKeyFifths(fifths)]!;
 }
 
+/// Key name of each bar of the first part: the major tonic, or the
+/// relative minor ("Gm") when the file marks the key as minor.
+List<String> measureKeyNames(MusicScore score) {
+  if (score.parts.isEmpty) return const [];
+  return [
+    for (final measure in score.parts.first.measures)
+      measure.attributes.keyMode?.toLowerCase() == 'minor'
+          ? '${keyTonicLabel(measure.attributes.keyFifths + 3)}m'
+          : keyTonicLabel(measure.attributes.keyFifths),
+  ];
+}
+
 List<int> measureKeyFifths(MusicScore score) {
   if (score.parts.isEmpty) return const [];
   return [
@@ -230,6 +242,20 @@ MusicHarmony _transposeHarmony(
   );
 }
 
+/// A chord root or bass with at most one accidental: a double flat or
+/// double sharp, which the key's letter shift can produce, is respelled on
+/// the neighbouring letter ("B♭♭" becomes "A").
+({PitchStep step, int alter}) simpleChordSpelling(PitchStep step, int alter) {
+  if (alter.abs() <= 1) return (step: step, alter: alter);
+  final pitchClass = _positiveMod(step.naturalSemitone + alter, 12);
+  final next =
+      PitchStep.values[_positiveMod(step.index + (alter > 0 ? 1 : -1), 7)];
+  var nextAlter = pitchClass - next.naturalSemitone;
+  if (nextAlter > 6) nextAlter -= 12;
+  if (nextAlter < -6) nextAlter += 12;
+  return (step: next, alter: nextAlter);
+}
+
 MusicPitch transposePitch(
   MusicPitch pitch, {
   required int semitones,
@@ -262,7 +288,7 @@ MusicPitch transposePitch(
   var newAlter = newPc - newStep.naturalSemitone;
   if (newAlter > 6) newAlter -= 12;
   if (newAlter < -6) newAlter += 12;
-  return (step: newStep, alter: newAlter);
+  return simpleChordSpelling(newStep, newAlter);
 }
 
 int _positiveMod(int value, int modulo) => (value % modulo + modulo) % modulo;

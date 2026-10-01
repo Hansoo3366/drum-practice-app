@@ -1,11 +1,16 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:page_a_diddle/features/library/data/image_pdf.dart';
+import 'package:page_a_diddle/features/library/data/pdf_picker.dart';
 import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
 
 abstract interface class OmrSourcePicker {
   Future<PickedLocalFile?> pick();
 }
 
+/// Picks a PDF or score images for conversion. Images become one PDF so a
+/// song photographed over several pages converts as one score and the
+/// source comparison screen can crop it like any PDF.
 class FilePickerOmrSourcePicker implements OmrSourcePicker {
   const FilePickerOmrSourcePicker();
 
@@ -14,21 +19,17 @@ class FilePickerOmrSourcePicker implements OmrSourcePicker {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['pdf', 'jpg', 'jpeg', 'png'],
-      allowMultiple: false,
+      allowMultiple: true,
       withData: true,
     );
-    if (result == null) return null;
-    final file = result.files.single;
-    if (file.path case final filePath?) {
-      return PickedLocalFile(
-        name: file.name,
-        path: filePath,
-        bytes: file.bytes,
-      );
-    }
+    if (result == null || result.files.isEmpty) return null;
+    final picked = await combinePickedScore([
+      for (final file in result.files) await pickedLocalFile(file),
+    ], read: readPickedFile);
     return PickedLocalFile(
-      name: file.name,
-      bytes: file.bytes ?? await file.xFile.readAsBytes(),
+      name: picked.name,
+      path: picked.path,
+      bytes: picked.bytes ?? await readPickedFile(picked),
     );
   }
 }

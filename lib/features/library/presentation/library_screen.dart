@@ -824,6 +824,13 @@ class _ConvertJobTile extends ConsumerWidget {
               ],
             ),
           ),
+          if (!job.isRunning && (job.serverJobId ?? '').isNotEmpty)
+            CompactIconButton(
+              icon: Icons.refresh_rounded,
+              tooltip: l10n.retryAction,
+              onPressed: () =>
+                  ref.read(omrConvertJobsProvider.notifier).retry(job.id),
+            ),
           if (!job.isRunning)
             CompactIconButton(
               icon: Icons.close_rounded,

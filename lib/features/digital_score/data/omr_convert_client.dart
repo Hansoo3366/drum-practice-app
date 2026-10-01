@@ -12,6 +12,11 @@ class OmrConvertException implements Exception {
   String toString() => message;
 }
 
+/// The server no longer has the job (kept for six hours after it finished).
+class OmrJobNotFoundException extends OmrConvertException {
+  const OmrJobNotFoundException() : super('변환 작업을 찾을 수 없습니다.');
+}
+
 enum OmrRecognitionProfile { standard, chordsLyrics }
 
 extension OmrRecognitionProfileWire on OmrRecognitionProfile {
@@ -29,6 +34,7 @@ class OmrRemoteJob {
     this.step = '',
     this.error = '',
     this.profile = OmrRecognitionProfile.standard,
+    this.ai = 'off',
   });
 
   factory OmrRemoteJob.fromJson(Map<String, Object?> json) {
@@ -41,6 +47,7 @@ class OmrRemoteJob {
       profile: json['profile'] == 'chords_lyrics'
           ? OmrRecognitionProfile.chordsLyrics
           : OmrRecognitionProfile.standard,
+      ai: json['ai']?.toString() ?? 'off',
     );
   }
 
@@ -50,6 +57,9 @@ class OmrRemoteJob {
   final String step;
   final String error;
   final OmrRecognitionProfile profile;
+
+  /// AI review: off, running, done (AI version ready), unchanged, error.
+  final String ai;
 
   bool get isDone => status == 'done';
   bool get isError => status == 'error';
@@ -112,13 +122,53 @@ class OmrConvertClient {
     final response = await _http
         .get(Uri.parse('${_config.baseUrl}/jobs/$jobId'), headers: _headers)
         .timeout(const Duration(seconds: 15));
-    if (response.statusCode == 404) {
-      throw const OmrConvertException('변환 작업을 찾을 수 없습니다.');
+    if (response.statusCode == 404) throw const OmrJobNotFoundException();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw OmrConvertException(_errorMessage(response));
+    }
+    return _jobFromBody(response.body);
+  }
+
+  /// Runs the job's AI review again (it failed, e.g. for lack of API credit)
+  /// and returns the job with `ai == 'running'`.
+  Future<OmrRemoteJob> retryAiReview(String jobId) async {
+    final response = await _http
+        .post(
+          Uri.parse('${_config.baseUrl}/jobs/$jobId/ai-review'),
+          headers: _headers,
+        )
+        .timeout(const Duration(seconds: 15));
+    // "not available": the job has no book to review (not a lead sheet).
+    if (response.statusCode == 404 && _errorMessage(response) == 'not found') {
+      throw const OmrJobNotFoundException();
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw OmrConvertException(_errorMessage(response));
     }
     return _jobFromBody(response.body);
+  }
+
+  /// Accompaniment advice for the lead sheet [brief] describes: a style per
+  /// section and chord symbols to look at again, as the server's JSON.
+  Future<Map<String, Object?>> arrangementAdvice({
+    required String brief,
+    required int bars,
+  }) async {
+    final response = await _http
+        .post(
+          Uri.parse('${_config.baseUrl}/arrange/advice'),
+          headers: {..._headers, 'Content-Type': 'application/json'},
+          body: jsonEncode({'brief': brief, 'bars': bars}),
+        )
+        .timeout(const Duration(seconds: 90));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw OmrConvertException(_errorMessage(response));
+    }
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map) {
+      throw const OmrConvertException('변환 서버 응답을 읽지 못했습니다.');
+    }
+    return Map<String, Object?>.from(decoded);
   }
 
   Future<Uint8List> jobResult(String jobId) async {
@@ -135,6 +185,53 @@ class OmrConvertClient {
       throw const OmrConvertException('변환 결과가 비어 있습니다.');
     }
     return response.bodyBytes;
+  }
+
+  /// MusicXML exactly as the OMR engine exported it, before the server's
+  /// automatic corrections. Null when the server does not keep it.
+  Future<Uint8List?> jobRawResult(String jobId) async {
+    final response = await _optional('/jobs/$jobId/raw');
+    if (response == null || response.bodyBytes.isEmpty) return null;
+    return response.bodyBytes;
+  }
+
+  /// The server's automatic corrections as before/after items, or null.
+  Future<String?> jobCorrections(String jobId) async {
+    final response = await _optional('/jobs/$jobId/corrections');
+    return response == null ? null : utf8.decode(response.bodyBytes);
+  }
+
+  /// Rule-based suspect measures found on the server, or null.
+  Future<String?> jobValidation(String jobId) async {
+    final response = await _optional('/jobs/$jobId/validation');
+    return response == null ? null : utf8.decode(response.bodyBytes);
+  }
+
+  /// The server's AI version (chord and lyric suggestions applied), or null
+  /// when the server made none.
+  Future<Uint8List?> jobAiResult(String jobId) async {
+    final response = await _optional('/jobs/$jobId/ai');
+    if (response == null || response.bodyBytes.isEmpty) return null;
+    return response.bodyBytes;
+  }
+
+  /// Every AI suggestion per measure, applied or listed only, or null.
+  Future<String?> jobAiReview(String jobId) async {
+    final response = await _optional('/jobs/$jobId/ai-review');
+    return response == null ? null : utf8.decode(response.bodyBytes);
+  }
+
+  Future<http.Response?> _optional(String path) async {
+    try {
+      final response = await _http
+          .get(Uri.parse('${_config.baseUrl}$path'), headers: _headers)
+          .timeout(timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      return response;
+    } on Object {
+      // An older server has neither file; the corrected result still imports.
+      return null;
+    }
   }
 
   OmrRemoteJob _jobFromBody(String body) {

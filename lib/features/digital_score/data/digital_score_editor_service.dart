@@ -46,7 +46,27 @@ class DigitalScoreEditorService {
         await _storage.savePerformanceScore(songId, bytes);
       }
     }
-    await _storage.savePlaybackSequence(songId, jsonEncode(sequence.toJson()));
+    await saveSidecars(
+      songId: songId,
+      versionId: versionId,
+      sequence: sequence,
+      arrangement: arrangement,
+    );
+  }
+
+  /// Saves playback order and accompaniment without touching the score file,
+  /// so markings the codec does not model stay in the MusicXML.
+  Future<void> saveSidecars({
+    required String songId,
+    required PlaybackSequence sequence,
+    required ArrangementProfile arrangement,
+    String versionId = scoreVersionOriginalId,
+  }) async {
+    await saveSequence(
+      songId: songId,
+      versionId: versionId,
+      sequence: sequence,
+    );
     await _storage.saveArrangementProfile(
       songId,
       jsonEncode(arrangement.toJson()),
@@ -189,6 +209,7 @@ class DigitalScoreEditorService {
     required String musicXml,
     required ScoreVersionCatalog catalog,
     required String name,
+    String? origin,
   }) async {
     _codec.decodeXml(musicXml);
     final current = await loadVersionCatalog(songId);
@@ -202,7 +223,7 @@ class DigitalScoreEditorService {
         activeId: id,
         versions: [
           ...catalog.versions,
-          ScoreVersionRef(id: id, name: name),
+          ScoreVersionRef(id: id, name: name, origin: origin),
         ],
       );
       await saveVersionCatalog(songId, next);
@@ -227,10 +248,31 @@ class DigitalScoreEditorService {
           );
   }
 
-  Future<PlaybackSequence> loadSequence(String songId) async {
-    final raw = await _storage.loadPlaybackSequence(songId);
+  /// Playback order of one score version. A version without its own order
+  /// starts from the original's, since proofread versions keep the same bars.
+  Future<PlaybackSequence> loadSequence(
+    String songId, {
+    String versionId = scoreVersionOriginalId,
+  }) async {
+    String? raw;
+    if (versionId != scoreVersionOriginalId) {
+      raw = await _storage.loadPlaybackSequence(songId, versionId: versionId);
+    }
+    raw ??= await _storage.loadPlaybackSequence(songId);
     if (raw == null || raw.trim().isEmpty) return PlaybackSequence.empty;
     return PlaybackSequence.fromJson(jsonDecode(raw));
+  }
+
+  Future<void> saveSequence({
+    required String songId,
+    required PlaybackSequence sequence,
+    String versionId = scoreVersionOriginalId,
+  }) {
+    return _storage.savePlaybackSequence(
+      songId,
+      jsonEncode(sequence.toJson()),
+      versionId: versionId == scoreVersionOriginalId ? null : versionId,
+    );
   }
 
   Future<ArrangementProfile> loadArrangement(String songId) async {

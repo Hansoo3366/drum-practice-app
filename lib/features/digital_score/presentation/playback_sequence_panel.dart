@@ -1,84 +1,126 @@
 import 'package:flutter/material.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
-import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 
 String playbackSectionLabel(AppLocalizations l10n, String section) {
   return switch (section) {
+    '' => l10n.sectionUnnamed,
     'INTRO' => l10n.sectionIntro,
     'VERSE' => l10n.sectionVerse,
     'PRE' => l10n.sectionPre,
     'CHORUS' => l10n.sectionChorus,
     'BRIDGE' => l10n.sectionBridge,
+    'SOLO' => l10n.sectionSolo,
+    'INTERLUDE' => l10n.sectionInterlude,
     'OUTRO' => l10n.sectionOutro,
     _ => section,
   };
 }
 
-PlaybackSequence sequenceForMarkedSections(
-  MusicScore score,
-  PlaybackSequence current,
-) {
-  final sections = <String>[];
-  for (final range in discoverScoreSections(score)) {
-    if (!sections.contains(range.section)) {
-      sections.add(range.section);
-    }
-  }
-  final marked = sections.toSet();
-  final retained = <PlaybackSequenceItem>[
-    for (final item in current.items)
-      if (marked.contains(item.section)) item,
-  ];
-  final represented = retained.map((item) => item.section).toSet();
-  return PlaybackSequence([
-    ...retained,
-    for (final section in sections)
-      if (!represented.contains(section))
-        PlaybackSequenceItem(section: section),
-  ]);
+/// "Verse 2" for the second section named Verse.
+String scoreSectionLabel(AppLocalizations l10n, ScoreSection section) {
+  final name = playbackSectionLabel(l10n, section.name);
+  return section.number == null ? name : '$name ${section.number}';
 }
 
+/// "1:36" for a playback length in seconds.
+String formatPlaybackLength(double seconds) {
+  final total = seconds.round();
+  return '${total ~/ 60}:${(total % 60).toString().padLeft(2, '0')}';
+}
+
+/// The two steps of setting up a score's structure.
+enum StructureTab { sections, order }
+
+/// "Verse 2", or the bars ("8–10") of a section with no name.
+String sectionDisplayName(AppLocalizations l10n, ScoreSection section) {
+  return section.name.isEmpty
+      ? l10n.sectionBarRange(
+          section.startMeasureIndex + 1,
+          section.endMeasureIndex + 1,
+        )
+      : scoreSectionLabel(l10n, section);
+}
+
+/// Sections as the user named them: a piece split off where the written
+/// order jumps (see [ScoreSection.continued]) joins the section before it.
+List<List<ScoreSection>> namedSections(List<ScoreSection> sections) {
+  final groups = <List<ScoreSection>>[];
+  for (final section in sections) {
+    if (section.continued && groups.isNotEmpty) {
+      groups.last.add(section);
+    } else {
+      groups.add([section]);
+    }
+  }
+  return groups;
+}
+
+/// Divides the score into sections, then sets the playback order.
+///
+/// "Sections": tapping a staff line on the score picks it (a later line
+/// extends the pick) and a name makes it a section. "Order": sections with
+/// repeat counts, started from the written order, and a new score laid out
+/// in that order. Every change is kept at once; undo steps back.
 class ScoreStructurePanel extends StatelessWidget {
   const ScoreStructurePanel({
-    required this.score,
+    required this.tab,
+    required this.onTabChanged,
     required this.sequence,
-    required this.measureIndex,
-    required this.onSectionChanged,
-    required this.onRepeatsChanged,
-    required this.onSectionMoved,
-    required this.onSectionAdded,
-    required this.onSectionRemoved,
-    required this.onDone,
+    required this.sections,
+    required this.selectedBar,
+    this.selectedEnd,
+    this.picking = false,
+    required this.summary,
+    required this.canUndo,
+    required this.onUndo,
+    required this.onClose,
+    required this.onSectionNamed,
+    required this.onCustomSection,
+    required this.onBoundaryRemoved,
+    required this.onStepsChanged,
+    this.onBuildFromScore,
+    this.madeScoreExists = false,
+    this.onMakeScore,
     super.key,
   });
 
-  final MusicScore score;
+  final StructureTab tab;
+  final ValueChanged<StructureTab> onTabChanged;
   final PlaybackSequence sequence;
-  final int measureIndex;
-  final ValueChanged<String?> onSectionChanged;
-  final void Function(int index, int repeats) onRepeatsChanged;
-  final void Function(int fromIndex, int toIndex) onSectionMoved;
-  final ValueChanged<String> onSectionAdded;
-  final ValueChanged<int> onSectionRemoved;
-  final VoidCallback onDone;
+  final List<ScoreSection> sections;
+  final int? selectedBar;
 
-  MusicMeasure get _measure {
-    return score.parts.first.measures[measureIndex];
-  }
+  /// Last bar of a picked range (a later line), or null.
+  final int? selectedEnd;
+
+  /// True while bars are being picked, before a name is chosen.
+  final bool picking;
+  final ({int measures, int writtenMeasures, String time, int skipped}) summary;
+  final bool canUndo;
+  final VoidCallback onUndo;
+  final VoidCallback onClose;
+  final ValueChanged<String> onSectionNamed;
+  final VoidCallback onCustomSection;
+  final VoidCallback onBoundaryRemoved;
+  final ValueChanged<List<PlaybackStep>> onStepsChanged;
+
+  /// Starts a custom order that plays what the written repeats and jumps
+  /// play; without it the order lists each section once.
+  final VoidCallback? onBuildFromScore;
+
+  /// True when a score was already made from this version in this order.
+  final bool madeScoreExists;
+
+  /// Makes (or opens) the score laid out in this order.
+  final VoidCallback? onMakeScore;
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final section = measurePlaybackSection(_measure);
-    final marked = <String>[];
-    for (final range in discoverScoreSections(score)) {
-      if (!marked.contains(range.section)) {
-        marked.add(range.section);
-      }
-    }
-
+    final theme = Theme.of(context);
+    final height = MediaQuery.sizeOf(context).height;
     return Material(
       color: AppColors.canvas,
       child: DecoratedBox(
@@ -87,93 +129,62 @@ class ScoreStructurePanel extends StatelessWidget {
         ),
         child: SafeArea(
           top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          child: ConstrainedBox(
+            // Picking lines needs the score; the order needs the list.
+            constraints: BoxConstraints(
+              maxHeight: height * (tab == StructureTab.sections ? 0.3 : 0.45),
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        l10n.playbackSequence,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ),
-                    TextButton(onPressed: onDone, child: Text(l10n.done)),
-                  ],
-                ),
-                Text(
-                  l10n.playbackSequenceHelp,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: AppColors.mutedInk),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Text(
-                      l10n.scoreSection,
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    const SizedBox(width: 8),
-                    DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: section ?? '__none__',
-                        isDense: true,
-                        items: [
-                          DropdownMenuItem(
-                            value: '__none__',
-                            child: Text(l10n.none),
-                          ),
-                          for (final value in standardPlaybackSections)
-                            DropdownMenuItem(
-                              value: value,
-                              child: Text(playbackSectionLabel(l10n, value)),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 6, 4, 2),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: SegmentedButton<StructureTab>(
+                            showSelectedIcon: false,
+                            style: const ButtonStyle(
+                              visualDensity: VisualDensity.compact,
                             ),
-                        ],
-                        onChanged: (value) {
-                          if (value == null) return;
-                          onSectionChanged(value == '__none__' ? null : value);
-                        },
+                            segments: [
+                              ButtonSegment(
+                                value: StructureTab.sections,
+                                icon: const Icon(Icons.view_agenda_outlined),
+                                label: Text(l10n.structureTabSections),
+                              ),
+                              ButtonSegment(
+                                value: StructureTab.order,
+                                icon: const Icon(Icons.format_list_numbered),
+                                label: Text(l10n.structureTabOrder),
+                              ),
+                            ],
+                            selected: {tab},
+                            onSelectionChanged: (value) =>
+                                onTabChanged(value.single),
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: section == null
-                        ? null
-                        : () => onSectionAdded(section),
-                    icon: const Icon(Icons.add_rounded),
-                    label: Text(l10n.addToPlaybackSequence),
+                      IconButton(
+                        tooltip: l10n.undo,
+                        onPressed: canUndo ? onUndo : null,
+                        icon: const Icon(Icons.undo_rounded),
+                      ),
+                      TextButton(onPressed: onClose, child: Text(l10n.close)),
+                    ],
                   ),
                 ),
-                if (marked.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      l10n.noSections,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppColors.mutedInk,
-                      ),
-                    ),
-                  )
-                else
-                  for (var index = 0; index < sequence.items.length; index++)
-                    _RepeatRow(
-                      section: sequence.items[index].section,
-                      repeats: sequence.items[index].repeats,
-                      canMoveEarlier: index > 0,
-                      canMoveLater: index < sequence.items.length - 1,
-                      onMoveEarlier: () => onSectionMoved(index, index - 1),
-                      onMoveLater: () => onSectionMoved(index, index + 1),
-                      onRemove: () => onSectionRemoved(index),
-                      onRepeatsChanged: (repeats) =>
-                          onRepeatsChanged(index, repeats),
-                    ),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                    child: tab == StructureTab.sections
+                        ? _sectionsTab(context, l10n, theme)
+                        : _orderTab(context, l10n, theme),
+                  ),
+                ),
               ],
             ),
           ),
@@ -181,11 +192,221 @@ class ScoreStructurePanel extends StatelessWidget {
       ),
     );
   }
+
+  Widget _sectionsTab(
+    BuildContext context,
+    AppLocalizations l10n,
+    ThemeData theme,
+  ) {
+    final bar = selectedBar;
+    ScoreSection? current;
+    for (final section in sections) {
+      if (section.startMeasureIndex == bar) current = section;
+    }
+    final startsHere = selectedEnd == null && current != null;
+    // A section starting here can still be renamed or merged.
+    final named = startsHere && current.name.isNotEmpty ? current.name : null;
+    final muted = theme.textTheme.bodyMedium?.copyWith(
+      color: AppColors.mutedInk,
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          bar == null
+              ? l10n.sectionStartHint
+              : selectedEnd != null
+              ? l10n.sectionRange(bar + 1, selectedEnd! + 1)
+              : picking || current == null
+              ? l10n.sectionBarPickEnd(bar + 1)
+              : l10n.sectionInfo(
+                  sectionDisplayName(l10n, current),
+                  current.startMeasureIndex + 1,
+                  current.endMeasureIndex + 1,
+                ),
+          style: bar == null ? muted : theme.textTheme.titleSmall,
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final value in standardPlaybackSections)
+              ChoiceChip(
+                label: Text(playbackSectionLabel(l10n, value)),
+                selected: named == value,
+                onSelected: bar == null ? null : (_) => onSectionNamed(value),
+              ),
+            ActionChip(
+              avatar: const Icon(Icons.edit_outlined, size: 18),
+              label: Text(l10n.sectionCustom),
+              onPressed: bar == null ? null : onCustomSection,
+            ),
+            if (startsHere && current.startMeasureIndex > 0)
+              ActionChip(
+                avatar: const Icon(Icons.merge_rounded, size: 18),
+                label: Text(l10n.sectionRemoveBoundary),
+                onPressed: onBoundaryRemoved,
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _orderTab(
+    BuildContext context,
+    AppLocalizations l10n,
+    ThemeData theme,
+  ) {
+    final muted = theme.textTheme.bodyMedium?.copyWith(
+      color: AppColors.mutedInk,
+    );
+    final byId = {for (final section in sections) section.id: section};
+    final steps = sequence.steps;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          [
+            l10n.playbackSummary(summary.measures, summary.time),
+            if (summary.skipped > 0) l10n.playbackSkipped(summary.skipped),
+          ].join(' · '),
+          style: muted,
+        ),
+        const SizedBox(height: 4),
+        if (sections.isEmpty)
+          Text(l10n.noSections, style: muted)
+        else if (steps.isEmpty) ...[
+          Text(l10n.playbackAsWritten, style: muted),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed:
+                  onBuildFromScore ??
+                  () => onStepsChanged([
+                    for (final section in sections)
+                      PlaybackStep(sectionId: section.id),
+                  ]),
+              icon: const Icon(Icons.playlist_add_rounded),
+              label: Text(l10n.buildOrderFromSections),
+            ),
+          ),
+        ] else
+          for (var index = 0; index < steps.length; index++)
+            if (byId[steps[index].sectionId] case final section?)
+              _StepRow(
+                // A split piece right after the piece before it reads as
+                // that section going on.
+                continues:
+                    section.continued &&
+                    index > 0 &&
+                    byId[steps[index - 1].sectionId]?.endMeasureIndex ==
+                        section.startMeasureIndex - 1,
+                label: sectionDisplayName(l10n, section),
+                bars: [
+                  if (section.name.isNotEmpty || section.continued)
+                    l10n.sectionBarRange(
+                      section.startMeasureIndex + 1,
+                      section.endMeasureIndex + 1,
+                    ),
+                  if (steps[index] case PlaybackStep(
+                    repeats: 1,
+                    :final pass?,
+                  ) when pass > 0)
+                    l10n.endingPass(pass),
+                ].join(' · '),
+                repeats: steps[index].repeats,
+                canMoveEarlier: index > 0,
+                canMoveLater: index < steps.length - 1,
+                onMoveEarlier: () => _moveStep(index, index - 1),
+                onMoveLater: () => _moveStep(index, index + 1),
+                onRemove: () => _changeStep(index, null),
+                onRepeatsChanged: (repeats) =>
+                    _changeStep(index, steps[index].copyWith(repeats: repeats)),
+              ),
+        if (sections.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                l10n.addToPlaybackSequence,
+                style: theme.textTheme.bodyMedium,
+              ),
+              for (final group in namedSections(sections))
+                ActionChip(
+                  avatar: const Icon(Icons.add_rounded, size: 18),
+                  label: Text(sectionDisplayName(l10n, group.first)),
+                  onPressed: () => onStepsChanged([
+                    ...steps,
+                    for (final piece in group)
+                      PlaybackStep(sectionId: piece.id),
+                  ]),
+                ),
+            ],
+          ),
+        ],
+        if (steps.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: onMakeScore,
+            icon: Icon(
+              madeScoreExists
+                  ? Icons.open_in_new_rounded
+                  : Icons.library_add_outlined,
+            ),
+            label: Text(
+              madeScoreExists
+                  ? l10n.openScoreFromOrder
+                  : l10n.makeScoreFromOrder,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            l10n.scoreFromOrderKeepsThis,
+            style: muted,
+            textAlign: TextAlign.center,
+          ),
+          Align(
+            child: TextButton.icon(
+              onPressed: () => onStepsChanged(const []),
+              icon: const Icon(Icons.restart_alt_rounded),
+              label: Text(l10n.resetPlaybackOrder),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  void _changeStep(int index, PlaybackStep? step) {
+    final steps = sequence.steps.toList();
+    if (step == null) {
+      steps.removeAt(index);
+    } else {
+      steps[index] = step;
+    }
+    onStepsChanged(steps);
+  }
+
+  void _moveStep(int from, int to) {
+    final steps = sequence.steps.toList();
+    steps.insert(to, steps.removeAt(from));
+    onStepsChanged(steps);
+  }
 }
 
-class _RepeatRow extends StatelessWidget {
-  const _RepeatRow({
-    required this.section,
+class _StepRow extends StatelessWidget {
+  const _StepRow({
+    this.continues = false,
+    required this.label,
+    required this.bars,
     required this.repeats,
     required this.canMoveEarlier,
     required this.canMoveLater,
@@ -195,7 +416,10 @@ class _RepeatRow extends StatelessWidget {
     required this.onRepeatsChanged,
   });
 
-  final String section;
+  /// Shown as the section before it going on: indented, bars only.
+  final bool continues;
+  final String label;
+  final String bars;
   final int repeats;
   final bool canMoveEarlier;
   final bool canMoveLater;
@@ -207,6 +431,7 @@ class _RepeatRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final theme = Theme.of(context);
     return Row(
       children: [
         IconButton(
@@ -219,7 +444,33 @@ class _RepeatRow extends StatelessWidget {
           onPressed: canMoveLater ? onMoveLater : null,
           icon: const Icon(Icons.keyboard_arrow_down_rounded),
         ),
-        Expanded(child: Text(playbackSectionLabel(l10n, section))),
+        Expanded(
+          child: continues
+              ? Padding(
+                  padding: const EdgeInsets.only(left: 12),
+                  child: Text(
+                    '↳ $bars',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: AppColors.mutedInk,
+                    ),
+                  ),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    if (bars.isNotEmpty)
+                      Text(
+                        bars,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: AppColors.mutedInk,
+                        ),
+                      ),
+                  ],
+                ),
+        ),
         IconButton(
           tooltip: l10n.repeatDown,
           onPressed: repeats <= minPlaybackRepeats
@@ -228,9 +479,9 @@ class _RepeatRow extends StatelessWidget {
           icon: const Icon(Icons.remove_rounded),
         ),
         SizedBox(
-          width: 28,
+          width: 36,
           child: Text(
-            '$repeats',
+            l10n.repeatTimes(repeats),
             textAlign: TextAlign.center,
             style: const TextStyle(
               fontFamily: AppFonts.mono,

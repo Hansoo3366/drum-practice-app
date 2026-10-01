@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:math' as math;
+
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 
 const standardPlaybackSections = <String>[
@@ -6,17 +9,90 @@ const standardPlaybackSections = <String>[
   'PRE',
   'CHORUS',
   'BRIDGE',
+  'SOLO',
+  'INTERLUDE',
   'OUTRO',
 ];
 
 const int minPlaybackRepeats = 1;
 const int maxPlaybackRepeats = 16;
 const int maxExpandedMeasures = 4096;
+const int maxSectionNameLength = 24;
 
-class PlaybackSequenceItem {
-  PlaybackSequenceItem({required String section, this.repeats = 1})
-    : section = normalizePlaybackSection(section) {
-    if (this.section.isEmpty) {
+/// A section boundary: the section named [name] starts at bar
+/// [startMeasureIndex] and runs until the next boundary.
+///
+/// The id is derived from the start bar so a renamed boundary keeps the
+/// playback steps that refer to it.
+class SectionMark {
+  SectionMark({
+    required this.startMeasureIndex,
+    required String name,
+    this.continued = false,
+  }) : name = normalizePlaybackSection(name) {
+    if (startMeasureIndex < 0) {
+      throw const FormatException('A section boundary is invalid.');
+    }
+    if (this.name.length > maxSectionNameLength) {
+      throw const FormatException('A section name is too long.');
+    }
+  }
+
+  factory SectionMark.fromJson(Object? json) {
+    if (json is! Map) {
+      throw const FormatException('A section boundary is invalid.');
+    }
+    final start = json['start'];
+    final name = json['name'];
+    if (start is! int || (name != null && name is! String)) {
+      throw const FormatException('A section boundary is invalid.');
+    }
+    return SectionMark(
+      startMeasureIndex: start,
+      name: (name as String?) ?? '',
+      continued: json['continued'] == true,
+    );
+  }
+
+  final int startMeasureIndex;
+
+  /// Normalized section name. Empty for an unnamed stretch of bars.
+  final String name;
+
+  /// True for a boundary that only splits the section before it where the
+  /// written order jumps in or out (see [writtenOrderSequence]): it keeps
+  /// that section's name, number and box.
+  final bool continued;
+
+  String get id => sectionIdAt(startMeasureIndex);
+
+  Map<String, Object> toJson() => {
+    'start': startMeasureIndex,
+    'name': name,
+    if (continued) 'continued': true,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is SectionMark &&
+      other.startMeasureIndex == startMeasureIndex &&
+      other.name == name &&
+      other.continued == continued;
+
+  @override
+  int get hashCode => Object.hash(startMeasureIndex, name, continued);
+}
+
+String sectionIdAt(int startMeasureIndex) => 'm$startMeasureIndex';
+
+/// Steps from files written before section ids referred to a section name
+/// and meant every section with that name.
+const _legacyNamePrefix = '@';
+
+/// One entry of the playback order: play section [sectionId] [repeats] times.
+class PlaybackStep {
+  PlaybackStep({required this.sectionId, this.repeats = 1, this.pass}) {
+    if (sectionId.isEmpty) {
       throw const FormatException('A playback section is required.');
     }
     if (repeats < minPlaybackRepeats || repeats > maxPlaybackRepeats) {
@@ -24,95 +100,999 @@ class PlaybackSequenceItem {
     }
   }
 
-  final String section;
-  final int repeats;
-
-  PlaybackSequenceItem copyWith({String? section, int? repeats}) {
-    return PlaybackSequenceItem(
-      section: section ?? this.section,
-      repeats: repeats ?? this.repeats,
+  factory PlaybackStep.fromJson(Object? json) {
+    if (json is! Map) {
+      throw const FormatException('Playback Sequence item is invalid.');
+    }
+    final section = json['section'];
+    final repeats = json['repeats'];
+    final pass = json['pass'];
+    return PlaybackStep(
+      sectionId: section is String ? section : '',
+      pass: pass is int && pass >= 0 ? pass : null,
+      repeats: switch (repeats) {
+        final int value => value,
+        final num value => value.round(),
+        final String value => int.tryParse(value) ?? 0,
+        _ => 1,
+      },
     );
   }
 
-  Map<String, Object> toJson() => {'section': section, 'repeats': repeats};
+  final String sectionId;
+
+  /// Total number of times the section plays at this point of the order.
+  final int repeats;
+
+  /// Which pass of a written repeat this is, so a section played once takes
+  /// that pass's ending bracket (the 1st ending before going back). Null
+  /// takes the last ending; 0 plays every bar, brackets outside a repeat
+  /// included. Only used while [repeats] is 1.
+  final int? pass;
+
+  /// A changed repeat count drops [pass]: the passes then count themselves.
+  PlaybackStep copyWith({String? sectionId, int? repeats}) => PlaybackStep(
+    sectionId: sectionId ?? this.sectionId,
+    repeats: repeats ?? this.repeats,
+    pass: repeats == null || repeats == this.repeats ? pass : null,
+  );
+
+  Map<String, Object> toJson() => {
+    'section': sectionId,
+    'repeats': repeats,
+    if (pass != null) 'pass': pass!,
+  };
 
   @override
-  bool operator ==(Object other) {
-    return other is PlaybackSequenceItem &&
-        other.section == section &&
-        other.repeats == repeats;
-  }
+  bool operator ==(Object other) =>
+      other is PlaybackStep &&
+      other.sectionId == sectionId &&
+      other.repeats == repeats &&
+      other.pass == pass;
 
   @override
-  int get hashCode => Object.hash(section, repeats);
+  int get hashCode => Object.hash(sectionId, repeats, pass);
 }
 
+/// Section boundaries and the playback order that refers to them.
+///
+/// Stored per score version in a sidecar file, never in the MusicXML. An
+/// empty [steps] list means "play as written". Scores marked by older app
+/// versions carry rehearsal marks instead of [marks]; [scoreSections] reads
+/// those while [marks] is empty.
 class PlaybackSequence {
-  PlaybackSequence([List<PlaybackSequenceItem>? items])
-    : items = List.unmodifiable(items ?? const <PlaybackSequenceItem>[]);
+  PlaybackSequence({
+    List<SectionMark> marks = const [],
+    List<PlaybackStep> steps = const [],
+  }) : marks = List.unmodifiable(_sortedMarks(marks)),
+       steps = List.unmodifiable(steps);
 
+  const PlaybackSequence._(this.marks, this.steps);
+
+  /// Reads the current format and converts the two earlier ones: name-based
+  /// items with rehearsal marks in the score, and start–end `sections`.
   factory PlaybackSequence.fromJson(Object? json) {
     if (json == null) return PlaybackSequence.empty;
     if (json is! Map) {
       throw const FormatException('Playback Sequence JSON is invalid.');
     }
-    final rawItems = json['items'];
-    if (rawItems == null) return PlaybackSequence.empty;
-    if (rawItems is! List) {
-      throw const FormatException('Playback Sequence items are invalid.');
+    if (json['version'] == 2) {
+      final rawMarks = json['marks'] ?? const <Object?>[];
+      final rawSteps = json['steps'] ?? const <Object?>[];
+      if (rawMarks is! List || rawSteps is! List) {
+        throw const FormatException('Playback Sequence JSON is invalid.');
+      }
+      return PlaybackSequence(
+        marks: [for (final mark in rawMarks) SectionMark.fromJson(mark)],
+        steps: [for (final step in rawSteps) PlaybackStep.fromJson(step)],
+      );
     }
-    return PlaybackSequence([for (final item in rawItems) _itemFromJson(item)]);
+    return _fromLegacyJson(json);
   }
 
-  const PlaybackSequence._(this.items);
+  static const empty = PlaybackSequence._([], []);
 
-  static const empty = PlaybackSequence._([]);
+  final List<SectionMark> marks;
+  final List<PlaybackStep> steps;
 
-  final List<PlaybackSequenceItem> items;
+  /// True when bars play as written.
+  bool get isEmpty => steps.isEmpty;
+  bool get isNotEmpty => steps.isNotEmpty;
 
-  bool get isEmpty => items.isEmpty;
-  bool get isNotEmpty => items.isNotEmpty;
+  bool get isIdentity => isEmpty;
 
-  bool get isIdentity => isEmpty || items.every((item) => item.repeats == 1);
-
-  PlaybackSequence copyWith({List<PlaybackSequenceItem>? items}) {
-    return PlaybackSequence(items ?? this.items);
+  PlaybackSequence copyWith({
+    List<SectionMark>? marks,
+    List<PlaybackStep>? steps,
+  }) {
+    return PlaybackSequence(
+      marks: marks ?? this.marks,
+      steps: steps ?? this.steps,
+    );
   }
 
   Map<String, Object> toJson() => {
-    'items': [for (final item in items) item.toJson()],
+    'version': 2,
+    'marks': [for (final mark in marks) mark.toJson()],
+    'steps': [for (final step in steps) step.toJson()],
   };
 
   @override
   bool operator ==(Object other) {
     return other is PlaybackSequence &&
-        other.items.length == items.length &&
-        _sameItems(other.items);
+        _sameList(other.marks, marks) &&
+        _sameList(other.steps, steps);
   }
 
-  bool _sameItems(List<PlaybackSequenceItem> other) {
-    for (var index = 0; index < items.length; index++) {
-      if (items[index] != other[index]) return false;
+  static bool _sameList<T>(List<T> a, List<T> b) {
+    if (a.length != b.length) return false;
+    for (var index = 0; index < a.length; index++) {
+      if (a[index] != b[index]) return false;
     }
     return true;
   }
 
   @override
-  int get hashCode => Object.hashAll(items);
+  int get hashCode => Object.hash(Object.hashAll(marks), Object.hashAll(steps));
 }
 
-class ScoreSectionRange {
-  const ScoreSectionRange({
-    required this.section,
+List<SectionMark> _sortedMarks(List<SectionMark> marks) {
+  final byStart = <int, SectionMark>{
+    for (final mark in marks) mark.startMeasureIndex: mark,
+  };
+  return byStart.values.toList()
+    ..sort((a, b) => a.startMeasureIndex.compareTo(b.startMeasureIndex));
+}
+
+PlaybackSequence _fromLegacyJson(Map<Object?, Object?> json) {
+  final rawItems = json['items'] ?? const <Object?>[];
+  final rawSections = json['sections'] ?? const <Object?>[];
+  if (rawItems is! List || rawSections is! List) {
+    throw const FormatException('Playback Sequence items are invalid.');
+  }
+  final marks = <SectionMark>[];
+  var nextStart = 0;
+  final ranges = <({String name, int start, int end})>[];
+  for (final raw in rawSections) {
+    if (raw is! Map ||
+        raw['section'] is! String ||
+        raw['start'] is! int ||
+        raw['end'] is! int) {
+      throw const FormatException('A playback section range is invalid.');
+    }
+    ranges.add((
+      name: raw['section'] as String,
+      start: raw['start'] as int,
+      end: raw['end'] as int,
+    ));
+  }
+  ranges.sort((a, b) => a.start.compareTo(b.start));
+  for (final range in ranges) {
+    // Bars between two old ranges were not played in any section; keep them
+    // as an unnamed section so the order still skips them.
+    if (range.start > nextStart && marks.isNotEmpty) {
+      marks.add(SectionMark(startMeasureIndex: nextStart, name: ''));
+    }
+    marks.add(SectionMark(startMeasureIndex: range.start, name: range.name));
+    nextStart = range.end + 1;
+  }
+  if (ranges.isNotEmpty) {
+    marks.add(SectionMark(startMeasureIndex: nextStart, name: ''));
+  }
+  final steps = <PlaybackStep>[];
+  for (final raw in rawItems) {
+    if (raw is! Map) {
+      throw const FormatException('Playback Sequence item is invalid.');
+    }
+    final name = normalizePlaybackSection(
+      raw['section'] is String ? raw['section'] as String : '',
+    );
+    if (name.isEmpty) {
+      throw const FormatException('A playback section is required.');
+    }
+    final repeats = PlaybackStep.fromJson(raw).repeats;
+    steps.add(
+      PlaybackStep(sectionId: '$_legacyNamePrefix$name', repeats: repeats),
+    );
+  }
+  return PlaybackSequence(marks: marks, steps: steps);
+}
+
+/// A resolved section: bars [startMeasureIndex]..[endMeasureIndex].
+class ScoreSection {
+  const ScoreSection({
+    required this.id,
+    required this.name,
+    required this.number,
     required this.startMeasureIndex,
     required this.endMeasureIndex,
+    this.continued = false,
   });
 
-  final String section;
+  final String id;
+
+  /// Normalized name, empty for unnamed bars.
+  final String name;
+
+  /// 1-based occurrence number when the same name appears more than once
+  /// (Verse 1, Verse 2), else null.
+  final int? number;
   final int startMeasureIndex;
   final int endMeasureIndex;
 
+  /// A piece continuing the section before it (see [SectionMark.continued]).
+  final bool continued;
+
   int get measureCount => endMeasureIndex - startMeasureIndex + 1;
+
+  bool contains(int measureIndex) =>
+      measureIndex >= startMeasureIndex && measureIndex <= endMeasureIndex;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ScoreSection &&
+      other.id == id &&
+      other.name == name &&
+      other.number == number &&
+      other.startMeasureIndex == startMeasureIndex &&
+      other.endMeasureIndex == endMeasureIndex &&
+      other.continued == continued;
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    name,
+    number,
+    startMeasureIndex,
+    endMeasureIndex,
+    continued,
+  );
+}
+
+/// Sections of the score from the sidecar boundaries, or from rehearsal
+/// marks written by older app versions. Returns an empty list when the score
+/// has no boundaries at all.
+List<ScoreSection> scoreSections(MusicScore score, PlaybackSequence sequence) {
+  final count = score.measureCount;
+  if (count == 0) return const [];
+  var marks = sequence.marks.isNotEmpty
+      ? sequence.marks
+      : rehearsalSectionMarks(score);
+  marks = [
+    for (final mark in marks)
+      if (mark.startMeasureIndex < count) mark,
+  ];
+  if (marks.isEmpty) return const [];
+  if (marks.first.startMeasureIndex > 0) {
+    marks = [SectionMark(startMeasureIndex: 0, name: ''), ...marks];
+  }
+  // A section split into pieces with the same name (see
+  // [writtenOrderSequence]) counts as one occurrence.
+  bool continues(int index) =>
+      index > 0 &&
+      marks[index].continued &&
+      marks[index].name == marks[index - 1].name;
+  final totals = <String, int>{};
+  for (var index = 0; index < marks.length; index++) {
+    final name = marks[index].name;
+    if (name.isNotEmpty && !continues(index)) {
+      totals[name] = (totals[name] ?? 0) + 1;
+    }
+  }
+  final seen = <String, int>{};
+  final numbers = <int?>[];
+  for (var index = 0; index < marks.length; index++) {
+    final name = marks[index].name;
+    if ((totals[name] ?? 0) < 2) {
+      numbers.add(null);
+    } else if (continues(index)) {
+      numbers.add(seen[name]);
+    } else {
+      numbers.add(seen[name] = (seen[name] ?? 0) + 1);
+    }
+  }
+  return [
+    for (var index = 0; index < marks.length; index++)
+      ScoreSection(
+        id: marks[index].id,
+        name: marks[index].name,
+        number: numbers[index],
+        continued: continues(index),
+        startMeasureIndex: marks[index].startMeasureIndex,
+        endMeasureIndex: index + 1 < marks.length
+            ? marks[index + 1].startMeasureIndex - 1
+            : count - 1,
+      ),
+  ];
+}
+
+/// Boundaries from rehearsal marks in the score (older app versions).
+List<SectionMark> rehearsalSectionMarks(MusicScore score) {
+  if (score.parts.isEmpty) return const [];
+  final measures = score.parts.first.measures;
+  return [
+    for (var index = 0; index < measures.length; index++)
+      if (measurePlaybackSection(measures[index]) case final name?)
+        SectionMark(startMeasureIndex: index, name: name),
+  ];
+}
+
+/// Starts a section named [name] at bar [measureIndex], or renames the
+/// section that already starts there. Old rehearsal-mark boundaries are
+/// carried into the sidecar on the first edit.
+PlaybackSequence setSectionBoundary(
+  MusicScore score,
+  PlaybackSequence sequence, {
+  required int measureIndex,
+  required String name,
+}) {
+  if (measureIndex < 0 || measureIndex >= score.measureCount) {
+    throw RangeError.index(measureIndex, score.parts);
+  }
+  final marks = [
+    for (final mark in _editableMarks(score, sequence))
+      if (mark.startMeasureIndex != measureIndex) mark,
+    SectionMark(startMeasureIndex: measureIndex, name: name),
+  ];
+  return sequence.copyWith(marks: marks);
+}
+
+/// Makes bars [start]..[end] one section named [name]. Boundaries inside
+/// the range go (steps that played those sections are dropped), and the bars
+/// after [end] keep the section they were in, so only the chosen bars change.
+PlaybackSequence setSectionRange(
+  MusicScore score,
+  PlaybackSequence sequence, {
+  required int start,
+  required int end,
+  required String name,
+}) {
+  if (end < start) (start, end) = (end, start);
+  final count = score.measureCount;
+  if (start < 0 || end >= count) {
+    throw RangeError.range(end, 0, count - 1, 'end');
+  }
+  final marks = _editableMarks(score, sequence);
+  String? rest;
+  if (end + 1 < count && !marks.any((m) => m.startMeasureIndex == end + 1)) {
+    rest = '';
+    for (final section in scoreSections(score, sequence)) {
+      if (section.contains(end + 1)) rest = section.name;
+    }
+  }
+  final removed = {
+    for (final mark in marks)
+      if (mark.startMeasureIndex > start && mark.startMeasureIndex <= end)
+        sectionIdAt(mark.startMeasureIndex),
+  };
+  return sequence.copyWith(
+    marks: [
+      for (final mark in marks)
+        if (mark.startMeasureIndex < start || mark.startMeasureIndex > end)
+          mark,
+      SectionMark(startMeasureIndex: start, name: name),
+      if (rest != null) SectionMark(startMeasureIndex: end + 1, name: rest),
+    ],
+    steps: [
+      for (final step in sequence.steps)
+        if (!removed.contains(step.sectionId)) step,
+    ],
+  );
+}
+
+/// Moves section boundaries with their bars after bars were inserted,
+/// deleted or moved. [before] and [after] are the bar ids (see
+/// `MusicScoreEditor.measureIds`) of the score [sequence] was made for and of
+/// the edited score. A section now starts at its first bar still there; a
+/// section whose bars are all gone is dropped with its steps. [writtenMarks]
+/// are the score's rehearsal-mark boundaries (see [rehearsalSectionMarks]),
+/// used when [sequence] has none of its own.
+PlaybackSequence remapSectionMarks(
+  PlaybackSequence sequence,
+  List<int> before,
+  List<int> after, {
+  List<SectionMark> writtenMarks = const [],
+}) {
+  // Sections read from the score's own rehearsal marks move with it only
+  // once they are boundaries of their own.
+  if (sequence.marks.isEmpty && writtenMarks.isNotEmpty) {
+    sequence = sequence.copyWith(marks: writtenMarks);
+  }
+  if (sequence.marks.isEmpty) return sequence;
+  final position = {for (var i = 0; i < after.length; i++) after[i]: i};
+  final moved = <String, int>{};
+  // Bars before the first boundary form an unnamed first section; whatever
+  // happens to its bars, a first section starts at the first bar.
+  if (sequence.marks.first.startMeasureIndex > 0) moved[sectionIdAt(0)] = 0;
+  final marks = <SectionMark>[];
+  for (var index = 0; index < sequence.marks.length; index++) {
+    final mark = sequence.marks[index];
+    final end = index + 1 < sequence.marks.length
+        ? sequence.marks[index + 1].startMeasureIndex
+        : before.length;
+    int? start;
+    for (var bar = mark.startMeasureIndex; bar < end; bar++) {
+      if (bar >= before.length) break;
+      final at = position[before[bar]];
+      if (at != null && (start == null || at < start)) start = at;
+    }
+    if (start == null) continue;
+    moved[mark.id] = start;
+    marks.add(
+      SectionMark(
+        startMeasureIndex: start,
+        name: mark.name,
+        continued: mark.continued,
+      ),
+    );
+  }
+  return PlaybackSequence(
+    marks: marks,
+    steps: [
+      for (final step in sequence.steps)
+        if (step.sectionId.startsWith(_legacyNamePrefix))
+          step
+        else if (moved[step.sectionId] case final start?)
+          step.copyWith(sectionId: sectionIdAt(start)),
+    ],
+  );
+}
+
+/// Removes the boundary at bar [measureIndex]; its bars join the previous
+/// section. Steps that played the removed section are dropped.
+PlaybackSequence removeSectionBoundary(
+  MusicScore score,
+  PlaybackSequence sequence, {
+  required int measureIndex,
+}) {
+  final marks = _editableMarks(score, sequence);
+  if (!marks.any((mark) => mark.startMeasureIndex == measureIndex)) {
+    return sequence;
+  }
+  final removedId = sectionIdAt(measureIndex);
+  return sequence.copyWith(
+    marks: [
+      for (final mark in marks)
+        if (mark.startMeasureIndex != measureIndex) mark,
+    ],
+    steps: [
+      for (final step in sequence.steps)
+        if (step.sectionId != removedId) step,
+    ],
+  );
+}
+
+List<SectionMark> _editableMarks(MusicScore score, PlaybackSequence sequence) {
+  return sequence.marks.isNotEmpty
+      ? sequence.marks
+      : rehearsalSectionMarks(score);
+}
+
+/// Replaces steps saved by older app versions, which named a section and
+/// meant every section with that name, by steps that point at one section
+/// each. Old rehearsal-mark boundaries move into the sidecar at the same time.
+PlaybackSequence materializePlaybackSequence(
+  MusicScore score,
+  PlaybackSequence sequence,
+) {
+  if (!sequence.steps.any((s) => s.sectionId.startsWith(_legacyNamePrefix))) {
+    return sequence;
+  }
+  final marks = _editableMarks(score, sequence);
+  final explicit = PlaybackSequence(marks: marks, steps: sequence.steps);
+  return PlaybackSequence(
+    marks: marks,
+    steps: [
+      for (final (:section, :repeats, pass: _) in resolvePlaybackSteps(
+        score,
+        explicit,
+      ))
+        PlaybackStep(sectionId: section.id, repeats: repeats),
+    ],
+  );
+}
+
+/// The order as sections with repeat counts. Steps whose section no longer
+/// exists are skipped. Empty when bars play as written.
+List<({ScoreSection section, int repeats, int? pass})> resolvePlaybackSteps(
+  MusicScore score,
+  PlaybackSequence sequence,
+) {
+  if (sequence.isEmpty) return const [];
+  final sections = scoreSections(score, sequence);
+  final result = <({ScoreSection section, int repeats, int? pass})>[];
+  for (final step in sequence.steps) {
+    if (step.sectionId.startsWith(_legacyNamePrefix)) {
+      final name = step.sectionId.substring(_legacyNamePrefix.length);
+      for (final section in sections) {
+        if (section.name == name) {
+          result.add((section: section, repeats: step.repeats, pass: null));
+        }
+      }
+      continue;
+    }
+    for (final section in sections) {
+      if (section.id == step.sectionId) {
+        result.add((section: section, repeats: step.repeats, pass: step.pass));
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+/// Written bar index for each bar of the performance, in playing order.
+///
+/// With no custom order the written repeat signs apply, as they do for
+/// playback. A custom order already says how often each section plays, so
+/// repeat signs inside its sections are ignored; ending brackets still pick
+/// the bars of each pass (see [_customOrder]).
+List<int> performanceMeasureMap(MusicScore score, PlaybackSequence sequence) {
+  final steps = resolvePlaybackSteps(score, sequence);
+  if (steps.isEmpty) return writtenRepeatOrder(score);
+  return _customOrder(score, steps).map;
+}
+
+/// Section boundaries of the performance laid out bar by bar: each step of
+/// the order starts a section with its name, so the expanded copy of a custom
+/// order shows the same sections as the written score.
+List<SectionMark> performanceSectionMarks(
+  MusicScore score,
+  PlaybackSequence sequence,
+) {
+  final steps = resolvePlaybackSteps(score, sequence);
+  if (steps.isEmpty) return const [];
+  final starts = _customOrder(score, steps).starts;
+  return [
+    for (var i = 0; i < steps.length; i++)
+      SectionMark(
+        startMeasureIndex: starts[i].start,
+        name: starts[i].name,
+        // A split piece right after the piece before it goes on without a
+        // new box, as in the written score.
+        continued:
+            i > 0 &&
+            steps[i].section.continued &&
+            steps[i - 1].section.endMeasureIndex + 1 ==
+                steps[i].section.startMeasureIndex,
+      ),
+  ];
+}
+
+/// Plays each step's section [repeats] times. The last pass takes the last
+/// ending bracket, which leads out of the section; every other pass takes the
+/// bracket before it that names the pass, else the first one, which leads
+/// back. So "Chorus ×2" plays 1st then 2nd ending, and a chorus played once
+/// after a D.S. takes the 2nd ending. A step played once with a [pass] takes
+/// the bracket naming that pass, as a written repeat spanning several
+/// sections does.
+({List<int> map, List<({int start, String name})> starts}) _customOrder(
+  MusicScore score,
+  List<({ScoreSection section, int repeats, int? pass})> steps,
+) {
+  final endings = _endingNumbers(score.parts.first.measures);
+  final map = <int>[];
+  final starts = <({int start, String name})>[];
+  for (final (:section, :repeats, :pass) in steps) {
+    starts.add((start: map.length, name: section.name));
+    map.addAll(_sectionPasses(section, repeats, pass, endings));
+    if (map.length > maxExpandedMeasures) {
+      throw const FormatException('Playback Sequence is too long.');
+    }
+  }
+  return (map: map, starts: starts);
+}
+
+/// The bars of [section] played [repeats] times (see [_customOrder]). A pass
+/// through a bracket other than the last goes back after that bracket, so
+/// it skips the bars after it. A [writtenPass] no bracket names plays no
+/// ending: its brackets lie in the next section.
+List<int> _sectionPasses(
+  ScoreSection section,
+  int repeats,
+  int? writtenPass,
+  List<List<int>> endings,
+) {
+  final groups = <String, List<int>>{};
+  for (var i = section.startMeasureIndex; i <= section.endMeasureIndex; i++) {
+    if (endings[i].isNotEmpty) groups[endings[i].join(',')] = endings[i];
+  }
+  // Brackets that lead back into the section: all but the last.
+  final back = groups.length > 1
+      ? groups.entries.take(groups.length - 1).toList()
+      : groups.entries.toList();
+  if (repeats == 1 && writtenPass == 0) {
+    return [
+      for (var i = section.startMeasureIndex; i <= section.endMeasureIndex; i++)
+        i,
+    ];
+  }
+  final bars = <int>[];
+  for (var pass = 1; pass <= repeats; pass++) {
+    String? group;
+    var leadsBack = false;
+    if (groups.isNotEmpty) {
+      if (repeats == 1 && writtenPass != null) {
+        group = groups.entries
+            .where((e) => e.value.contains(writtenPass))
+            .firstOrNull
+            ?.key;
+        leadsBack = group != null && group != groups.keys.last;
+      } else if (pass == repeats) {
+        group = groups.keys.last;
+      } else {
+        group =
+            back.where((e) => e.value.contains(pass)).firstOrNull?.key ??
+            back.first.key;
+        leadsBack = groups.length > 1;
+      }
+    }
+    for (var i = section.startMeasureIndex; i <= section.endMeasureIndex; i++) {
+      final here = endings[i].join(',');
+      if (endings[i].isNotEmpty && here != group) continue;
+      bars.add(i);
+      final next = i + 1 < endings.length ? endings[i + 1].join(',') : '';
+      if (leadsBack && here == group && next != group) break;
+    }
+  }
+  if (bars.isEmpty) {
+    // A pass no bracket serves (stale data): the section, once, as written.
+    return [
+      for (var i = section.startMeasureIndex; i <= section.endMeasureIndex; i++)
+        i,
+    ];
+  }
+  return bars;
+}
+
+/// Ending numbers in force on each bar: a bracket runs from its start to its
+/// stop or discontinue, which may be bars later.
+List<List<int>> _endingNumbers(List<MusicMeasure> measures) {
+  final endings = List<List<int>>.filled(measures.length, const []);
+  var active = const <int>[];
+  for (var index = 0; index < measures.length; index++) {
+    for (final barline in measures[index].barlines) {
+      if (barline.endingType == 'start') active = barline.endingNumbers;
+    }
+    endings[index] = active;
+    if (measures[index].barlines.any(
+      (b) => b.endingType == 'stop' || b.endingType == 'discontinue',
+    )) {
+      active = const [];
+    }
+  }
+  return endings;
+}
+
+/// A custom order that plays exactly what the written score plays, the
+/// starting point for arranging it.
+///
+/// Where the written order jumps into or out of the middle of a section (a
+/// segno, a repeat start, To Coda, the coda), the section is split there by a
+/// boundary with the same name, so every run of bars is a whole section. Each
+/// run becomes a step: a section repeated right after itself counts up the
+/// step's repeats, and a run through an ending bracket remembers its pass.
+/// Returns [sequence] unchanged when the score has no sections.
+PlaybackSequence writtenOrderSequence(
+  MusicScore score,
+  PlaybackSequence sequence,
+) {
+  final order = writtenRepeatOrder(score);
+  if (order.isEmpty || scoreSections(score, sequence).isEmpty) {
+    return sequence;
+  }
+  // First keep endings inside sections, for fewer steps; where that does not
+  // play the same bars (unusual bracket layouts), split at every jump, which
+  // always does: each run of bars is then a whole section.
+  final compact = _writtenOrder(score, sequence, order, splitEndings: false);
+  if (_listEquals(performanceMeasureMap(score, compact), order)) return compact;
+  return _writtenOrder(score, sequence, order, splitEndings: true);
+}
+
+PlaybackSequence _writtenOrder(
+  MusicScore score,
+  PlaybackSequence sequence,
+  List<int> order, {
+  required bool splitEndings,
+}) {
+  final count = score.measureCount;
+  final existing = scoreSections(score, sequence);
+  final endings = _endingNumbers(score.parts.first.measures);
+  // The music may start later (a pickup section) or stop early (Fine).
+  final splits = <int>{order.first, if (order.last + 1 < count) order.last + 1};
+  for (var i = 1; i < order.length; i++) {
+    final (a, b) = (order[i - 1], order[i]);
+    if (b == a + 1) continue;
+    if (!splitEndings) {
+      // Skipping a 1st ending into the 2nd stays within the passage.
+      var overEnding = b > a + 1;
+      for (var bar = a + 1; overEnding && bar < b; bar++) {
+        overEnding = endings[bar].isNotEmpty;
+      }
+      if (overEnding) continue;
+    }
+    splits.add(b);
+    // Going back from a 1st ending, the passage later goes on through the
+    // next ending: not a way out of the section.
+    final fromEnding =
+        !splitEndings &&
+        a + 1 < count &&
+        endings[a].isNotEmpty &&
+        endings[a + 1].isNotEmpty;
+    if (a + 1 < count && !fromEnding) splits.add(a + 1);
+  }
+  final starts = {for (final section in existing) section.startMeasureIndex};
+  final marks = [
+    ..._editableMarks(score, sequence),
+    for (final bar in splits)
+      if (!starts.contains(bar))
+        SectionMark(
+          startMeasureIndex: bar,
+          name: existing.lastWhere((s) => s.startMeasureIndex <= bar).name,
+          continued: true,
+        ),
+  ];
+  final split = sequence.copyWith(marks: marks, steps: const []);
+  final sections = scoreSections(score, split);
+
+  // Runs of bars in one section.
+  final runs = <({ScoreSection section, List<int> bars})>[];
+  for (final index in order) {
+    final section = sections.lastWhere((s) => s.startMeasureIndex <= index);
+    final last = runs.lastOrNull;
+    if (last == null ||
+        last.section.id != section.id ||
+        index <= last.bars.last) {
+      runs.add((section: section, bars: [index]));
+    } else {
+      last.bars.add(index);
+    }
+  }
+  final steps = <PlaybackStep>[];
+  for (var i = 0; i < runs.length;) {
+    // A section played again right after itself becomes one step ×N when
+    // that plays the same bars.
+    var j = i + 1;
+    while (j < runs.length && runs[j].section.id == runs[i].section.id) {
+      j++;
+    }
+    final together = [for (final run in runs.sublist(i, j)) ...run.bars];
+    final times = j - i;
+    if (times > 1 &&
+        times <= maxPlaybackRepeats &&
+        _listEquals(
+          _sectionPasses(runs[i].section, times, null, endings),
+          together,
+        )) {
+      steps.add(PlaybackStep(sectionId: runs[i].section.id, repeats: times));
+      i = j;
+      continue;
+    }
+    // Played once, a run is the section with no pass (its last ending) or
+    // the pass whose ending, or lack of one, it went through.
+    final run = runs[i];
+    int? pass;
+    if (!_listEquals(_sectionPasses(run.section, 1, null, endings), run.bars)) {
+      for (final candidate in [
+        for (var n = 1; n <= maxPlaybackRepeats; n++) n,
+        0,
+      ]) {
+        if (_listEquals(
+          _sectionPasses(run.section, 1, candidate, endings),
+          run.bars,
+        )) {
+          pass = candidate;
+          break;
+        }
+      }
+    }
+    steps.add(PlaybackStep(sectionId: run.section.id, pass: pass));
+    i++;
+  }
+  return split.copyWith(steps: steps);
+}
+
+bool _listEquals(List<int> a, List<int> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// Identifies the expanded copy made from version [versionId] in the order
+/// [sequence], so making it again opens the copy instead of a duplicate.
+String performanceOrigin(String versionId, PlaybackSequence sequence) =>
+    jsonEncode({'from': versionId, 'order': sequence.toJson()});
+
+/// Bars in the order the written repeat signs and jumps play them.
+///
+/// Repeats mirror the MIDI mapper used for playback (flutter_notemus): a
+/// repeat block runs from a start sign, or the bar after the previous block,
+/// to an end sign and plays `times` passes (default 2). A bar that starts an
+/// ending bracket plays only on the passes it names.
+///
+/// Jumps follow the usual convention: D.S. (to the segno, else the start) or
+/// D.C. (to the start) is taken once, at the end of its bar on the last pass.
+/// After the jump repeats play once, taking only the last ending, and the
+/// music stops after a bar marked Fine, or goes from the To Coda bar to the
+/// coda sign.
+List<int> writtenRepeatOrder(MusicScore score) {
+  if (score.parts.isEmpty) return const [];
+  final measures = score.parts.first.measures;
+  final count = measures.length;
+  final endings = _endingNumbers(measures);
+  final blocks = <int, ({int end, int times})>{};
+  final blockOf = List<({int start, int end, int times})?>.filled(count, null);
+  var start = 0;
+  for (var index = 0; index < count; index++) {
+    if (measures[index].repeatStart) start = index;
+    if (measures[index].repeatEnd) {
+      // Brackets "1-5." then "6." ask for six passes whatever `times` says.
+      var times = measures[index].repeatTimes;
+      for (var bar = start; bar <= index + 1 && bar < count; bar++) {
+        for (final number in endings[bar]) {
+          if (number > times) times = number;
+        }
+      }
+      times = times.clamp(1, maxPlaybackRepeats);
+      blocks[start] = (end: index, times: times);
+      for (var bar = start; bar <= index; bar++) {
+        blockOf[bar] = (start: start, end: index, times: times);
+      }
+      start = index + 1;
+    }
+  }
+  bool playsOnPass(int index, int pass) =>
+      endings[index].isEmpty || endings[index].contains(pass);
+
+  final marks = [for (final measure in measures) measure.navigation];
+  final segno = marks.indexWhere((m) => m.contains(MusicNavigation.segno));
+  final coda = marks.indexWhere((m) => m.contains(MusicNavigation.coda));
+  final order = <int>[];
+  var jumped = false;
+  // From the D.S./D.C. jump, repeats play once until To Coda, or until the
+  // music goes on past every bar played before the jump: from there it is
+  // new, and its repeats apply (a score whose "To Coda" was not read still
+  // plays its later repeats).
+  var singlePass = false;
+  var playedBeforeJump = -1;
+
+  /// Where to continue after playing [index] as written, or null to go on.
+  /// Returns -1 to stop.
+  int? after(int index) {
+    final here = marks[index];
+    if (!jumped) {
+      if (here.contains(MusicNavigation.dalSegno)) {
+        jumped = singlePass = true;
+        playedBeforeJump = order.reduce(math.max);
+        return segno >= 0 ? segno : 0;
+      }
+      if (here.contains(MusicNavigation.daCapo)) {
+        jumped = singlePass = true;
+        playedBeforeJump = order.reduce(math.max);
+        return 0;
+      }
+      return null;
+    }
+    if (here.contains(MusicNavigation.fine)) return -1;
+    if (here.contains(MusicNavigation.toCoda) && coda > index) {
+      singlePass = false;
+      return coda;
+    }
+    return null;
+  }
+
+  var cursor = 0;
+  while (cursor >= 0 && cursor < count) {
+    if (order.length > maxExpandedMeasures) {
+      throw const FormatException('Playback Sequence is too long.');
+    }
+    if (singlePass && cursor > playedBeforeJump) singlePass = false;
+    final block = singlePass ? null : blocks[cursor];
+    if (block != null) {
+      int? next;
+      passes:
+      for (var pass = 1; pass <= block.times; pass++) {
+        for (var index = cursor; index <= block.end; index++) {
+          if (!playsOnPass(index, pass)) continue;
+          order.add(index);
+          if (pass == block.times) {
+            next = after(index);
+            if (next != null) break passes;
+          }
+        }
+      }
+      cursor = next ?? block.end + 1;
+      continue;
+    }
+    // Played once after a jump, a repeated passage takes its last ending.
+    final enclosing = blockOf[cursor];
+    if (singlePass &&
+        enclosing != null &&
+        !playsOnPass(cursor, enclosing.times)) {
+      cursor++;
+      continue;
+    }
+    order.add(cursor);
+    cursor = after(cursor) ?? cursor + 1;
+  }
+  return order;
+}
+
+bool _isStraight(List<int> map, int count) {
+  if (map.length != count) return false;
+  for (var index = 0; index < map.length; index++) {
+    if (map[index] != index) return false;
+  }
+  return true;
+}
+
+/// True when the score has a jump (D.S., D.C.) the written order must follow.
+bool hasNavigationJumps(MusicScore score) {
+  if (score.parts.isEmpty) return false;
+  return score.parts.first.measures.any(
+    (measure) => measure.navigation.any(
+      (mark) =>
+          mark == MusicNavigation.dalSegno || mark == MusicNavigation.daCapo,
+    ),
+  );
+}
+
+/// Length of each written bar in quarter notes. A pickup or an incomplete
+/// converted bar uses its notes; a full bar uses the time signature.
+List<double> measureQuarterLengths(MusicScore score) {
+  if (score.parts.isEmpty) return const [];
+  final measures = score.parts.first.measures;
+  return [
+    for (final measure in measures)
+      () {
+        final attributes = measure.attributes;
+        final time =
+            attributes.time ?? const MusicTimeSignature(beats: 4, beatType: 4);
+        final bar = time.beats * 4 / time.beatType;
+        final written = measure.durationDivisions / attributes.divisions;
+        if (measure.implicit && written > 0) return written;
+        return math.max(bar, written);
+      }(),
+  ];
+}
+
+/// Bars and quarter notes the performance plays, and written bars it skips.
+({int measures, double quarters, int skipped}) performanceSummary(
+  MusicScore score,
+  PlaybackSequence sequence,
+) {
+  final map = performanceMeasureMap(score, sequence);
+  final lengths = measureQuarterLengths(score);
+  final played = map.toSet();
+  return (
+    measures: map.length,
+    quarters: map.fold<double>(0, (sum, index) => sum + lengths[index]),
+    skipped: score.measureCount - played.length,
+  );
+}
+
+/// The written bar playing at [fraction] (0..1) of the performance, assuming
+/// a steady tempo.
+int writtenMeasureAt(
+  List<int> map,
+  List<double> quarterLengths,
+  double fraction,
+) {
+  if (map.isEmpty) return 0;
+  final total = map.fold<double>(
+    0,
+    (sum, index) => sum + quarterLengths[index],
+  );
+  if (total <= 0) return map.first;
+  final target = fraction.clamp(0.0, 1.0) * total;
+  var elapsed = 0.0;
+  for (final index in map) {
+    elapsed += quarterLengths[index];
+    if (target < elapsed) return index;
+  }
+  return map.last;
 }
 
 String normalizePlaybackSection(String raw) {
@@ -124,25 +1104,11 @@ String normalizePlaybackSection(String raw) {
     'PRE' || 'PRE-CHORUS' || 'PRECHORUS' => 'PRE',
     'CHORUS' || 'CH' => 'CHORUS',
     'BRIDGE' || 'BR' => 'BRIDGE',
+    'SOLO' => 'SOLO',
+    'INTERLUDE' => 'INTERLUDE',
     'OUTRO' || 'OUT' => 'OUTRO',
     _ => trimmed,
   };
-}
-
-List<String?> measureSectionCodes(MusicScore score) {
-  if (score.parts.isEmpty) return const [];
-  final count = score.parts.first.measures.length;
-  final labels = List<String?>.filled(count, null);
-  for (final range in discoverScoreSections(score)) {
-    for (
-      var index = range.startMeasureIndex;
-      index <= range.endMeasureIndex;
-      index++
-    ) {
-      labels[index] = range.section;
-    }
-  }
-  return labels;
 }
 
 /// Rehearsal marks actually written on a measure, not the filled range.
@@ -164,100 +1130,40 @@ String? measurePlaybackSection(MusicMeasure measure) {
   return null;
 }
 
-List<ScoreSectionRange> discoverScoreSections(MusicScore score) {
-  final measures = score.parts.first.measures;
-  final starts = <int, String>{};
-  for (var index = 0; index < measures.length; index++) {
-    final section = measurePlaybackSection(measures[index]);
-    if (section != null) starts[index] = section;
-  }
-  if (starts.isEmpty) return const [];
-  final indexes = starts.keys.toList()..sort();
-  return [
-    for (var index = 0; index < indexes.length; index++)
-      ScoreSectionRange(
-        section: starts[indexes[index]]!,
-        startMeasureIndex: indexes[index],
-        endMeasureIndex: index + 1 < indexes.length
-            ? indexes[index + 1] - 1
-            : measures.length - 1,
-      ),
-  ];
-}
-
+/// Plays the sections in order, or returns [score] when bars play as
+/// written. The written score is never changed.
+///
+/// Repeats alone are kept as written (an export stays a readable score) and
+/// jumps are laid out bar by bar. With [flattenRepeats] repeats are laid out
+/// too, so playback follows [performanceMeasureMap] exactly, the same order
+/// the play head and the expanded copy use.
 MusicScore expandPlaybackSequence(
   MusicScore score, [
   PlaybackSequence sequence = PlaybackSequence.empty,
+  bool flattenRepeats = false,
 ]) {
-  if (sequence.isEmpty) return score;
-
-  final ranges = discoverScoreSections(score);
-  if (ranges.isEmpty) {
-    throw const FormatException('Playback Sequence needs section marks.');
+  final map = performanceMeasureMap(score, sequence);
+  if (sequence.isEmpty &&
+      (flattenRepeats
+          ? _isStraight(map, score.measureCount)
+          : !hasNavigationJumps(score))) {
+    return score;
   }
-
-  final selected = <ScoreSectionRange>[];
-  for (final item in sequence.items) {
-    final matches = ranges.where((range) => range.section == item.section);
-    if (matches.isEmpty) {
-      throw FormatException('Unknown playback section: ${item.section}');
-    }
-    for (var repeat = 0; repeat < item.repeats; repeat++) {
-      selected.addAll(matches);
-    }
-  }
-
-  final expandedCount = selected.fold<int>(
-    0,
-    (sum, range) => sum + range.measureCount,
-  );
-  if (expandedCount > maxExpandedMeasures) {
-    throw const FormatException('Playback Sequence is too long.');
-  }
-
-  return score.copyWith(
-    parts: [for (final part in score.parts) _expandPart(part, selected)],
-  );
-}
-
-PlaybackSequenceItem _itemFromJson(Object? json) {
-  if (json is! Map) {
-    throw const FormatException('Playback Sequence item is invalid.');
-  }
-  final section = json['section'];
-  final repeats = json['repeats'];
-  return PlaybackSequenceItem(
-    section: section is String ? section : '',
-    repeats: switch (repeats) {
-      final int value => value,
-      final num value => value.round(),
-      final String value => int.tryParse(value) ?? 0,
-      _ => 0,
-    },
-  );
-}
-
-MusicPart _expandPart(MusicPart part, List<ScoreSectionRange> ranges) {
-  final measures = <MusicMeasure>[];
-  for (final range in ranges) {
-    if (range.endMeasureIndex >= part.measures.length) {
-      throw const FormatException('A section is outside the score.');
-    }
-    for (
-      var index = range.startMeasureIndex;
-      index <= range.endMeasureIndex;
-      index++
-    ) {
-      measures.add(part.measures[index]);
-    }
-  }
-  if (measures.isEmpty) {
+  if (map.isEmpty) {
     throw const FormatException('Playback Sequence produced no measures.');
   }
-  return part.copyWith(
-    measures: [
-      for (var index = 0; index < measures.length; index++)
-        measures[index].copyWith(number: '${index + 1}'),
+  return score.copyWith(
+    parts: [
+      for (final part in score.parts)
+        part.copyWith(
+          measures: [
+            for (var index = 0; index < map.length; index++)
+              if (map[index] < part.measures.length)
+                part.measures[map[index]].withoutRepeats().copyWith(
+                  number: '${index + 1}',
+                ),
+          ],
+        ),
     ],
   );
 }

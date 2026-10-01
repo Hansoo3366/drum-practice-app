@@ -70,6 +70,16 @@ void main() {
   );
 
   test('stores Playback Sequence beside the MusicXML file', () async {
+    final saved = PlaybackSequence(
+      marks: [
+        SectionMark(startMeasureIndex: 0, name: 'INTRO'),
+        SectionMark(startMeasureIndex: 1, name: 'VERSE'),
+      ],
+      steps: [
+        PlaybackStep(sectionId: sectionIdAt(0), repeats: 4),
+        PlaybackStep(sectionId: sectionIdAt(1), repeats: 2),
+      ],
+    );
     const relativePath = 'scores/song.musicxml';
     final file = await storage.resolve(relativePath);
     await file.parent.create(recursive: true);
@@ -79,15 +89,32 @@ void main() {
       songId: 'song',
       relativePath: relativePath,
       score: _score(),
-      sequence: PlaybackSequence([
-        PlaybackSequenceItem(section: 'INTRO', repeats: 4),
-        PlaybackSequenceItem(section: 'VERSE', repeats: 2),
-      ]),
+      sequence: saved,
     );
 
-    final sequence = await service.loadSequence('song');
-    expect(sequence.items.map((item) => item.section), ['INTRO', 'VERSE']);
-    expect(sequence.items.map((item) => item.repeats), [4, 2]);
+    expect(await service.loadSequence('song'), saved);
+  });
+
+  test('keeps a playback order per version, inheriting the original', () async {
+    final original = PlaybackSequence(
+      marks: [SectionMark(startMeasureIndex: 0, name: 'VERSE')],
+      steps: [PlaybackStep(sectionId: sectionIdAt(0), repeats: 2)],
+    );
+    await service.saveSequence(songId: 'song', sequence: original);
+
+    // A version without its own order starts from the original's.
+    expect(await service.loadSequence('song', versionId: 'v1'), original);
+
+    await service.saveSequence(
+      songId: 'song',
+      versionId: 'v1',
+      sequence: PlaybackSequence.empty,
+    );
+    expect(
+      await service.loadSequence('song', versionId: 'v1'),
+      PlaybackSequence.empty,
+    );
+    expect(await service.loadSequence('song'), original);
   });
 
   test('stores an arrangement profile beside the MusicXML file', () async {

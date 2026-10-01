@@ -115,7 +115,9 @@ class MusicMeasure {
     required this.attributes,
     required List<MusicEvent> events,
     this.implicit = false,
-  }) : events = List.unmodifiable(events) {
+    List<MusicBarline> barlines = const [],
+  }) : events = List.unmodifiable(events),
+       barlines = List.unmodifiable(barlines) {
     if (number.trim().isEmpty) {
       throw const FormatException('A measure number is required.');
     }
@@ -126,19 +128,51 @@ class MusicMeasure {
   final List<MusicEvent> events;
   final bool implicit;
 
+  /// Written `<barline>` elements (repeats, endings, double bars), kept so
+  /// saving through the codec does not drop them.
+  final List<MusicBarline> barlines;
+
   MusicMeasure copyWith({
     String? number,
     MusicAttributes? attributes,
     List<MusicEvent>? events,
     bool? implicit,
+    List<MusicBarline>? barlines,
   }) {
     return MusicMeasure(
       number: number ?? this.number,
       attributes: attributes ?? this.attributes,
       events: events ?? this.events,
       implicit: implicit ?? this.implicit,
+      barlines: barlines ?? this.barlines,
     );
   }
+
+  /// Jump marks written in this bar (segno, D.S., To Coda, Fine, ...).
+  Set<MusicNavigation> get navigation => {
+    for (final direction in events.whereType<MusicDirection>())
+      if (direction.navigation case final mark?) mark,
+  };
+
+  bool get repeatStart => barlines.any((b) => b.repeat == 'forward');
+  bool get repeatEnd => barlines.any((b) => b.repeat == 'backward');
+
+  /// Total passes for a closing repeat (MusicXML `times`, default 2).
+  int get repeatTimes {
+    for (final barline in barlines) {
+      if (barline.repeat == 'backward') return barline.times ?? 2;
+    }
+    return 1;
+  }
+
+  /// Bar lines without repeat signs or ending brackets, for playing a
+  /// section exactly as ordered by the user.
+  MusicMeasure withoutRepeats() => copyWith(
+    barlines: [
+      for (final barline in barlines)
+        if (barline.repeat == null && barline.endingNumbers.isEmpty) barline,
+    ],
+  );
 
   Iterable<MusicNote> get notes => events.whereType<MusicNote>();
 
@@ -240,6 +274,7 @@ class MusicNote extends MusicEvent {
     this.slurStart = false,
     this.slurStop = false,
     this.beams = const [],
+    this.lyrics = const [],
   }) {
     if (onset < 0) {
       throw const FormatException('A note onset cannot be negative.');
@@ -268,6 +303,10 @@ class MusicNote extends MusicEvent {
   final bool slurStop;
   final List<MusicBeam> beams;
 
+  /// Written `<lyric>` elements, kept as-is so saving through the codec does
+  /// not drop lyrics.
+  final List<String> lyrics;
+
   bool get isRest => pitch == null;
   int get end => onset + duration;
 
@@ -286,6 +325,7 @@ class MusicNote extends MusicEvent {
     bool? slurStart,
     bool? slurStop,
     List<MusicBeam>? beams,
+    List<String>? lyrics,
   }) {
     return MusicNote(
       onset: onset ?? this.onset,
@@ -302,6 +342,7 @@ class MusicNote extends MusicEvent {
       slurStart: slurStart ?? this.slurStart,
       slurStop: slurStop ?? this.slurStop,
       beams: beams ?? this.beams,
+      lyrics: lyrics ?? this.lyrics,
     );
   }
 }
@@ -323,6 +364,10 @@ class MusicPitch {
   int get midi => (octave + 1) * 12 + step.naturalSemitone + alter;
 }
 
+/// Jump marks a player follows: MusicXML `<sound>` attributes, plus the
+/// segno and coda signs themselves.
+enum MusicNavigation { segno, coda, dalSegno, daCapo, toCoda, fine }
+
 class MusicDirection extends MusicEvent {
   const MusicDirection({
     required super.onset,
@@ -330,11 +375,13 @@ class MusicDirection extends MusicEvent {
     this.rehearsal,
     this.words,
     this.tempoBpm,
+    this.navigation,
   });
 
   final String? rehearsal;
   final String? words;
   final double? tempoBpm;
+  final MusicNavigation? navigation;
 
   MusicDirection copyWith({
     int? onset,
@@ -342,6 +389,7 @@ class MusicDirection extends MusicEvent {
     Object? rehearsal = _notProvided,
     Object? words = _notProvided,
     Object? tempoBpm = _notProvided,
+    Object? navigation = _notProvided,
   }) {
     return MusicDirection(
       onset: onset ?? this.onset,
@@ -353,6 +401,9 @@ class MusicDirection extends MusicEvent {
       tempoBpm: identical(tempoBpm, _notProvided)
           ? this.tempoBpm
           : tempoBpm as double?,
+      navigation: identical(navigation, _notProvided)
+          ? this.navigation
+          : navigation as MusicNavigation?,
     );
   }
 }
@@ -404,3 +455,30 @@ class MusicHarmony extends MusicEvent {
 }
 
 const Object _notProvided = Object();
+
+/// A MusicXML `<barline>`. [xml] is the element as written; the parsed
+/// fields drive playback of repeats and endings.
+class MusicBarline {
+  const MusicBarline({
+    required this.location,
+    required this.xml,
+    this.repeat,
+    this.times,
+    this.endingNumbers = const [],
+    this.endingType,
+  });
+
+  /// `left`, `right` or `middle`.
+  final String location;
+  final String xml;
+
+  /// `forward` or `backward` for a repeat sign.
+  final String? repeat;
+  final int? times;
+
+  /// Passes an ending bracket applies to, e.g. [1] or [1, 2].
+  final List<int> endingNumbers;
+
+  /// `start`, `stop` or `discontinue`.
+  final String? endingType;
+}

@@ -10,6 +10,7 @@ import re
 import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -20,13 +21,20 @@ from xml.etree import ElementTree as ET
 
 from flask import Flask, jsonify, request, send_file
 
+from omr_score import PIPELINE, _find_score, _read_score, _write_mxl
+from omr_rules import _add_lyric_dashes, _chords_from_words, _drop_bad_tempos, _drop_lyric_dash_articulations, _drop_placeholder_rests, _drop_second_chords, _drop_tie_dots, _merge_split_parts, _split_korean_lyrics, _tie_held_dashes, _title_from_credits
+from omr_book import _load_book
+from omr_marks import _add_segno_coda, _navigation_marks, _repeat_starts, _segno_coda_marks, _upload_photos
+from omr_text import _attach_stray_accidentals, _drop_chord_junk, _ocr_chord_lines, _ocr_lyrics, _reread_chords
+from omr_validate import _corrections, _validate
+from omr_ai import ARRANGE_MAX_BRIEF, _ai_enabled, _ai_review, _arrange_advice
+
 TOKEN = os.environ.get("OMR_TOKEN", "piano-omr-dev")
 JOBS_DIR = Path(os.environ.get("OMR_JOBS", "/opt/omr/jobs"))
 HOST = os.environ.get("OMR_HOST", "0.0.0.0")
 PORT = int(os.environ.get("OMR_PORT", "8080"))
 TIMEOUT_SEC = int(os.environ.get("OMR_TIMEOUT", "1200"))
 KEEP_SEC = int(os.environ.get("OMR_KEEP_SEC", "21600"))
-PIPELINE = "pdf-multipass-v1"
 # Each Java worker has a 4 GB heap. Do not launch one per uploaded document.
 _JOB_SLOTS = threading.BoundedSemaphore(
     max(1, min(4, int(os.environ.get("OMR_MAX_PARALLEL", "1"))))
@@ -107,7 +115,41 @@ def _public(job: dict) -> dict:
         "step": job.get("step") or "",
         "error": job.get("error") or "",
         "profile": job["profile"],
+        # AI review: off, running, done (ai.mxl ready), unchanged, error.
+        "ai": job.get("ai") or "off",
     }
+
+
+_SAVED_FIELDS = ("id", "status", "progress", "step", "error", "result", "created", "finished",
+                 "profile", "book", "ai")
+
+
+def _save_job(job: dict) -> None:
+    """Keep a finished job on disk, so its results outlive a server restart."""
+    if not job.get("root"):
+        return
+    state = {key: job.get(key) for key in _SAVED_FIELDS}
+    try:
+        (Path(job["root"]) / "job.json").write_text(json.dumps(state), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _restore_jobs() -> None:
+    """Register the jobs a previous server process left in JOBS_DIR. A job
+    without a saved state was cut off by the restart and reports an error."""
+    for root in JOBS_DIR.iterdir() if JOBS_DIR.is_dir() else []:
+        if not root.is_dir() or root.name in _jobs:
+            continue
+        try:
+            state = json.loads((root / "job.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            finished = root.stat().st_mtime
+            state = {"status": "error", "progress": 100, "error": "interrupted by a server restart",
+                     "created": finished, "finished": finished, "profile": "standard"}
+        if state.get("ai") == "running":
+            state["ai"] = "error"
+        _jobs[root.name] = {**state, "id": root.name, "root": root, "tracker": _SheetProgress()}
 
 
 @app.get("/health")
@@ -205,6 +247,59 @@ def job_diagnostics(job_id: str):
     return send_file(report, mimetype="application/json")
 
 
+@app.get("/jobs/<job_id>/raw")
+def job_raw(job_id: str):
+    """MusicXML as Audiveris exported it, before any server correction."""
+    return _job_file(job_id, "raw.mxl", "application/vnd.recordare.musicxml+xml")
+
+
+@app.get("/jobs/<job_id>/corrections")
+def job_corrections(job_id: str):
+    """Every server correction as before/after items (OMR spec §19)."""
+    return _job_file(job_id, "corrections.json", "application/json")
+
+
+@app.get("/jobs/<job_id>/validation")
+def job_validation(job_id: str):
+    """Rule-based suspect measures (OMR spec Phase 2)."""
+    return _job_file(job_id, "validation.json", "application/json")
+
+
+@app.get("/jobs/<job_id>/ai")
+def job_ai(job_id: str):
+    """The AI version: chord and lyric suggestions applied to the result."""
+    return _job_file(job_id, "ai.mxl", "application/vnd.recordare.musicxml+xml")
+
+
+@app.get("/jobs/<job_id>/ai-review")
+def job_ai_review(job_id: str):
+    """Every AI suggestion per measure, applied or listed only."""
+    return _job_file(job_id, "ai_review.json", "application/json")
+
+
+@app.get("/jobs/<job_id>/suspects/<name>")
+def job_suspect_image(job_id: str, name: str):
+    """Original crop around one suspect measure."""
+    if not re.fullmatch(r"p\d+-s\d+-m(?:\d+|all)\.png", name):
+        return jsonify(error="not found"), 404
+    return _job_file(job_id, f"suspects/{name}", "image/png")
+
+
+def _job_file(job_id: str, name: str, mimetype: str):
+    if not _authorized():
+        return jsonify(error="unauthorized"), 401
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return jsonify(error="not found"), 404
+        if job["status"] != "done":
+            return jsonify(error="not ready"), 409
+        path = Path(job["root"]) / "out" / name
+    if not path.is_file():
+        return jsonify(error="not available"), 404
+    return send_file(path, mimetype=mimetype, as_attachment=True, download_name=Path(name).name)
+
+
 def _run_job(job_id: str, source: Path, outgoing: Path, profile: str) -> None:
     with _JOB_SLOTS:
         _run_job_serial(job_id, source, outgoing, profile)
@@ -245,7 +340,26 @@ def _run_job_serial(job_id: str, source: Path, outgoing: Path, profile: str) -> 
                     job_id, source, folder, profile, dpi,
                     max(0.1, remaining / (len(dpis) - index)),
                 )
+                skipped = _skipped_sheets(folder)
+                if skipped:
+                    candidate["skipped_sheets"] = skipped
+                raw = result
+                result, repairs = _postprocess(result, profile)
+                if repairs:
+                    candidate["repairs"] = repairs
+                candidate["raw_result"] = str(raw.relative_to(outgoing))
+                if result != raw:
+                    corrections = _corrections(_read_score(raw), _read_score(result))
+                    corrections_file = result.with_name("corrections.json")
+                    corrections_file.write_text(
+                        json.dumps(corrections, ensure_ascii=False, indent=2), encoding="utf-8",
+                    )
+                    candidate["corrections"] = len(corrections["items"])
                 candidate["metrics"] = _inspect_score(result)
+                try:
+                    candidate["validation"] = _validate(result, folder)
+                except Exception as exc:  # noqa: BLE001 - validation never fails a job
+                    candidate["validation_error"] = str(exc)[-500:]
                 candidate["status"] = "ok"
                 candidate["result"] = str(result.relative_to(outgoing))
             except Exception as exc:  # A failed retry must not discard a usable baseline.
@@ -268,16 +382,97 @@ def _run_job_serial(job_id: str, source: Path, outgoing: Path, profile: str) -> 
         selected_file = outgoing / selected["result"]
         result = outgoing / selected_file.name
         shutil.copy2(selected_file, result)
+        # The uncorrected export and the correction history, kept apart so
+        # the app can store the original and let the user go back to it.
+        shutil.copy2(outgoing / selected["raw_result"], outgoing / "raw.mxl")
+        if (selected_file.parent / "corrections.json").is_file():
+            shutil.copy2(selected_file.parent / "corrections.json", outgoing / "corrections.json")
+        if (selected_file.parent / "validation.json").is_file():
+            shutil.copy2(selected_file.parent / "validation.json", outgoing / "validation.json")
+        if (selected_file.parent / "suspects").is_dir():
+            shutil.copytree(selected_file.parent / "suspects", outgoing / "suspects", dirs_exist_ok=True)
         shutil.copy2(selected_file.parent / "audiveris.log", outgoing / "audiveris.log")
+        ai = "off"
+        if profile == "chords_lyrics" and _ai_enabled():
+            _update(job_id, progress=96, step="ai-review")
+            report["ai_review"], ai = _run_ai_review(result, selected_file.parent, outgoing)
+            (outgoing / "recognition.json").write_text(
+                json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
         _update(
             job_id, status="done", progress=100, step="done",
-            result=str(result), finished=time.time(),
+            result=str(result), finished=time.time(), book=str(selected_file.parent), ai=ai,
         )
     except Exception as exc:  # noqa: BLE001
         _update(
             job_id, status="error", progress=100,
             error=str(exc)[-2000:], finished=time.time(),
         )
+
+
+def _run_ai_review(result: Path, book: Path, outgoing: Path) -> tuple[dict, str]:
+    """The review report and the job's AI state; AI review never fails a job."""
+    (outgoing / "ai.mxl").unlink(missing_ok=True)
+    try:
+        review = _ai_review(result, book, outgoing)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "error": str(exc)[-500:]}, "error"
+    if (outgoing / "ai.mxl").is_file():
+        return review, "done"
+    measures = review.get("measures") or 0
+    if review.get("status") == "skipped" or (measures and review.get("errors", 0) >= measures):
+        return review, "error"
+    return review, "unchanged"
+
+
+@app.post("/jobs/<job_id>/ai-review")
+def job_ai_retry(job_id: str):
+    """Run the AI review again, e.g. after it failed for lack of API credit."""
+    if not _authorized():
+        return jsonify(error="unauthorized"), 401
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return jsonify(error="not found"), 404
+        if job["status"] != "done":
+            return jsonify(error="not ready"), 409
+        if job.get("ai") == "running":
+            return jsonify(_public(job)), 202
+        book = Path(job.get("book") or "")
+        if job["profile"] != "chords_lyrics" or not job.get("book") or not book.is_dir():
+            return jsonify(error="not available"), 404
+        if not _ai_enabled():
+            return jsonify(error="ai unavailable"), 503
+        job["ai"] = "running"
+        _save_job(job)
+        payload = _public(job)
+        result, outgoing = Path(job["result"]), Path(job["root"]) / "out"
+
+    def run() -> None:
+        _review, state = _run_ai_review(result, book, outgoing)
+        _update(job_id, ai=state)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify(payload), 202
+
+
+@app.post("/arrange/advice")
+def arrange_advice():
+    """Accompaniment style per section and chord symbols to look at again, for a lead sheet
+    the app describes as text."""
+    if not _authorized():
+        return jsonify(error="unauthorized"), 401
+    payload = request.get_json(silent=True) or {}
+    brief, bars = payload.get("brief"), payload.get("bars")
+    if (not isinstance(brief, str) or not brief.strip() or len(brief) > ARRANGE_MAX_BRIEF
+            or not isinstance(bars, int) or isinstance(bars, bool) or bars < 1):
+        return jsonify(error="bad request"), 400
+    if not _ai_enabled():
+        return jsonify(error="ai unavailable"), 503
+    try:
+        return jsonify(_arrange_advice(brief, bars))
+    except Exception as error:  # noqa: BLE001 - the model call failed; the app falls back to its defaults
+        return jsonify(error="ai failed", detail=str(error)[-200:]), 502
 
 
 def _stop_process(proc) -> None:
@@ -295,6 +490,7 @@ def _run_audiveris(
     dpi: int | None, timeout: float,
 ) -> Path:
     env = {**os.environ, "JAVA_TOOL_OPTIONS": "-Xmx4g"}
+    started = time.monotonic()
     proc = subprocess.Popen(
         _convert_cmd(source, outgoing, profile, dpi),
         stdout=subprocess.PIPE,
@@ -351,8 +547,77 @@ def _run_audiveris(
         raise TimeoutError("convert timed out")
     result = _find_score(outgoing)
     if code != 0 or result is None:
+        result = _export_valid_sheets(outgoing, env, timeout - (time.monotonic() - started))
+    if result is None:
         raise RuntimeError(f"Audiveris failed (exit {code}); see {outgoing.name}/audiveris.log")
     return result
+
+
+def _book_sheets(book: Path) -> tuple[list[int], list[int]]:
+    """Valid and invalid sheet numbers recorded in a saved .omr book."""
+    with zipfile.ZipFile(book) as archive:
+        root = ET.fromstring(archive.read("book.xml"))
+    valid, invalid = [], []
+    for sheet in root.findall("sheet"):
+        number = int(sheet.get("number", "0"))
+        (invalid if sheet.get("invalid") == "true" else valid).append(number)
+    return valid, invalid
+
+
+def _sheet_ranges(numbers: list[int]) -> list[str]:
+    ranges: list[str] = []
+    for number in sorted(numbers):
+        if ranges and ranges[-1].split("-")[-1] == str(number - 1):
+            ranges[-1] = f"{ranges[-1].split('-')[0]}-{number}"
+        else:
+            ranges.append(str(number))
+    return ranges
+
+
+def _export_valid_sheets(outgoing: Path, env: dict, timeout: float) -> Path | None:
+    """Export the sheets Audiveris could read when others were invalid.
+
+    A cover or lyrics page has no staff, so Audiveris flags it invalid and
+    then refuses to export the whole book. The saved book already holds the
+    transcribed sheets, so exporting only those takes seconds.
+    """
+    books = sorted(outgoing.glob("*.omr"))
+    if len(books) != 1 or timeout <= 0:
+        return None
+    try:
+        valid, invalid = _book_sheets(books[0])
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile, ET.ParseError):
+        return None
+    if not valid or not invalid:
+        return None
+    command = [
+        "xvfb-run", "-a", "/opt/audiveris/bin/Audiveris", "-batch", "-export",
+        "-sheets", *_sheet_ranges(valid), "-output", str(outgoing), str(books[0]),
+    ]
+    with (outgoing / "audiveris.log").open("a", encoding="utf-8") as log:
+        log.write(f"\n# Exporting valid sheets {valid}; skipping invalid sheets {invalid}\n")
+        log.flush()
+        proc = subprocess.Popen(
+            command, stdout=log, stderr=subprocess.STDOUT, env=env,
+            start_new_session=os.name == "posix",
+        )
+        try:
+            code = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _stop_process(proc)
+            proc.wait()
+            return None
+    return _find_score(outgoing) if code == 0 else None
+
+
+def _skipped_sheets(folder: Path) -> list[int]:
+    books = sorted(folder.glob("*.omr"))
+    if len(books) != 1:
+        return []
+    try:
+        return _book_sheets(books[0])[1]
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile, ET.ParseError):
+        return []
 
 
 class _SheetProgress:
@@ -431,6 +696,8 @@ def _update(job_id: str, **fields) -> None:
                 job[key] = max(int(job.get("progress") or 0), int(value))
             else:
                 job[key] = value
+        if "finished" in fields or "ai" in fields:
+            _save_job(job)
 
 
 def _convert_cmd(
@@ -453,12 +720,26 @@ def _convert_cmd(
         command += [
             "-constant", f"org.audiveris.omr.image.ImageLoading.pdfResolution={dpi}",
         ]
+    # Section letters (A/B/C) in the left margin make a system look indented,
+    # and Audiveris then starts a new movement there. A movement drops the
+    # time signature, so later bars lose their target duration. An uploaded
+    # file is always one song, so indentation never means a new movement.
+    command += [
+        "-constant",
+        "org.audiveris.omr.sheet.ProcessingSwitches.indentations=false",
+    ]
     if profile == "chords_lyrics":
         command += [
             "-constant",
             "org.audiveris.omr.sheet.ProcessingSwitches.chordNames=true",
             "-constant",
             "org.audiveris.omr.sheet.ProcessingSwitches.lyrics=true",
+            # Lead sheets rarely print dynamics, while OCR noise from Korean
+            # lyrics and chord symbols is often taken for p, pp or mp.
+            "-constant",
+            "org.audiveris.omr.sheet.ProcessingSwitches.dynamicsAboveStaff=false",
+            "-constant",
+            "org.audiveris.omr.sheet.ProcessingSwitches.dynamicsBelowStaff=false",
         ]
     languages = os.environ.get("OMR_OCR_LANGUAGES", "").strip()
     if languages:
@@ -471,36 +752,48 @@ def _convert_cmd(
     return [*command, str(source)]
 
 
-def _find_score(folder: Path) -> Path | None:
-    files = sorted(folder.glob("*.mxl"))
-    if not files:
-        files = sorted(folder.glob("*.xml")) + sorted(folder.glob("*.musicxml"))
-    files = [path for path in files if path.name.lower() != "container.xml"]
-    if len(files) > 1:
-        raise ValueError("Multiple exported scores; refusing to return only the first movement")
-    return files[0] if files else None
-
-
-def _read_score(path: Path) -> ET.Element:
-    if path.suffix.lower() == ".mxl":
-        with zipfile.ZipFile(path) as archive:
-            container = ET.fromstring(archive.read("META-INF/container.xml"))
-            entries = [node for node in container.iter() if node.tag.rsplit("}", 1)[-1] == "rootfile"]
-            if not entries or not entries[0].get("full-path"):
-                raise ValueError("MXL rootfile is missing")
-            info = archive.getinfo(entries[0].get("full-path"))
-            if info.file_size > 64 * 1024 * 1024:
-                raise ValueError("MusicXML is too large to inspect")
-            root = ET.fromstring(archive.read(info))
-    else:
-        if path.stat().st_size > 64 * 1024 * 1024:
-            raise ValueError("MusicXML is too large to inspect")
-        root = ET.fromstring(path.read_bytes())
-    for node in root.iter():
-        node.tag = node.tag.rsplit("}", 1)[-1]
-    if root.tag != "score-partwise":
-        raise ValueError("Expected score-partwise MusicXML")
-    return root
+def _postprocess(path: Path, profile: str) -> tuple[Path, dict]:
+    """Apply structural repairs, and lead-sheet repairs for chords and lyrics."""
+    root = _read_score(path)
+    if profile != "chords_lyrics":
+        merged = _merge_split_parts(root)
+        if not merged:
+            return path, {}
+        stem = path.name[: -len(path.suffix)] if path.suffix else path.name
+        return _write_mxl(root, path.with_name(f"{stem}.fixed.mxl")), {"parts_merged": merged}
+    original = ET.tostring(root)
+    dashes = _drop_lyric_dash_articulations(root)
+    report = {"chords_from_words": _chords_from_words(root), "chords_reread": 0, "lyrics_ocr": None,
+              "lyric_dashes_removed": len(dashes), "placeholder_rests_removed": _drop_placeholder_rests(root),
+              "tie_dots_removed": _drop_tie_dots(root), "second_chords_removed": _drop_second_chords(root),
+              "bad_tempos_removed": _drop_bad_tempos(root)}
+    book = _load_book(root, path.parent)
+    if book is not None:
+        report["repeat_starts"] = _repeat_starts(book)
+        if report["repeat_starts"]:
+            # Sung notes and onsets were indexed with the removed chords.
+            book = _load_book(root, path.parent)
+    if book is not None:
+        with tempfile.TemporaryDirectory(dir=path.parent) as workdir:
+            report["chords_reread"] = _reread_chords(book, Path(workdir))
+            report["chords_added"] = _ocr_chord_lines(book, Path(workdir))
+            report["chord_signs_attached"] = _attach_stray_accidentals(book["parts"])
+            report["chord_junk_removed"] = _drop_chord_junk(book["parts"])
+            report["lyrics_ocr"] = _ocr_lyrics(book, Path(workdir))
+            photos = _upload_photos(path, book)
+            report["navigation"] = _navigation_marks(book, Path(workdir), photos)
+            report["signs"] = _add_segno_coda(book, _segno_coda_marks(book, photos))
+    report["lyrics_split"] = _split_korean_lyrics(root)
+    report["lyric_dashes"] = _add_lyric_dashes(dashes)
+    report["ties_added"] = _tie_held_dashes(root)
+    report["title"] = _title_from_credits(root)
+    # Last: the repairs above address parts by their position in the book.
+    report["parts_merged"] = _merge_split_parts(root)
+    # Every repair edits the tree, so an unchanged tree means nothing was fixed.
+    if ET.tostring(root) == original:
+        return path, report
+    stem = path.name[: -len(path.suffix)] if path.suffix else path.name
+    return _write_mxl(root, path.with_name(f"{stem}.fixed.mxl")), report
 
 
 def _inspect_score(path: Path) -> dict:
@@ -645,6 +938,8 @@ def _reaper() -> None:
 
 def main() -> None:
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    with _lock:
+        _restore_jobs()
     threading.Thread(target=_reaper, daemon=True).start()
     app.run(host=HOST, port=PORT, threaded=True)
 

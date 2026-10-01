@@ -226,6 +226,62 @@ void main() {
       expect(codec.decodeXml(encoded).noteCount, 3);
     });
 
+    test('ignores tempo marks no player could use', () {
+      const xml = '''<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1"><part-list><score-part id="P1"><part-name>V</part-name></score-part></part-list>
+<part id="P1"><measure number="1"><attributes><divisions>1</divisions></attributes>
+<direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>1cz</per-minute></metronome></direction-type><sound tempo="1"/></direction>
+<note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note>
+<sound tempo="9484"/></measure>
+<measure number="2"><direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>96</per-minute></metronome></direction-type><sound tempo="96"/></direction>
+<note><pitch><step>D</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note></measure>
+</part></score-partwise>''';
+      final score = codec.decodeXml(xml);
+      final tempos = [
+        for (final m in score.parts.single.measures)
+          for (final d in m.events.whereType<MusicDirection>())
+            if (d.tempoBpm != null) d.tempoBpm,
+      ];
+      expect(tempos, [96]);
+      expect(score.tempoBpm, 96);
+    });
+
+    test('reads and writes segno, coda and jump sounds', () {
+      const xml = '''<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1"><part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
+<part id="P1">
+<measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>
+<direction placement="above"><direction-type><segno/></direction-type><sound segno="segno"/></direction>
+<note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note>
+<direction placement="below"><direction-type><words>Fine</words></direction-type><sound fine="yes"/></direction></measure>
+<measure number="2"><note><pitch><step>D</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note>
+<direction placement="above"><direction-type><words>D.S. al Coda</words></direction-type><sound dalsegno="segno"/></direction>
+<direction placement="above"><direction-type><words>To Coda</words></direction-type><sound tocoda="coda"/></direction></measure>
+<measure number="3"><direction placement="above"><direction-type><coda/></direction-type></direction>
+<note><pitch><step>E</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note></measure>
+</part></score-partwise>''';
+
+      Set<MusicNavigation> marks(MusicScore score, int index) =>
+          score.parts.single.measures[index].navigation;
+
+      final score = codec.decodeXml(xml);
+      expect(marks(score, 0), {MusicNavigation.segno, MusicNavigation.fine});
+      expect(marks(score, 1), {
+        MusicNavigation.dalSegno,
+        MusicNavigation.toCoda,
+      });
+      expect(marks(score, 2), {MusicNavigation.coda});
+
+      final written = utf8.decode(codec.encodeMusicXml(score));
+      expect(written, contains('<segno/>'));
+      expect(written, contains('<coda/>'));
+      expect(written, contains('dalsegno="segno"'));
+      final again = codec.decodeXml(written);
+      for (var index = 0; index < 3; index++) {
+        expect(marks(again, index), marks(score, index));
+      }
+    });
+
     test('round-trips beams, ties, and slurs for Verovio engraving', () {
       const xml = '''
 <score-partwise version="4.0">

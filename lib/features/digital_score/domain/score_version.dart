@@ -2,10 +2,7 @@ const String scoreVersionOriginalId = 'original';
 const String scoreVersionLegacyPerformanceId = 'performance';
 
 class ScoreVersionRef {
-  const ScoreVersionRef({
-    required this.id,
-    required this.name,
-  });
+  const ScoreVersionRef({required this.id, required this.name, this.origin});
 
   factory ScoreVersionRef.fromJson(Map<String, dynamic> json) {
     final id = (json['id'] as String?)?.trim() ?? '';
@@ -13,18 +10,35 @@ class ScoreVersionRef {
     if (id.isEmpty || name.isEmpty) {
       throw const FormatException('Score version id and name are required.');
     }
-    return ScoreVersionRef(id: id, name: name);
+    final origin = json['origin'];
+    return ScoreVersionRef(
+      id: id,
+      name: name,
+      origin: origin is String && origin.isNotEmpty ? origin : null,
+    );
   }
 
   final String id;
   final String name;
 
+  /// What the version was made from, when it is derived automatically, e.g.
+  /// an expanded copy in playing order (see `performanceOrigin`).
+  final String? origin;
+
   bool get isOriginal => id == scoreVersionOriginalId;
 
-  Map<String, Object?> toJson() => {'id': id, 'name': name};
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'name': name,
+    if (origin != null) 'origin': origin,
+  };
 
   ScoreVersionRef copyWith({String? id, String? name}) {
-    return ScoreVersionRef(id: id ?? this.id, name: name ?? this.name);
+    return ScoreVersionRef(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      origin: origin,
+    );
   }
 }
 
@@ -100,9 +114,7 @@ class ScoreVersionCatalog {
 
   static int nextVersionNumber(List<ScoreVersionRef> versions) {
     var index = versions.length + 1;
-    final used = {
-      for (final version in versions) version.name,
-    };
+    final used = {for (final version in versions) version.name};
     while (used.contains('Version $index') || used.contains('버전 $index')) {
       index++;
     }

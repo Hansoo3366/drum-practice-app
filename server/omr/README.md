@@ -16,11 +16,15 @@ PDF는 기본적으로 **300 DPI와 400 DPI**로 각각 Audiveris를 실행합�
 
 앱에서 `일반 악보` 또는 `코드·가사 악보`를 선택합니다. 후자는 Audiveris의 코드 이름·가사 인식 스위치를 켭니다. 코드 이름 인식은 Audiveris 기본값이 꺼져 있으므로, 코드가 없는 악보에서는 `일반 악보`를 선택하세요. 두 유형 모두 원본 PDF를 보존하며 변환 결과는 검토가 필요한 초안입니다. 설정 근거: [Audiveris book parameters](https://audiveris.github.io/audiveris/_pages/guides/main/book_parameters/).
 
+코드·가사 악보는 변환 뒤 서버가 `.omr` 안의 흑백 이미지에서 오선 아래 가사 줄을 한 줄씩 다시 읽어(`tesseract -l kor --psm 7`) 음표에 한 글자씩 배치하고, 코드 줄은 영어·코드 문자만 허용해 다시 읽어 빠진 코드를 채웁니다. 결과는 `*.fixed.mxl`, 적용 수는 `recognition.json`의 `repairs`에 남습니다. 모든 유형에서 한 오선이 이름만 달라 여러 파트로 갈라진 경우(`Vocal`/`Vo.`)는 한 파트로 합칩니다. 표지처럼 오선이 없는 쪽은 건너뛰고 나머지 쪽만 내보내며 `skipped_sheets`에 기록합니다.
+
 한글 가사를 읽으려면 VM에 Audiveris가 사용할 `kor` OCR 데이터를 설치하고 `/etc/default/omr`에 `OMR_OCR_LANGUAGES=kor+eng`를 설정한 뒤 `sudo systemctl restart omr.service`를 실행합니다. 설치한 OCR 언어만 지정하세요. 언어 파일의 위치와 형식은 [Audiveris OCR languages](https://audiveris.github.io/audiveris/_pages/guides/main/languages/)를 따릅니다. 새 `update.sh`가 기존 서비스에도 `EnvironmentFile` 설정을 추가합니다.
 
 변환 재현 자료는 `/opt/omr/jobs/<job-id>/out/`에 있습니다. `dpi-300/`, `dpi-400/`(이미지는 `original/`)에 각각 `audiveris.log`, `.omr`, `.mxl`을 보존하고, 선택된 결과와 로그를 `out/`에 복사합니다. `recognition.json`에는 각 후보의 검사 결과·실행 시간·선택 근거를 남깁니다. 인증된 `GET /jobs/<id>/diagnostics`로도 이 JSON을 받을 수 있습니다. 기본 보관 시간은 완료 후 6시간입니다. `-save`를 사용하므로 Audiveris GUI에서 `.omr`을 열어 실제 인식 오류를 확인할 수 있습니다.
 
-기존 서비스 업데이트는 `omr_server.py`와 **새 `update.sh`**를 VM에서 업로드 가능한 같은 디렉터리에 올리고 실행합니다. 예를 들어 `/root`에 올렸다면 `bash /root/update.sh`, 파일시스템 루트 `/`에 올렸다면 `bash /update.sh`입니다. 스크립트와 Python 파일이 다른 곳에 있다면 `bash /root/update.sh /`처럼 업로드 디렉터리를 인자로 지정합니다. 스크립트가 파일을 `/opt/omr`로 복사하고 옵션 환경 파일을 읽는 systemd drop-in을 추가한 뒤 서비스를 재시작합니다. health에서 새 pipeline 식별자까지 확인합니다. 추가 Python 패키지는 필요하지 않습니다. `compare_musicxml.py`는 변환 서비스에 필요하지 않으며, VM에서 비교할 때만 같은 업로드 디렉터리에 함께 올리면 설치됩니다. 기존 `~/update-omr.sh`가 아닌 새 `update.sh`를 실행하세요. 다중 해상도 변환에는 앱 재설치가 필요하지 않습니다. 앞서 추가한 앱의 일반/코드·가사 선택 UI가 없다면 그 UI용 앱 업데이트는 별도로 필요합니다. 이 업데이트 스크립트는 기존 systemd 서비스를 전제로 합니다.
+서버 코드는 `omr_server.py`(Flask 라우트·작업 실행·Audiveris·후처리 순서)와 모듈 `omr_score.py`(MusicXML 입출력), `omr_rules.py`(리드시트 XML 보정), `omr_book.py`(.omr 책·OCR 도우미), `omr_marks.py`(도돌이 시작·세뇨/코다·D.S. 글자), `omr_text.py`(가사·코드 재인식), `omr_validate.py`(검증·수정 이력), `omr_ai.py`(AI 검수)로 나뉜다. 모듈은 모두 필요하다.
+
+기존 서비스 업데이트는 `omr_server.py`와 모듈 `omr_*.py`, **새 `update.sh`**를 VM에서 업로드 가능한 같은 디렉터리에 올리고 실행합니다. 예를 들어 `/root`에 올렸다면 `bash /root/update.sh`, 파일시스템 루트 `/`에 올렸다면 `bash /update.sh`입니다. 스크립트와 Python 파일이 다른 곳에 있다면 `bash /root/update.sh /`처럼 업로드 디렉터리를 인자로 지정합니다. 스크립트가 파일을 `/opt/omr`로 복사하고 옵션 환경 파일을 읽는 systemd drop-in을 추가한 뒤 서비스를 재시작합니다. health에서 새 pipeline 식별자까지 확인합니다. 코드·가사 악보의 가사·코드 재인식에는 `tesseract-ocr`와 `python3-pil`(Ubuntu 패키지)이 필요합니다. 기존 VM은 `sudo apt-get install -y tesseract-ocr python3-pil`로 한 번 설치합니다. 없으면 재인식 단계만 건너뛰고 변환은 계속됩니다. `compare_musicxml.py`는 변환 서비스에 필요하지 않으며, VM에서 비교할 때만 같은 업로드 디렉터리에 함께 올리면 설치됩니다. 기존 `~/update-omr.sh`가 아닌 새 `update.sh`를 실행하세요. 다중 해상도 변환에는 앱 재설치가 필요하지 않습니다. 앞서 추가한 앱의 일반/코드·가사 선택 UI가 없다면 그 UI용 앱 업데이트는 별도로 필요합니다. 이 업데이트 스크립트는 기존 systemd 서비스를 전제로 합니다.
 
 수동 수정한 기준 MusicXML이 생기면 로컬에서는 `python server/omr/compare_musicxml.py reference.mxl converted.mxl`, VM에 설치했다면 `python3 /opt/omr/compare_musicxml.py reference.mxl converted.mxl`로 마디별 음높이·음가 겹침을 측정합니다. 이 수치는 성부, 붙임줄, 가사, 조판까지 포함한 전체 정답률이 아닙니다. 같은 악보의 변환 설정을 비교하는 진단 지표로 사용하세요.
 

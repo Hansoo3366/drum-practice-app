@@ -225,6 +225,7 @@ class MusicXmlCodec {
     var previousNoteOnset = 0;
     double? firstTempo;
     final events = <MusicEvent>[];
+    final barlines = <MusicBarline>[];
 
     for (final child in measureElement.childElements) {
       switch (child.name.local) {
@@ -307,6 +308,10 @@ class MusicXmlCodec {
               slurStart: slurs.contains('start'),
               slurStop: slurs.contains('stop'),
               beams: beams,
+              lyrics: [
+                for (final lyric in _children(child, 'lyric'))
+                  lyric.toXmlString(),
+              ],
             ),
           );
           previousNoteOnset = onset;
@@ -321,15 +326,23 @@ class MusicXmlCodec {
             firstTempo ??= direction.tempoBpm;
           }
         case 'sound':
-          final tempo = _doubleAttribute(child, 'tempo');
-          if (tempo != null && tempo > 0) {
+          final tempo = _plausibleTempo(_doubleAttribute(child, 'tempo'));
+          final navigation = _soundNavigation(child);
+          if ((tempo != null && tempo > 0) || navigation != null) {
             events.add(
-              MusicDirection(onset: cursor, staff: 1, tempoBpm: tempo),
+              MusicDirection(
+                onset: cursor,
+                staff: 1,
+                tempoBpm: tempo != null && tempo > 0 ? tempo : null,
+                navigation: navigation,
+              ),
             );
-            firstTempo ??= tempo;
+            if (tempo != null && tempo > 0) firstTempo ??= tempo;
           }
         case 'harmony':
           events.add(_parseHarmony(child, cursor));
+        case 'barline':
+          barlines.add(_parseBarline(child));
       }
     }
 
@@ -339,6 +352,7 @@ class MusicXmlCodec {
       attributes: attributes,
       events: List.unmodifiable(events),
       implicit: measureElement.getAttribute('implicit') == 'yes',
+      barlines: barlines,
     );
     return _ParsedMeasure(
       measure: measure,
@@ -409,17 +423,33 @@ class MusicXmlCodec {
         .whereType<String>()
         .firstOrNull;
     final sound = _firstChild(element, 'sound');
-    var tempo = sound == null ? null : _doubleAttribute(sound, 'tempo');
+    final navigation =
+        _soundNavigation(sound) ??
+        (directionTypes.any((type) => _firstChild(type, 'segno') != null)
+            ? MusicNavigation.segno
+            : directionTypes.any((type) => _firstChild(type, 'coda') != null)
+            ? MusicNavigation.coda
+            : null);
+    var tempo = _plausibleTempo(
+      sound == null ? null : _doubleAttribute(sound, 'tempo'),
+    );
     if (tempo == null) {
       for (final type in directionTypes) {
         final metronome = _firstChild(type, 'metronome');
         if (metronome != null) {
-          tempo = double.tryParse(_childText(metronome, 'per-minute') ?? '');
+          tempo = _plausibleTempo(
+            double.tryParse(_childText(metronome, 'per-minute') ?? ''),
+          );
           if (tempo != null) break;
         }
       }
     }
-    if (rehearsal == null && words == null && tempo == null) return null;
+    if (rehearsal == null &&
+        words == null &&
+        tempo == null &&
+        navigation == null) {
+      return null;
+    }
     final offset = _intText(element, 'offset') ?? 0;
     return MusicDirection(
       onset: cursor + offset,
@@ -427,7 +457,28 @@ class MusicXmlCodec {
       rehearsal: rehearsal,
       words: words,
       tempoBpm: tempo != null && tempo > 0 ? tempo : null,
+      navigation: navigation,
     );
+  }
+
+  /// A tempo a player could use; OMR reads stray text as metronome marks
+  /// ("1cz" → 1 BPM, 9484 BPM), which would stretch playback to hours.
+  static double? _plausibleTempo(double? bpm) =>
+      bpm != null && bpm >= 20 && bpm <= 400 ? bpm : null;
+
+  /// The jump a `<sound>` asks for. Jumps outrank the signs they point to.
+  MusicNavigation? _soundNavigation(XmlElement? sound) {
+    if (sound == null) return null;
+    bool has(String name) => _nonEmpty(sound.getAttribute(name)) != null;
+    if (has('dalsegno')) return MusicNavigation.dalSegno;
+    if (has('dacapo') && sound.getAttribute('dacapo') != 'no') {
+      return MusicNavigation.daCapo;
+    }
+    if (has('tocoda')) return MusicNavigation.toCoda;
+    if (has('fine')) return MusicNavigation.fine;
+    if (has('segno')) return MusicNavigation.segno;
+    if (has('coda')) return MusicNavigation.coda;
+    return null;
   }
 
   MusicHarmony _parseHarmony(XmlElement element, int cursor) {
@@ -459,6 +510,9 @@ class MusicXmlCodec {
     MusicAttributes? previousAttributes,
     double? fallbackTempo,
   }) {
+    for (final barline in measure.barlines) {
+      if (barline.location == 'left') builder.xml(barline.xml);
+    }
     _writeAttributes(builder, measure.attributes, previous: previousAttributes);
 
     final directions = measure.events.whereType<MusicDirection>().toList();
@@ -545,6 +599,27 @@ class MusicXmlCodec {
         );
       }
     }
+    for (final barline in measure.barlines) {
+      if (barline.location != 'left') builder.xml(barline.xml);
+    }
+  }
+
+  MusicBarline _parseBarline(XmlElement element) {
+    final repeat = _firstChild(element, 'repeat');
+    final ending = _firstChild(element, 'ending');
+    return MusicBarline(
+      location: element.getAttribute('location') ?? 'right',
+      xml: element.toXmlString(),
+      repeat: repeat?.getAttribute('direction'),
+      times: int.tryParse(repeat?.getAttribute('times') ?? ''),
+      endingNumbers: [
+        for (final part in (ending?.getAttribute('number') ?? '').split(
+          RegExp(r'[,\s]+'),
+        ))
+          if (int.tryParse(part) case final number?) number,
+      ],
+      endingType: ending?.getAttribute('type'),
+    );
   }
 
   void _writeAttributes(
@@ -667,11 +742,34 @@ class MusicXmlCodec {
             },
           );
         }
-        if (_nonEmpty(direction.words) case final words?) {
+        final words =
+            _nonEmpty(direction.words) ??
+            switch (direction.navigation) {
+              // A jump needs a printed label; a direction needs a type.
+              MusicNavigation.dalSegno => 'D.S.',
+              MusicNavigation.daCapo => 'D.C.',
+              MusicNavigation.toCoda => 'To Coda',
+              MusicNavigation.fine => 'Fine',
+              _ => null,
+            };
+        if (words != null) {
           builder.element(
             'direction-type',
             nest: () {
               builder.element('words', nest: words);
+            },
+          );
+        }
+        if (direction.navigation
+            case MusicNavigation.segno || MusicNavigation.coda) {
+          builder.element(
+            'direction-type',
+            nest: () {
+              builder.element(
+                direction.navigation == MusicNavigation.segno
+                    ? 'segno'
+                    : 'coda',
+              );
             },
           );
         }
@@ -695,9 +793,19 @@ class MusicXmlCodec {
         if (direction.staff != 1) {
           builder.element('staff', nest: direction.staff.toString());
         }
-        if (direction.tempoBpm case final tempo?) {
-          builder.element('sound', attributes: {'tempo': _number(tempo)});
-        }
+        final sound = <String, String>{
+          if (direction.tempoBpm case final tempo?) 'tempo': _number(tempo),
+          ...switch (direction.navigation) {
+            MusicNavigation.segno => {'segno': 'segno'},
+            MusicNavigation.coda => {'coda': 'coda'},
+            MusicNavigation.dalSegno => {'dalsegno': 'segno'},
+            MusicNavigation.daCapo => {'dacapo': 'yes'},
+            MusicNavigation.toCoda => {'tocoda': 'coda'},
+            MusicNavigation.fine => {'fine': 'yes'},
+            null => const <String, String>{},
+          },
+        };
+        if (sound.isNotEmpty) builder.element('sound', attributes: sound);
       },
     );
   }
@@ -833,6 +941,9 @@ class MusicXmlCodec {
               }
             },
           );
+        }
+        for (final lyric in note.lyrics) {
+          builder.xml(lyric);
         }
       },
     );

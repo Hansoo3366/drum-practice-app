@@ -27,11 +27,13 @@ void main() {
     final exported = await exporter.encode(
       written: written,
       title: 'Demo',
-      sequence: PlaybackSequence([
-        PlaybackSequenceItem(section: 'INTRO', repeats: 4),
-        PlaybackSequenceItem(section: 'VERSE', repeats: 2),
-        PlaybackSequenceItem(section: 'CHORUS'),
-      ]),
+      sequence: PlaybackSequence(
+        steps: [
+          PlaybackStep(sectionId: sectionIdAt(0), repeats: 4),
+          PlaybackStep(sectionId: sectionIdAt(1), repeats: 2),
+          PlaybackStep(sectionId: sectionIdAt(2)),
+        ],
+      ),
       arrangement: const ArrangementProfile(style: ArrangementStyle.block),
       kind: ScoreExportKind.musicXml,
     );
@@ -91,9 +93,9 @@ void main() {
 
   test('keeps the written score inside an editable project zip', () async {
     final written = _score(sections: true);
-    final sequence = PlaybackSequence([
-      PlaybackSequenceItem(section: 'INTRO', repeats: 2),
-    ]);
+    final sequence = PlaybackSequence(
+      steps: [PlaybackStep(sectionId: sectionIdAt(0), repeats: 2)],
+    );
     const arrangement = ArrangementProfile(style: ArrangementStyle.pulse);
     final exported = await exporter.encode(
       written: written,

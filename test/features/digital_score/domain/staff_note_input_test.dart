@@ -69,9 +69,7 @@ void main() {
             MusicMeasure(
               number: '1',
               attributes: attributes,
-              events: [
-                MusicNote(onset: 0, duration: 16, voice: '1', staff: 1),
-              ],
+              events: [MusicNote(onset: 0, duration: 16, voice: '1', staff: 1)],
             ),
           ],
         ),

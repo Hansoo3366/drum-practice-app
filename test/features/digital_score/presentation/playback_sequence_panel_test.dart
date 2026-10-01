@@ -1,197 +1,292 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
-import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/playback_sequence_panel.dart';
 
+const _sections = [
+  ScoreSection(
+    id: 'm0',
+    name: 'VERSE',
+    number: 1,
+    startMeasureIndex: 0,
+    endMeasureIndex: 3,
+  ),
+  ScoreSection(
+    id: 'm4',
+    name: 'CHORUS',
+    number: null,
+    startMeasureIndex: 4,
+    endMeasureIndex: 7,
+  ),
+  ScoreSection(
+    id: 'm8',
+    name: 'VERSE',
+    number: 2,
+    startMeasureIndex: 8,
+    endMeasureIndex: 11,
+  ),
+];
+
 void main() {
-  test('keeps only marked section roles and their repeats', () {
-    final sequence = sequenceForMarkedSections(
-      _score(),
-      PlaybackSequence([
-        PlaybackSequenceItem(section: 'INTRO', repeats: 4),
-        PlaybackSequenceItem(section: 'CHORUS', repeats: 8),
-      ]),
-    );
-
-    expect(sequence.items, [
-      PlaybackSequenceItem(section: 'INTRO', repeats: 4),
-      PlaybackSequenceItem(section: 'VERSE'),
-    ]);
+  test('formats playback lengths', () {
+    expect(formatPlaybackLength(96), '1:36');
+    expect(formatPlaybackLength(5.4), '0:05');
   });
 
-  test('preserves a user-defined section order', () {
-    final sequence = sequenceForMarkedSections(
-      _score(),
-      PlaybackSequence([
-        PlaybackSequenceItem(section: 'VERSE', repeats: 2),
-        PlaybackSequenceItem(section: 'INTRO', repeats: 4),
-      ]),
+  testWidgets('names a section at the selected bar', (tester) async {
+    final named = <String>[];
+    var custom = 0;
+    var removed = 0;
+    await _pump(
+      tester,
+      selectedBar: 4,
+      onSectionNamed: named.add,
+      onCustomSection: () => custom++,
+      onBoundaryRemoved: () => removed++,
     );
 
-    expect(sequence.items, [
-      PlaybackSequenceItem(section: 'VERSE', repeats: 2),
-      PlaybackSequenceItem(section: 'INTRO', repeats: 4),
-    ]);
+    expect(find.text('코러스 · 5–8마디'), findsOneWidget);
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '코러스'))
+          .selected,
+      isTrue,
+    );
+    for (final chip in [
+      find.widgetWithText(ChoiceChip, '브리지'),
+      find.widgetWithText(ActionChip, '직접 입력'),
+      find.widgetWithText(ActionChip, '앞 구간과 합치기'),
+    ]) {
+      await tester.ensureVisible(chip);
+      await tester.tap(chip);
+    }
+    expect(named, ['BRIDGE']);
+    expect(custom, 1);
+    expect(removed, 1);
   });
 
-  test('preserves repeated entries for the same marked section', () {
-    final sequence = sequenceForMarkedSections(
-      _score(),
-      PlaybackSequence([
-        PlaybackSequenceItem(section: 'INTRO', repeats: 2),
-        PlaybackSequenceItem(section: 'VERSE'),
-        PlaybackSequenceItem(section: 'INTRO', repeats: 3),
-      ]),
+  testWidgets(
+    'a bar inside a section starts a new one, not the whole section',
+    (tester) async {
+      await _pump(tester, selectedBar: 6);
+
+      expect(find.text('7마디부터 · 뒤 마디를 누르면 범위가 늘어나요'), findsOneWidget);
+      expect(find.widgetWithText(ActionChip, '앞 구간과 합치기'), findsNothing);
+    },
+  );
+
+  testWidgets('a second tap picks the last bar of the range', (tester) async {
+    await _pump(tester, selectedBar: 4, selectedEnd: 6);
+
+    expect(find.text('5–7마디 · 아래 줄을 누르면 거기까지 늘어나요'), findsOneWidget);
+    // A picked range is named as a whole; merging is for an existing section.
+    expect(find.widgetWithText(ActionChip, '앞 구간과 합치기'), findsNothing);
+  });
+
+  testWidgets('without a selection only shows how to start', (tester) async {
+    await _pump(tester);
+
+    expect(find.text('마디를 누르면 그 마디부터 새 구간이 됩니다'), findsOneWidget);
+    final chip = tester.widget<ChoiceChip>(
+      find.widgetWithText(ChoiceChip, '인트로'),
+    );
+    expect(chip.onSelected, isNull);
+  });
+
+  testWidgets('starts an order from the sections', (tester) async {
+    List<PlaybackStep>? changed;
+    await _pump(
+      tester,
+      tab: StructureTab.order,
+      onStepsChanged: (steps) => changed = steps,
     );
 
-    expect(sequence.items, [
-      PlaybackSequenceItem(section: 'INTRO', repeats: 2),
-      PlaybackSequenceItem(section: 'VERSE'),
-      PlaybackSequenceItem(section: 'INTRO', repeats: 3),
-    ]);
+    expect(find.text('적힌 순서대로 연주합니다'), findsOneWidget);
+    await tester.ensureVisible(find.text('적힌 순서로 시작'));
+    await tester.tap(find.text('적힌 순서로 시작'));
+    expect(changed!.map((s) => s.sectionId), ['m0', 'm4', 'm8']);
+    // Nothing to make yet.
+    expect(find.text('이 순서로 새 악보 만들기'), findsNothing);
   });
 
-  testWidgets('marks a measure role and changes that role repeat count', (
+  testWidgets('switches between the two tabs and closes', (tester) async {
+    final tabs = <StructureTab>[];
+    var closed = 0;
+    await _pump(tester, onTabChanged: tabs.add, onClose: () => closed++);
+
+    expect(find.text('마디를 누르면 그 마디부터 새 구간이 됩니다'), findsOneWidget);
+    await tester.tap(find.text('연주 순서'));
+    await tester.tap(find.widgetWithText(TextButton, '닫기'));
+    expect(tabs, [StructureTab.order]);
+    expect(closed, 1);
+  });
+
+  testWidgets('split pieces read as one section; unnamed shows its bars', (
     tester,
   ) async {
-    await tester.binding.setSurfaceSize(const Size(360, 720));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    String? section;
-    String? added;
-    int? removed;
-    var sequence = PlaybackSequence([
-      PlaybackSequenceItem(section: 'INTRO', repeats: 2),
-      PlaybackSequenceItem(section: 'VERSE'),
-    ]);
-
-    await tester.pumpWidget(
-      _app(
-        StatefulBuilder(
-          builder: (context, setState) {
-            return ScoreStructurePanel(
-              score: _score(),
-              sequence: sequence,
-              measureIndex: 0,
-              onSectionChanged: (value) => section = value,
-              onSectionAdded: (value) {
-                added = value;
-                setState(() {
-                  final source = sequence.items.lastWhere(
-                    (item) => item.section == value,
-                  );
-                  sequence = PlaybackSequence([...sequence.items, source]);
-                });
-              },
-              onSectionRemoved: (index) {
-                removed = index;
-                setState(() {
-                  final items = sequence.items.toList()..removeAt(index);
-                  sequence = PlaybackSequence(items);
-                });
-              },
-              onDone: () {},
-              onSectionMoved: (from, to) {
-                setState(() {
-                  final items = sequence.items.toList();
-                  final moved = items.removeAt(from);
-                  items.insert(to, moved);
-                  sequence = PlaybackSequence(items);
-                });
-              },
-              onRepeatsChanged: (index, repeats) {
-                setState(() {
-                  final items = sequence.items.toList();
-                  items[index] = items[index].copyWith(repeats: repeats);
-                  sequence = PlaybackSequence(items);
-                });
-              },
-            );
-          },
-        ),
+    const sections = [
+      ScoreSection(
+        id: 'm0',
+        name: 'INTRO',
+        number: null,
+        startMeasureIndex: 0,
+        endMeasureIndex: 0,
       ),
+      ScoreSection(
+        id: 'm1',
+        name: 'INTRO',
+        number: null,
+        startMeasureIndex: 1,
+        endMeasureIndex: 2,
+        continued: true,
+      ),
+      ScoreSection(
+        id: 'm3',
+        name: '',
+        number: null,
+        startMeasureIndex: 3,
+        endMeasureIndex: 5,
+      ),
+    ];
+    var sequence = PlaybackSequence(
+      steps: [
+        PlaybackStep(sectionId: 'm0'),
+        PlaybackStep(sectionId: 'm1'),
+        PlaybackStep(sectionId: 'm3', pass: 2),
+      ],
+    );
+    await _pump(
+      tester,
+      tab: StructureTab.order,
+      sections: sections,
+      sequence: () => sequence,
+      onStepsChanged: (steps) => sequence = sequence.copyWith(steps: steps),
     );
 
-    expect(find.text('마디에 구간을 붙인 뒤 순서와 반복을 정합니다.'), findsOneWidget);
-    expect(find.text('1/2'), findsNothing);
-    expect(find.text('다음 마디 추가'), findsNothing);
-    expect(find.text('순서에 추가'), findsOneWidget);
-    expect(find.byTooltip('마디 뒤로'), findsNothing);
-    expect(find.text('조표'), findsNothing);
-    expect(find.text('박자'), findsNothing);
-    expect(find.text('인트로'), findsWidgets);
-    expect(find.text('벌스'), findsOneWidget);
+    expect(find.text('↳ 2–3마디'), findsOneWidget);
+    // The order row and the chip that adds it.
+    expect(find.text('4–6마디'), findsNWidgets(2));
+    expect(find.text('2번째 반복'), findsOneWidget);
+    // Adding the intro adds both of its pieces.
+    await tester.ensureVisible(find.widgetWithText(ActionChip, '인트로'));
+    await tester.tap(find.widgetWithText(ActionChip, '인트로'));
+    await tester.pump();
+    expect(sequence.steps.skip(3).map((s) => s.sectionId), ['m0', 'm1']);
+  });
 
+  testWidgets('edits steps with ranges, repeats and a summary', (tester) async {
+    var sequence = PlaybackSequence(
+      steps: [
+        PlaybackStep(sectionId: 'm0'),
+        PlaybackStep(sectionId: 'm4', repeats: 2),
+      ],
+    );
+    var made = 0;
+    await _pump(
+      tester,
+      tab: StructureTab.order,
+      sequence: () => sequence,
+      summary: (measures: 12, writtenMeasures: 12, time: '0:24', skipped: 4),
+      onStepsChanged: (steps) => sequence = sequence.copyWith(steps: steps),
+      onMakeScore: () => made++,
+    );
+
+    expect(find.text('벌스 1'), findsNWidgets(2));
+    expect(find.text('1–4마디'), findsOneWidget);
+    expect(find.text('×2'), findsOneWidget);
+    expect(find.text('12마디 · 0:24 · 4마디는 연주하지 않음'), findsOneWidget);
+    // Changes are kept as they are made: no Save button.
+    expect(find.widgetWithText(TextButton, '저장'), findsNothing);
+
+    await tester.ensureVisible(find.byTooltip('횟수 늘리기').first);
     await tester.tap(find.byTooltip('횟수 늘리기').first);
     await tester.pump();
-    expect(
-      sequence.items.first,
-      PlaybackSequenceItem(section: 'INTRO', repeats: 3),
-    );
+    expect(sequence.steps.first.repeats, 2);
 
+    await tester.ensureVisible(find.byTooltip('구간 순서 아래로').first);
     await tester.tap(find.byTooltip('구간 순서 아래로').first);
     await tester.pump();
-    expect(sequence.items.first.section, 'VERSE');
-    expect(
-      sequence.items.last,
-      PlaybackSequenceItem(section: 'INTRO', repeats: 3),
+    expect(sequence.steps.map((s) => s.sectionId), ['m4', 'm0']);
+
+    // A later verse can be added on its own.
+    await tester.ensureVisible(find.widgetWithText(ActionChip, '벌스 2'));
+    await tester.tap(find.widgetWithText(ActionChip, '벌스 2'));
+    await tester.pump();
+    expect(sequence.steps.last.sectionId, 'm8');
+
+    await tester.ensureVisible(find.text('이 순서로 새 악보 만들기'));
+    await tester.tap(find.text('이 순서로 새 악보 만들기'));
+    expect(made, 1);
+    expect(find.text('지금 악보는 그대로 남아요.'), findsOneWidget);
+  });
+
+  testWidgets('offers the score made earlier in this order', (tester) async {
+    await _pump(
+      tester,
+      tab: StructureTab.order,
+      sequence: () => PlaybackSequence(steps: [PlaybackStep(sectionId: 'm0')]),
+      madeScoreExists: true,
     );
 
-    await tester.tap(find.byType(DropdownButton<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('코러스').last);
-    await tester.pumpAndSettle();
-    expect(section, 'CHORUS');
-
-    await tester.tap(find.text('순서에 추가'));
-    await tester.pump();
-    expect(added, 'INTRO');
-    expect(
-      sequence.items.last,
-      PlaybackSequenceItem(section: 'INTRO', repeats: 3),
-    );
-
-    await tester.tap(find.byTooltip('연주 순서에서 삭제').last);
-    await tester.pump();
-    expect(removed, 2);
-    expect(sequence.items, hasLength(2));
+    expect(find.text('이 순서로 만든 악보 열기'), findsOneWidget);
   });
 }
 
-Widget _app(Widget home) {
-  return MaterialApp(
-    locale: const Locale('ko'),
-    supportedLocales: const [Locale('ko')],
-    localizationsDelegates: appLocalizationDelegates,
-    home: Scaffold(body: home),
-  );
-}
-
-MusicScore _score() {
-  return MusicScore(
-    parts: [
-      MusicPart(
-        id: 'P1',
-        name: 'Piano',
-        measures: [
-          MusicMeasure(
-            number: '1',
-            attributes: MusicAttributes(divisions: 1),
-            events: const [
-              MusicDirection(onset: 0, staff: 1, rehearsal: 'INTRO'),
-            ],
+Future<void> _pump(
+  WidgetTester tester, {
+  StructureTab tab = StructureTab.sections,
+  List<ScoreSection> sections = _sections,
+  int? selectedBar,
+  int? selectedEnd,
+  PlaybackSequence Function()? sequence,
+  ({int measures, int writtenMeasures, String time, int skipped})? summary,
+  bool madeScoreExists = false,
+  ValueChanged<StructureTab>? onTabChanged,
+  VoidCallback? onClose,
+  ValueChanged<String>? onSectionNamed,
+  VoidCallback? onCustomSection,
+  VoidCallback? onBoundaryRemoved,
+  ValueChanged<List<PlaybackStep>>? onStepsChanged,
+  VoidCallback? onMakeScore,
+}) async {
+  await tester.binding.setSurfaceSize(const Size(400, 900));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  await tester.pumpWidget(
+    MaterialApp(
+      locale: const Locale('ko'),
+      supportedLocales: const [Locale('ko')],
+      localizationsDelegates: appLocalizationDelegates,
+      home: Scaffold(
+        body: StatefulBuilder(
+          builder: (context, setState) => Align(
+            alignment: Alignment.bottomCenter,
+            child: ScoreStructurePanel(
+              tab: tab,
+              onTabChanged: onTabChanged ?? (_) {},
+              sequence: sequence?.call() ?? PlaybackSequence.empty,
+              sections: sections,
+              selectedBar: selectedBar,
+              selectedEnd: selectedEnd,
+              summary:
+                  summary ??
+                  (measures: 12, writtenMeasures: 12, time: '0:24', skipped: 0),
+              canUndo: false,
+              onUndo: () {},
+              onClose: onClose ?? () {},
+              onSectionNamed: onSectionNamed ?? (_) {},
+              onCustomSection: onCustomSection ?? () {},
+              onBoundaryRemoved: onBoundaryRemoved ?? () {},
+              onStepsChanged: (steps) {
+                onStepsChanged?.call(steps);
+                setState(() {});
+              },
+              madeScoreExists: madeScoreExists,
+              onMakeScore: onMakeScore ?? () {},
+            ),
           ),
-          MusicMeasure(
-            number: '2',
-            attributes: MusicAttributes(divisions: 1),
-            events: const [
-              MusicDirection(onset: 0, staff: 1, rehearsal: 'VERSE'),
-            ],
-          ),
-        ],
+        ),
       ),
-    ],
+    ),
   );
 }

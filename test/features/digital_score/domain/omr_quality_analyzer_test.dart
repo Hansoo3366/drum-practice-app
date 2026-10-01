@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
-import 'package:page_a_diddle/features/digital_score/domain/omr_quality.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_quality_analyzer.dart';
 
 void main() {

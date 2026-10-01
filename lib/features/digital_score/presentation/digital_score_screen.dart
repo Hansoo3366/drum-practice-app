@@ -14,8 +14,11 @@ import 'package:page_a_diddle/core/score_engine/alphatab_bridge.dart';
 import 'package:page_a_diddle/core/storage/song_file_storage.dart';
 import 'package:page_a_diddle/features/digital_score/data/digital_score_data.dart';
 import 'package:page_a_diddle/features/digital_score/data/digital_score_editor_service.dart';
+import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_ai_reviewer.dart';
+import 'package:page_a_diddle/features/digital_score/data/omr_convert_service.dart';
 import 'package:page_a_diddle/features/digital_score/data/score_export_service.dart';
+import 'package:page_a_diddle/features/digital_score/domain/arrangement_advice.dart';
 import 'package:page_a_diddle/features/digital_score/domain/arrangement_profile.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/note_input.dart';
@@ -28,14 +31,22 @@ import 'package:page_a_diddle/features/digital_score/domain/score_layout.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_transpose.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/staff_note_input.dart';
+import 'package:page_a_diddle/features/digital_score/domain/three_staff_arrangement.dart';
+import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
+import 'package:page_a_diddle/features/digital_score/domain/xml_transpose.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/arrangement_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/omr_correction_screen.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/piano_part_sheet.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_score_view.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/playback_sequence_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_editor_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_playback_bar.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/score_proofread_screen.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/score_structure_controller.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_transpose_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
+
+part 'digital_score_screen_widgets.dart';
 
 class DigitalScoreScreen extends ConsumerStatefulWidget {
   const DigitalScoreScreen({required this.songId, super.key});
@@ -57,17 +68,42 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   String _activeVersionId = scoreVersionOriginalId;
   ArrangementProfile _arrangement = ArrangementProfile.off;
   ArrangementProfile _savedArrangement = ArrangementProfile.off;
-  PlaybackSequence _sequence = PlaybackSequence.empty;
-  PlaybackSequence _savedSequence = PlaybackSequence.empty;
   List<ScoreSystemSpan> _systems = const [];
   bool _editing = false;
   bool _playbackEnabled = false;
   bool _saving = false;
   String? _pendingVersionName;
   bool _exporting = false;
+  bool _fetchingAi = false;
   bool _confirmingLeave = false;
   bool _showMeasureTools = false;
   bool _showSequencePanel = false;
+  StructureTab _structureTab = StructureTab.sections;
+
+  /// Sections, playback order and the panel's line pick.
+  late final ScoreStructureController _structure = ScoreStructureController(
+    versionId: () => _activeVersionId,
+    save: (versionId, sequence) => ref
+        .read(digitalScoreEditorServiceProvider)
+        .saveSequence(
+          songId: widget.songId,
+          versionId: versionId,
+          sequence: sequence,
+        ),
+    onSaveFailed: () {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.saveFailed)));
+    },
+  )..addListener(_onStructureChanged);
+
+  PlaybackSequence get _sequence => _structure.sequence;
+
+  void _onStructureChanged() {
+    if (mounted) setState(() {});
+  }
+
   int _partIndex = 0;
   int _measureIndex = 0;
   int? _reviewMeasureIndex;
@@ -81,6 +117,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
 
   @override
   void dispose() {
+    _structure.dispose();
     _playback.stop();
     _playback.dispose();
     super.dispose();
@@ -96,7 +133,9 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     return originalDirty ||
         versionDirty ||
         _arrangement != _savedArrangement ||
-        _sequence != _savedSequence;
+        // The order panel saves as it goes; bar edits move sections and
+        // are saved with the edited score.
+        (_editing && !_structure.isSaved);
   }
 
   MusicScoreEditor _editorFor(DigitalScoreData data) {
@@ -120,8 +159,12 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       _loadedSongId = data.song.id;
       _arrangement = data.arrangement;
       _savedArrangement = data.arrangement;
-      _sequence = data.sequence;
-      _savedSequence = data.sequence;
+      _structure.load(
+        materializePlaybackSequence(
+          data.activeVersionScore ?? data.score,
+          data.sequence,
+        ),
+      );
       _partIndex = 0;
       _measureIndex = 0;
       _selectedAddress = null;
@@ -142,6 +185,27 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     return version.name;
   }
 
+  ({int measures, int writtenMeasures, String time, int skipped})
+  _sequenceSummary(MusicScore score) {
+    try {
+      final summary = performanceSummary(score, _sequence);
+      final bpm = score.tempoBpm ?? 120;
+      return (
+        measures: summary.measures,
+        writtenMeasures: score.measureCount,
+        time: formatPlaybackLength(summary.quarters * 60 / bpm),
+        skipped: summary.skipped,
+      );
+    } on FormatException {
+      return (
+        measures: 0,
+        writtenMeasures: score.measureCount,
+        time: '-',
+        skipped: 0,
+      );
+    }
+  }
+
   MusicScore _performanceScore(MusicScore written) {
     return displayedDigitalScore(
       written: written,
@@ -154,24 +218,48 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
 
   Future<bool> _save(DigitalScoreData data, MusicScoreEditor editor) async {
     if (_saving) return false;
+    if (_pendingVersionName == null &&
+        editor.isDirty &&
+        _activeVersionId == scoreVersionOriginalId) {
+      // The original is never written: its edits become a version.
+      final number = ScoreVersionCatalog.nextVersionNumber(
+        _versionCatalog.versions,
+      );
+      final name = await showDialog<String>(
+        context: context,
+        builder: (context) => _ScoreVersionDialog(
+          initialName: context.l10n.scoreVersionN(number),
+        ),
+      );
+      if (!mounted || name == null || name.trim().isEmpty) return false;
+      _pendingVersionName = name.trim();
+    }
     if (_pendingVersionName != null) return _saveNewVersion(data, editor);
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await ref
-          .read(digitalScoreEditorServiceProvider)
-          .save(
-            songId: data.song.id,
-            relativePath: data.song.sourcePath,
-            score: editor.score,
-            sequence: _sequence,
-            arrangement: _arrangement,
-            versionId: _activeVersionId,
-          );
+      final service = ref.read(digitalScoreEditorServiceProvider);
+      if (editor.isDirty) {
+        await service.save(
+          songId: data.song.id,
+          relativePath: data.song.sourcePath,
+          score: editor.score,
+          sequence: _sequence,
+          arrangement: _arrangement,
+          versionId: _activeVersionId,
+        );
+      } else {
+        await service.saveSidecars(
+          songId: data.song.id,
+          versionId: _activeVersionId,
+          sequence: _sequence,
+          arrangement: _arrangement,
+        );
+      }
       editor.markSaved();
       _versionXml.remove(_activeVersionId);
       _savedArrangement = _arrangement;
-      _savedSequence = _sequence;
+      _structure.markSaved();
       if (!mounted) return true;
       setState(() {});
       messenger.showSnackBar(SnackBar(content: Text(context.l10n.scoreSaved)));
@@ -215,6 +303,13 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       );
       if (!mounted) return true;
       final created = next.versions.last;
+      // Section boundaries followed the edited bars; they belong to the copy.
+      await service.saveSequence(
+        songId: data.song.id,
+        versionId: created.id,
+        sequence: _sequence,
+      );
+      if (!mounted) return true;
       editor.resetTo(previousSavedScore);
       _versionEditors[created.id] = MusicScoreEditor(source);
       setState(() {
@@ -223,7 +318,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         _pendingVersionName = null;
         _editing = false;
         _savedArrangement = _arrangement;
-        _savedSequence = _sequence;
+        _structure.markSaved();
         _selectedAddress = null;
         _showMeasureTools = false;
         _partIndex = 0;
@@ -282,7 +377,14 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     final editor = _editor;
     if (editor == null) return;
     try {
+      final before = editor.measureIds;
+      final written = rehearsalSectionMarks(editor.score);
       editor.apply(command);
+      _structure.followMeasureEdits(
+        before,
+        editor.measureIds,
+        writtenMarks: written,
+      );
       setState(() {
         _selectedAddress = selectedAddress;
         if (caret != null) {
@@ -306,8 +408,15 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   void _undo() {
     final editor = _editor;
     if (editor == null || !editor.canUndo) return;
+    final before = editor.measureIds;
+    final written = rehearsalSectionMarks(editor.score);
     setState(() {
       editor.undo();
+      _structure.followMeasureEdits(
+        before,
+        editor.measureIds,
+        writtenMarks: written,
+      );
       _selectedAddress = null;
       _clampNavigation(editor.score);
     });
@@ -316,8 +425,15 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   void _redo() {
     final editor = _editor;
     if (editor == null || !editor.canRedo) return;
+    final before = editor.measureIds;
+    final written = rehearsalSectionMarks(editor.score);
     setState(() {
       editor.redo();
+      _structure.followMeasureEdits(
+        before,
+        editor.measureIds,
+        writtenMarks: written,
+      );
       _selectedAddress = null;
       _clampNavigation(editor.score);
     });
@@ -689,6 +805,14 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     required DigitalScoreData data,
   }) async {
     if (versionId == _activeVersionId) return;
+    await _structure.saving;
+    if (!mounted) return;
+    if (!_structure.isSaved) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.saveSequenceFirst)));
+      return;
+    }
     try {
       if (versionId != scoreVersionOriginalId) {
         final existing = _versionEditors[versionId];
@@ -706,8 +830,19 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
           if (xml != null) _versionXml[versionId] = xml;
         }
       }
+      final target = versionId == scoreVersionOriginalId
+          ? _originalEditor!.score
+          : _versionEditors[versionId]!.score;
+      final sequence = materializePlaybackSequence(
+        target,
+        await ref
+            .read(digitalScoreEditorServiceProvider)
+            .loadSequence(data.song.id, versionId: versionId),
+      );
+      if (!mounted) return;
       setState(() {
         _activeVersionId = versionId;
+        _structure.load(sequence);
         _versionCatalog = _versionCatalog.copyWith(activeId: versionId);
         _pendingVersionName = null;
         _editing = false;
@@ -752,7 +887,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     final hasPendingChanges =
         _editor?.isDirty == true ||
         _arrangement != _savedArrangement ||
-        _sequence != _savedSequence;
+        !_structure.isSaved;
     setState(() {
       _editing = false;
       if (!hasPendingChanges) _pendingVersionName = null;
@@ -830,51 +965,226 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   void _toggleSequencePanel() {
     setState(() {
       _showSequencePanel = !_showSequencePanel;
+      _structure.clearPick();
+      // Without sections there is no order to set yet.
+      final score = _editor?.score;
+      _structureTab = score == null || scoreSections(score, _sequence).isEmpty
+          ? StructureTab.sections
+          : StructureTab.order;
       if (_showSequencePanel) _editing = false;
       _selectedAddress = null;
       _showMeasureTools = false;
     });
   }
 
-  void _updateSequence(PlaybackSequence next) {
-    if (_sequence == next) return;
-    setState(() => _sequence = next);
-  }
-
-  void _changeSequenceRepeats(int index, int repeats) {
-    if (index < 0 || index >= _sequence.items.length) return;
-    final items = _sequence.items.toList();
-    items[index] = items[index].copyWith(repeats: repeats);
-    _updateSequence(PlaybackSequence(items));
-  }
-
-  void _moveSequenceItem(int fromIndex, int toIndex) {
-    if (fromIndex < 0 ||
-        fromIndex >= _sequence.items.length ||
-        toIndex < 0 ||
-        toIndex >= _sequence.items.length) {
-      return;
+  void _nameSection(MusicScore score, String name) {
+    final bar = _structure.pickStart;
+    if (bar == null) return;
+    final end = _structure.pickEnd;
+    try {
+      _structure.update(
+        end == null
+            ? setSectionBoundary(
+                score,
+                _sequence,
+                measureIndex: bar,
+                name: name,
+              )
+            : setSectionRange(
+                score,
+                _sequence,
+                start: bar,
+                end: end,
+                name: name,
+              ),
+      );
+      // The range is now a section starting at the first bar; show it as one.
+      // The next tap starts a new pick.
+      _structure.endPick();
+    } on Object {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.changeFailed)));
     }
-    final items = _sequence.items.toList();
-    final item = items.removeAt(fromIndex);
-    items.insert(toIndex, item);
-    _updateSequence(PlaybackSequence(items));
   }
 
-  void _addSequenceSection(String section) {
-    if (_sequence.items.any((item) => item.section == section)) return;
-    _updateSequence(
-      PlaybackSequence([
-        ..._sequence.items,
-        PlaybackSequenceItem(section: section),
-      ]),
+  Future<void> _nameSectionCustom(MusicScore score) async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => const _SectionNameDialog(),
+    );
+    if (name == null || name.trim().isEmpty || !mounted) return;
+    _nameSection(score, name);
+  }
+
+  void _removeSectionBoundary(MusicScore score) {
+    final bar = _structure.pickStart;
+    if (bar == null) return;
+    _structure.update(
+      removeSectionBoundary(score, _sequence, measureIndex: bar),
     );
   }
 
-  void _removeSequenceItem(int index) {
-    if (index < 0 || index >= _sequence.items.length) return;
-    final items = _sequence.items.toList()..removeAt(index);
-    _updateSequence(PlaybackSequence(items));
+  /// Raw MusicXML of the active version as saved, so an expanded copy keeps
+  /// markings the codec does not model. Unsaved note edits use the codec.
+  Future<String> _activeSourceXml(
+    DigitalScoreData data,
+    MusicScoreEditor editor,
+  ) async {
+    if (editor.isDirty) {
+      return utf8.decode(const MusicXmlCodec().encodeMusicXml(editor.score));
+    }
+    if (_activeVersionId == scoreVersionOriginalId) {
+      if (data.sourceXml case final xml?) return xml;
+    } else {
+      final cached = _versionXml[_activeVersionId];
+      if (cached != null) return cached;
+      final loaded = await ref
+          .read(digitalScoreEditorServiceProvider)
+          .loadVersionXml(data.song.id, _activeVersionId);
+      if (loaded != null) return loaded;
+    }
+    return utf8.decode(const MusicXmlCodec().encodeMusicXml(editor.score));
+  }
+
+  /// The score version laid out in the current order, made earlier from
+  /// this version and order, or null.
+  ScoreVersionRef? get _scoreFromOrder {
+    if (_sequence.steps.isEmpty) return null;
+    final origin = performanceOrigin(_activeVersionId, _sequence);
+    return _versionCatalog.versions
+        .where((version) => version.origin == origin)
+        .firstOrNull;
+  }
+
+  /// Opens the score laid out in the current order, making it first when
+  /// there is none yet. The current version stays as it is.
+  Future<void> _openScoreFromOrder(
+    DigitalScoreData data,
+    MusicScoreEditor editor,
+  ) async {
+    if (_sequence.steps.isEmpty) return;
+    await _structure.saving;
+    if (!mounted) return;
+    final made = _scoreFromOrder;
+    if (made == null) {
+      await _makePerformanceVersion(
+        data,
+        editor,
+        origin: performanceOrigin(_activeVersionId, _sequence),
+      );
+      return;
+    }
+    _toggleSequencePanel();
+    await _switchVersion(versionId: made.id, data: data);
+  }
+
+  /// Closes the panel once the last change is saved.
+  Future<void> _closeStructurePanel() async {
+    await _structure.saving;
+    if (mounted && _showSequencePanel) _toggleSequencePanel();
+  }
+
+  Future<void> _makePerformanceVersion(
+    DigitalScoreData data,
+    MusicScoreEditor editor, {
+    required String origin,
+  }) async {
+    final l10n = context.l10n;
+    final messenger = ScaffoldMessenger.of(context);
+    if (editor.isDirty || _arrangement != _savedArrangement) {
+      messenger.showSnackBar(SnackBar(content: Text(l10n.saveBeforeProofread)));
+      return;
+    }
+    final number = ScoreVersionCatalog.nextVersionNumber(
+      _versionCatalog.versions,
+    );
+    // The written score keeps its version; the playing order becomes a new
+    // score the user opens like any other version.
+    final name = l10n.performanceVersionName(number);
+    setState(() => _saving = true);
+    try {
+      final service = ref.read(digitalScoreEditorServiceProvider);
+      final source = await _activeSourceXml(data, editor);
+      final expanded = expandMusicXml(
+        source,
+        performanceMeasureMap(editor.score, _sequence),
+      );
+      final catalog = await service.addXmlVersion(
+        songId: data.song.id,
+        musicXml: expanded,
+        catalog: _versionCatalog,
+        name: name.trim(),
+        origin: origin,
+      );
+      // The copy is already in playing order, so it gets no order of its own,
+      // only the sections at the bars where each step now starts.
+      await service.saveSequence(
+        songId: data.song.id,
+        versionId: catalog.activeId,
+        sequence: PlaybackSequence(
+          marks: performanceSectionMarks(editor.score, _sequence),
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _versionCatalog = catalog.copyWith(activeId: _activeVersionId);
+        _showSequencePanel = false;
+      });
+      await _switchVersion(versionId: catalog.activeId, data: data);
+      messenger.showSnackBar(SnackBar(content: Text(l10n.scoreSaved)));
+    } on Object {
+      messenger.showSnackBar(SnackBar(content: Text(l10n.saveFailed)));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  /// Gets the server's AI version of a converted score, running the AI
+  /// review again when it failed at import, and opens it.
+  Future<void> _fetchAiVersion(DigitalScoreData data) async {
+    final l10n = context.l10n;
+    final messenger = ScaffoldMessenger.of(context);
+    if (_isDirty) {
+      messenger.showSnackBar(SnackBar(content: Text(l10n.saveBeforeProofread)));
+      return;
+    }
+    setState(() => _fetchingAi = true);
+    messenger.showSnackBar(SnackBar(content: Text(l10n.aiFetching)));
+    try {
+      final result = await ref
+          .read(omrConvertServiceProvider)
+          .fetchAiVersion(data.song.id);
+      if (!mounted) return;
+      messenger.hideCurrentSnackBar();
+      if (result != OmrAiFetch.added) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(switch (result) {
+              OmrAiFetch.unchanged => l10n.aiFetchUnchanged,
+              OmrAiFetch.expired => l10n.aiFetchExpired,
+              OmrAiFetch.unavailable => l10n.aiFetchUnavailable,
+              _ => l10n.aiFetchFailed,
+            }),
+          ),
+        );
+        return;
+      }
+      final catalog = await ref
+          .read(digitalScoreEditorServiceProvider)
+          .loadVersionCatalog(data.song.id);
+      if (!mounted) return;
+      setState(
+        () => _versionCatalog = catalog.copyWith(activeId: _activeVersionId),
+      );
+      await _switchVersion(versionId: catalog.activeId, data: data);
+    } on Object {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(l10n.aiFetchFailed)));
+      }
+    } finally {
+      if (mounted) setState(() => _fetchingAi = false);
+    }
   }
 
   Future<void> _editArrangement(MusicScore score) async {
@@ -893,8 +1203,18 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     MusicScore score,
   ) {
     switch (action) {
+      case _ScoreMenuAction.playbackOrder:
+        _toggleSequencePanel();
+      case _ScoreMenuAction.review:
+        unawaited(_showQualitySheet(data));
+      case _ScoreMenuAction.fetchAi:
+        unawaited(_fetchAiVersion(data));
+      case _ScoreMenuAction.deleteVersion:
+        unawaited(_deleteActiveVersion(data));
       case _ScoreMenuAction.transpose:
-        _transpose(score, originalFifths: data.originalFifths);
+        unawaited(_transpose(data, score));
+      case _ScoreMenuAction.threeStaff:
+        unawaited(_makeThreeStaff(data, score));
       case _ScoreMenuAction.arrangement:
         _editArrangement(score);
       case _ScoreMenuAction.exportMusicXml:
@@ -960,28 +1280,184 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     );
   }
 
-  Future<void> _transpose(
-    MusicScore score, {
-    required int originalFifths,
-  }) async {
+  /// Transposes the version on screen into a new version, written from its
+  /// file so lyrics, tuplets, line breaks and every other marking stay. The
+  /// version itself, and the original, are never changed.
+  Future<void> _transpose(DigitalScoreData data, MusicScore score) async {
+    final editor = _editor;
+    if (editor == null) return;
+    final l10n = context.l10n;
+    final messenger = ScaffoldMessenger.of(context);
+    if (_isDirty || _editing) {
+      messenger.showSnackBar(SnackBar(content: Text(l10n.saveBeforeProofread)));
+      return;
+    }
     final request = await showScoreTransposeSheet(
       context,
       currentFifths: concertKeyFifths(score),
-      originalFifths: originalFifths,
+      originalFifths: data.originalFifths,
       score: score,
     );
     if (!mounted || request == null) return;
-    _apply(
-      TransposeScoreCommand(
+    setState(() => _saving = true);
+    try {
+      final service = ref.read(digitalScoreEditorServiceProvider);
+      final transposed = transposeMusicXml(
+        await _activeSourceXml(data, editor),
         semitones: request.semitones,
         fifthsDelta: request.fifthsDelta,
-      ),
+      );
+      final key = keyTonicLabel(
+        wrapKeyFifths(concertKeyFifths(score) + request.fifthsDelta),
+      );
+      final catalog = await service.addXmlVersion(
+        songId: data.song.id,
+        musicXml: transposed,
+        catalog: _versionCatalog,
+        name: _uniqueVersionName(l10n.transposedVersionName(key)),
+      );
+      // Same bars: the sections and order carry over.
+      await service.saveSequence(
+        songId: data.song.id,
+        versionId: catalog.activeId,
+        sequence: _sequence,
+      );
+      if (!mounted) return;
+      setState(() {
+        _versionCatalog = catalog.copyWith(activeId: _activeVersionId);
+      });
+      await _switchVersion(versionId: catalog.activeId, data: data);
+      messenger.showSnackBar(SnackBar(content: Text(l10n.scoreSaved)));
+    } on Object {
+      messenger.showSnackBar(SnackBar(content: Text(l10n.saveFailed)));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  /// Makes a version with a piano part under the melody: the chords of the
+  /// chord symbols for the right hand, their bass for the left. The version
+  /// on screen, and the original, are never changed.
+  Future<void> _makeThreeStaff(DigitalScoreData data, MusicScore score) async {
+    final editor = _editor;
+    if (editor == null) return;
+    final l10n = context.l10n;
+    final messenger = ScaffoldMessenger.of(context);
+    if (_isDirty || _editing) {
+      messenger.showSnackBar(SnackBar(content: Text(l10n.saveBeforeProofread)));
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final shown = await _activeSourceXml(data, editor);
+      // A score that already has a generated piano part gets a new one, in
+      // the style chosen now, from its melody.
+      final earlier = generatedPianoPart(shown);
+      final source = withoutGeneratedPianoPart(shown);
+      final obstacle = analyzeLeadSheet(source).obstacle;
+      if (obstacle != null) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              obstacle == ThreeStaffObstacle.noChords
+                  ? l10n.threeStaffNeedsChords
+                  : l10n.threeStaffNeedsMelody,
+            ),
+          ),
+        );
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _saving = false);
+      final request = await showPianoPartSheet(
+        context,
+        advise: () => _arrangementAdvice(source, score),
+        initial: earlier?.plan ?? const AccompanimentPlan(),
+      );
+      if (!mounted || request == null) return;
+      setState(() => _saving = true);
+      final service = ref.read(digitalScoreEditorServiceProvider);
+      final catalog = await service.addXmlVersion(
+        songId: data.song.id,
+        musicXml: threeStaffMusicXml(
+          applyChordCorrections(source, request.corrections),
+          pianoName: l10n.pianoPartName,
+          plan: request.plan,
+        ),
+        catalog: _versionCatalog,
+        name: _uniqueVersionName(l10n.threeStaffVersionName),
+      );
+      // Same bars: the sections and order carry over.
+      await service.saveSequence(
+        songId: data.song.id,
+        versionId: catalog.activeId,
+        sequence: _sequence,
+      );
+      if (!mounted) return;
+      setState(() {
+        _versionCatalog = catalog.copyWith(activeId: _activeVersionId);
+      });
+      await _switchVersion(versionId: catalog.activeId, data: data);
+      messenger.showSnackBar(SnackBar(content: Text(l10n.scoreSaved)));
+    } on Object {
+      messenger.showSnackBar(SnackBar(content: Text(l10n.saveFailed)));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  /// Asks the server what style suits the lead sheet [source], section by
+  /// section, and which chord symbols look misread.
+  Future<ArrangementAdvice> _arrangementAdvice(
+    String source,
+    MusicScore score,
+  ) async {
+    final brief = arrangementBrief(
+      source,
+      tempoBpm: score.tempoBpm,
+      sections: [
+        for (final section in scoreSections(score, _sequence))
+          if (section.name.isNotEmpty && !section.continued)
+            (
+              name: '${section.name.toLowerCase()}${section.number ?? ''}',
+              start: section.startMeasureIndex + 1,
+              end: section.endMeasureIndex + 1,
+            ),
+      ],
     );
+    final answer = await ref
+        .read(omrConvertClientProvider)
+        .arrangementAdvice(brief: brief, bars: score.measureCount);
+    return ArrangementAdvice.fromJson(answer, source);
+  }
+
+  /// [name], or "[name] 2", "[name] 3" when a version has that name.
+  String _uniqueVersionName(String name) {
+    final used = {for (final version in _versionCatalog.versions) version.name};
+    if (!used.contains(name)) return name;
+    var number = 2;
+    while (used.contains('$name $number')) {
+      number++;
+    }
+    return '$name $number';
   }
 
   void _selectMeasure(int measureIndex) {
+    if (_showSequencePanel) {
+      // Sections are picked by staff line: a tap takes the whole line, a tap
+      // on a later line extends the pick to that line's end.
+      ScoreSystemSpan? line;
+      for (final system in _systems) {
+        if (system.contains(measureIndex)) line = system;
+      }
+      final lineStart = line?.startMeasureIndex ?? measureIndex;
+      final lineEnd = line?.endMeasureIndex ?? measureIndex;
+      setState(() => _structureTab = StructureTab.sections);
+      _structure.pickLine(lineStart, lineEnd);
+      return;
+    }
     final editor = _editor;
-    if ((!_editing && !_showSequencePanel) || editor == null) return;
+    if (!_editing || editor == null) return;
     final measures = editor.score.parts.first.measures;
     if (measureIndex < 0 || measureIndex >= measures.length) return;
     setState(() {
@@ -1036,7 +1512,11 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(context.l10n.unsavedChangesTitle),
-        content: Text(context.l10n.unsavedChangesBody),
+        content: Text(
+          editor.isDirty || _arrangement != _savedArrangement
+              ? context.l10n.unsavedChangesBody
+              : context.l10n.sequenceUnsavedBody,
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -1091,6 +1571,52 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     );
   }
 
+  Future<void> _showProofread(DigitalScoreData data) async {
+    if (_isDirty || _editing) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.saveBeforeProofread)));
+      return;
+    }
+    final service = ref.read(digitalScoreEditorServiceProvider);
+    try {
+      final xml = _activeVersionId == scoreVersionOriginalId
+          ? data.sourceXml
+          : await service.loadVersionXml(data.song.id, _activeVersionId);
+      if (!mounted || xml == null) return;
+      final saved = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          builder: (_) => ScoreProofreadScreen(
+            songId: data.song.id,
+            musicXml: xml,
+            catalog: _versionCatalog,
+            measureIndex: _reviewMeasureIndex ?? 0,
+          ),
+        ),
+      );
+      if (saved != true || !mounted) return;
+      final catalog = await service.loadVersionCatalog(data.song.id);
+      // A proofread copy keeps the bars, so it keeps the sections and order.
+      if (catalog.activeId != _activeVersionId) {
+        await service.saveSequence(
+          songId: data.song.id,
+          versionId: catalog.activeId,
+          sequence: _sequence,
+        );
+      }
+      if (!mounted) return;
+      setState(() => _versionCatalog = catalog);
+      await _switchVersion(versionId: catalog.activeId, data: data);
+      ref.invalidate(digitalScoreDataProvider(widget.songId));
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
   Future<void> _showOmrCorrection(DigitalScoreData data) async {
     if (_isDirty || _editing) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1128,16 +1654,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     }
   }
 
-  int? _measureIndexFor(MusicScore score, String number) {
-    for (final part in score.parts) {
-      final index = part.measures.indexWhere(
-        (measure) => measure.number == number,
-      );
-      if (index >= 0) return index;
-    }
-    return int.tryParse(number);
-  }
-
   @override
   Widget build(BuildContext context) {
     final data = ref.watch(digitalScoreDataProvider(widget.songId));
@@ -1158,6 +1674,29 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       data: (value) {
         final editor = _editorFor(value);
         final score = editor.score;
+        // Folded phones cannot fit every score action in the app bar.
+        final compact = MediaQuery.sizeOf(context).width < 600;
+        final sections = scoreSections(score, _sequence);
+        ScoreSection? selectedSection;
+        if (_showSequencePanel && _structure.pickStart != null) {
+          for (final section in sections) {
+            // Only a section that starts here is "selected"; a bar in the
+            // middle of one is a new start, not the whole section.
+            if (section.startMeasureIndex == _structure.pickStart) {
+              selectedSection = section;
+            }
+          }
+        }
+        final pickedRange = _showSequencePanel
+            ? (_structure.pickEnd != null
+                  ? (start: _structure.pickStart!, end: _structure.pickEnd!)
+                  : _structure.pickingEnd || selectedSection == null
+                  ? null
+                  : (
+                      start: selectedSection.startMeasureIndex,
+                      end: selectedSection.endMeasureIndex,
+                    ))
+            : null;
         return Focus(
           autofocus: _editing,
           onKeyEvent: (node, event) => _onNoteKey(event),
@@ -1188,6 +1727,22 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                     child: DropdownButton<String>(
                       value: _activeVersionId,
                       borderRadius: BorderRadius.circular(12),
+                      selectedItemBuilder: (context) => [
+                        for (final version in _versionCatalog.selectable)
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: compact ? 96 : 200,
+                            ),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                _versionLabel(version),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                      ],
                       items: [
                         for (final version in _versionCatalog.selectable)
                           DropdownMenuItem(
@@ -1201,13 +1756,14 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                       },
                     ),
                   ),
-                  IconButton(
-                    tooltip: context.l10n.playbackSequence,
-                    isSelected: _showSequencePanel,
-                    onPressed: _toggleSequencePanel,
-                    icon: const Icon(Icons.playlist_play_rounded),
-                  ),
-                  if (value.quality != null)
+                  if (!compact)
+                    IconButton(
+                      tooltip: context.l10n.playbackSequence,
+                      isSelected: _showSequencePanel,
+                      onPressed: _toggleSequencePanel,
+                      icon: const Icon(Icons.playlist_play_rounded),
+                    ),
+                  if (!compact && value.quality != null)
                     IconButton(
                       tooltip: context.l10n.omrReview,
                       onPressed: () => unawaited(_showQualitySheet(value)),
@@ -1217,11 +1773,17 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                         child: const Icon(Icons.fact_check_outlined),
                       ),
                     ),
-                  if (_activeVersionId != scoreVersionOriginalId)
+                  if (!compact && _activeVersionId != scoreVersionOriginalId)
                     IconButton(
                       tooltip: context.l10n.deleteScoreVersion,
                       onPressed: () => unawaited(_deleteActiveVersion(value)),
                       icon: const Icon(Icons.delete_outline_rounded),
+                    ),
+                  if (!_editing && value.sourceXml != null)
+                    IconButton(
+                      tooltip: context.l10n.proofread,
+                      onPressed: () => unawaited(_showProofread(value)),
+                      icon: const Icon(Icons.edit_outlined),
                     ),
                   if (noteInputEnabled)
                     IconButton(
@@ -1255,12 +1817,75 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                       onSelected: (action) =>
                           _onMenuSelected(action, value, score),
                       itemBuilder: (context) => [
+                        if (compact) ...[
+                          PopupMenuItem(
+                            value: _ScoreMenuAction.playbackOrder,
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.playlist_play_rounded),
+                              title: Text(context.l10n.playbackSequence),
+                            ),
+                          ),
+                          if (value.quality != null)
+                            PopupMenuItem(
+                              value: _ScoreMenuAction.review,
+                              child: ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                leading: Badge(
+                                  isLabelVisible:
+                                      value.quality!.issues.isNotEmpty,
+                                  label: Text(
+                                    '${value.quality!.issues.length}',
+                                  ),
+                                  child: const Icon(Icons.fact_check_outlined),
+                                ),
+                                title: Text(context.l10n.omrReview),
+                              ),
+                            ),
+                          if (value.omrJobId != null &&
+                              !_versionCatalog.versions.any(
+                                (version) =>
+                                    version.origin == aiVersionOrigin ||
+                                    version.name == aiCorrectedVersionName,
+                              ))
+                            PopupMenuItem(
+                              value: _ScoreMenuAction.fetchAi,
+                              enabled: !_fetchingAi,
+                              child: ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                leading: const Icon(
+                                  Icons.auto_fix_high_outlined,
+                                ),
+                                title: Text(context.l10n.fetchAiVersion),
+                              ),
+                            ),
+                          if (_activeVersionId != scoreVersionOriginalId)
+                            PopupMenuItem(
+                              value: _ScoreMenuAction.deleteVersion,
+                              child: ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                leading: const Icon(
+                                  Icons.delete_outline_rounded,
+                                ),
+                                title: Text(context.l10n.deleteScoreVersion),
+                              ),
+                            ),
+                          const PopupMenuDivider(),
+                        ],
                         PopupMenuItem(
                           value: _ScoreMenuAction.transpose,
                           child: ListTile(
                             contentPadding: EdgeInsets.zero,
                             leading: const Icon(Icons.swap_vert_rounded),
                             title: Text(context.l10n.scoreTranspose),
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: _ScoreMenuAction.threeStaff,
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.queue_music_rounded),
+                            title: Text(context.l10n.makeThreeStaff),
                           ),
                         ),
                         PopupMenuItem(
@@ -1315,8 +1940,10 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                     child: VerovioScoreView(
                       key: _scoreViewKey,
                       score: score,
+                      // Playback order does not change the notation, so an
+                      // unsaved order keeps the source engraving.
                       engravingXml:
-                          (_editing || _isDirty || _arrangement.isNotOff)
+                          (_editing || editor.isDirty || _arrangement.isNotOff)
                           ? null
                           : _activeVersionId == scoreVersionOriginalId
                           ? value.sourceXml
@@ -1333,11 +1960,34 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                       semanticsLabel: value.song.title,
                       playback: _playback,
                       playbackVisible: _playbackEnabled,
-                      highlightedMeasureIndex: (_editing || _showSequencePanel)
+                      highlightedMeasureIndex: _showSequencePanel
+                          ? _structure.pickStart
+                          : _editing
                           ? _measureIndex
                           : _reviewMeasureIndex,
+                      highlightedMeasureRange: pickedRange,
+                      // Sections the user set replace the printed rehearsal
+                      // boxes on screen; the file itself is not touched.
+                      rehearsalMarks: _sequence.marks.isEmpty
+                          ? null
+                          : [
+                              for (final section in sections)
+                                // A piece continuing the same section (split
+                                // at a jump) gets no box of its own.
+                                if (section.name.isNotEmpty &&
+                                    !section.continued)
+                                  (
+                                    measureIndex: section.startMeasureIndex,
+                                    label: scoreSectionLabel(
+                                      context.l10n,
+                                      section,
+                                    ),
+                                  ),
+                            ],
                       oneFingerPan: !_editing,
-                      inputMode: !_editing
+                      inputMode: _showSequencePanel
+                          ? 'select'
+                          : !_editing
                           ? 'off'
                           : switch (_editorMode) {
                               ScoreEditorMode.note => 'note',
@@ -1349,7 +1999,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                       inputAlter: _inputAlter,
                       inputDots: _inputDots,
                       inputCaret: _editing ? _caret : null,
-                      onNoteTapped: _onNoteTapped,
+                      onNoteTapped: _editing ? _onNoteTapped : null,
                       onStaffTapped: _placeStaffNote,
                       onMeasureTapped: _selectMeasure,
                       onSystemsChanged: (systems) {
@@ -1394,24 +2044,31 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                     ),
                   if (_showSequencePanel)
                     ScoreStructurePanel(
-                      score: score,
+                      tab: _structureTab,
+                      onTabChanged: (tab) =>
+                          setState(() => _structureTab = tab),
                       sequence: _sequence,
-                      measureIndex: _measureIndex.clamp(
-                        0,
-                        math.max(0, score.measureCount - 1),
+                      sections: sections,
+                      selectedBar: _structure.pickStart,
+                      selectedEnd: _structure.pickEnd,
+                      picking: _structure.pickingEnd,
+                      summary: _sequenceSummary(score),
+                      canUndo: _structure.canUndo,
+                      onUndo: _structure.undo,
+                      onClose: () => unawaited(_closeStructurePanel()),
+                      onSectionNamed: (name) => _nameSection(score, name),
+                      onCustomSection: () =>
+                          unawaited(_nameSectionCustom(score)),
+                      onBoundaryRemoved: () => _removeSectionBoundary(score),
+                      onStepsChanged: (steps) =>
+                          _structure.update(_sequence.copyWith(steps: steps)),
+                      onBuildFromScore: () => _structure.update(
+                        writtenOrderSequence(score, _sequence),
                       ),
-                      onSectionChanged: (section) => _apply(
-                        UpdateSystemSectionCommand(
-                          measureIndex: _measureIndex,
-                          section: section,
-                          systems: _systems,
-                        ),
-                      ),
-                      onRepeatsChanged: _changeSequenceRepeats,
-                      onSectionMoved: _moveSequenceItem,
-                      onSectionAdded: _addSequenceSection,
-                      onSectionRemoved: _removeSequenceItem,
-                      onDone: _toggleSequencePanel,
+                      madeScoreExists: _scoreFromOrder != null,
+                      onMakeScore: _saving
+                          ? null
+                          : () => unawaited(_openScoreFromOrder(value, editor)),
                     ),
                   if (_editing)
                     ScoreEditorPanel(
@@ -1500,306 +2157,4 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       },
     );
   }
-}
-
-class _ScoreVersionDialog extends StatefulWidget {
-  const _ScoreVersionDialog({required this.initialName});
-
-  final String initialName;
-
-  @override
-  State<_ScoreVersionDialog> createState() => _ScoreVersionDialogState();
-}
-
-class _ScoreVersionDialogState extends State<_ScoreVersionDialog> {
-  late final TextEditingController _controller = TextEditingController(
-    text: widget.initialName,
-  );
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    Navigator.of(context).pop(_controller.text.trim());
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(context.l10n.scoreVersionName),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        decoration: InputDecoration(hintText: context.l10n.scoreVersionName),
-        onSubmitted: (_) => _submit(),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(context.l10n.cancel),
-        ),
-        TextButton(onPressed: _submit, child: Text(context.l10n.save)),
-      ],
-    );
-  }
-}
-
-class _MeasureToolsBar extends StatelessWidget {
-  const _MeasureToolsBar({
-    required this.canDelete,
-    required this.onAdd,
-    required this.onRemove,
-    required this.onDuplicate,
-    required this.onDrag,
-  });
-
-  final bool canDelete;
-  final VoidCallback onAdd;
-  final VoidCallback onRemove;
-  final VoidCallback onDuplicate;
-  final VoidCallback onDrag;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    return Material(
-      color: AppColors.canvas,
-      child: DecoratedBox(
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: AppColors.border)),
-        ),
-        child: SafeArea(
-          top: false,
-          bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: l10n.insertMeasureAfter,
-                  onPressed: onAdd,
-                  icon: const Icon(Icons.add_rounded),
-                ),
-                IconButton(
-                  tooltip: l10n.deleteMeasure,
-                  onPressed: canDelete ? onRemove : null,
-                  icon: const Icon(Icons.remove_rounded),
-                ),
-                IconButton(
-                  tooltip: l10n.duplicateMeasure,
-                  onPressed: onDuplicate,
-                  icon: const Icon(Icons.copy_all_rounded),
-                ),
-                IconButton(
-                  tooltip: l10n.dragMeasure,
-                  onPressed: onDrag,
-                  icon: const Icon(Icons.drag_indicator_rounded),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _OmrQualitySheet extends ConsumerStatefulWidget {
-  const _OmrQualitySheet({
-    required this.data,
-    required this.report,
-    required this.onJump,
-    required this.onReviewed,
-    required this.onCorrect,
-  });
-
-  final DigitalScoreData data;
-  final OmrQualityReport report;
-  final void Function(int index) onJump;
-  final Future<void> Function(OmrQualityReport updated) onReviewed;
-  final VoidCallback onCorrect;
-
-  @override
-  ConsumerState<_OmrQualitySheet> createState() => _OmrQualitySheetState();
-}
-
-class _OmrQualitySheetState extends ConsumerState<_OmrQualitySheet> {
-  late OmrQualityReport _report = widget.report;
-  final _keyController = TextEditingController();
-  var _busy = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    _keyController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _runAi() async {
-    final xml = widget.data.sourceXml;
-    if (xml == null) {
-      setState(() => _error = '원본 MusicXML이 없습니다.');
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final updated = await ref
-          .read(omrAiReviewerProvider)
-          .review(
-            songId: widget.data.song.id,
-            score: widget.data.score,
-            musicXml: xml,
-            report: _report,
-          );
-      await widget.onReviewed(updated);
-      if (mounted) setState(() => _report = updated);
-    } on Object catch (error) {
-      if (mounted) setState(() => _error = error.toString());
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    final match = _report.sourceMatch;
-    return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-        children: [
-          Text(
-            l10n.omrHealthScore(_report.score),
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          if (match != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              match.hasReference
-                  ? [
-                      if (match.chordRecall != null)
-                        '코드 ${match.chordHitCount}/${match.chordRefCount} (${match.chordRecall}%)',
-                      if (match.lyricRecall != null)
-                        '가사 ${match.lyricHitCount}/${match.lyricRefCount} (${match.lyricRecall}%)',
-                      if (match.combined != null) '원본 대조 ${match.combined}%',
-                    ].join(' · ')
-                  : '원본 PDF에 대조할 텍스트가 없습니다.',
-            ),
-          ],
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: _busy ? null : widget.onCorrect,
-            icon: const Icon(Icons.compare_outlined),
-            label: const Text('원본 마디 대조·수정'),
-          ),
-          TextField(
-            controller: _keyController,
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: 'XAI_API_KEY',
-              hintText: l10n.omrAiNeedKey,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              TextButton(
-                onPressed: _busy
-                    ? null
-                    : () async {
-                        await ref
-                            .read(omrAiReviewerProvider)
-                            .saveKey(_keyController.text);
-                      },
-                child: Text(l10n.omrAiSaveKey),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: _busy ? null : _runAi,
-                child: _busy
-                    ? const SizedBox.square(
-                        dimension: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Text(l10n.omrAiRun),
-              ),
-            ],
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              _error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ],
-          const SizedBox(height: 12),
-          if (_report.issues.isEmpty)
-            Text(l10n.omrReviewEmpty)
-          else
-            for (final entry in _report.groupedByRule.entries)
-              ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: EdgeInsets.zero,
-                leading: Icon(switch (entry.value.first.severity) {
-                  OmrIssueSeverity.high => Icons.error_outline,
-                  OmrIssueSeverity.medium => Icons.warning_amber_outlined,
-                  OmrIssueSeverity.low => Icons.info_outline,
-                }),
-                title: Text(omrRuleHeadline(entry.key)),
-                subtitle: Text('${entry.key} · ${entry.value.length}곳'),
-                children: [
-                  for (final issue in entry.value)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(issue.message),
-                      subtitle: Text(
-                        [
-                          if (issue.measureNumber != null)
-                            '마디 ${issue.measureNumber}',
-                          if (issue.ai != null)
-                            issue.ai!.corrections.isEmpty
-                                ? 'AI: 수정 없음 (${issue.ai!.overallConfidence.toStringAsFixed(2)})'
-                                : 'AI: ${issue.ai!.corrections.map((c) => '${c.property} ${c.currentValue}→${c.suggestedValue}').join(', ')}',
-                        ].join(' · '),
-                      ),
-                      onTap: issue.measureNumber == null
-                          ? null
-                          : () {
-                              final index = widget
-                                  .data
-                                  .score
-                                  .parts
-                                  .first
-                                  .measures
-                                  .indexWhere(
-                                    (measure) =>
-                                        measure.number == issue.measureNumber,
-                                  );
-                              if (index >= 0) widget.onJump(index);
-                              Navigator.pop(context);
-                            },
-                    ),
-                ],
-              ),
-        ],
-      ),
-    );
-  }
-}
-
-enum _LeaveAction { discard, save }
-
-enum _ScoreMenuAction {
-  transpose,
-  arrangement,
-  exportMusicXml,
-  exportMidi,
-  exportPdf,
-  exportProject,
 }

@@ -79,9 +79,7 @@ MusicScore _score({double? tempoBpm, MusicMeasure? extraMeasure}) {
               divisions: 1,
               time: const MusicTimeSignature(beats: 4, beatType: 4),
             ),
-            events: [
-              MusicNote(onset: 0, duration: 1, voice: '1', staff: 1),
-            ],
+            events: [MusicNote(onset: 0, duration: 1, voice: '1', staff: 1)],
           ),
           if (extraMeasure != null) extraMeasure,
         ],

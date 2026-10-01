@@ -82,8 +82,11 @@ class SongFileStorage {
   String annotationPathFor(String songId) =>
       path.join('annotations', '$songId.json');
 
-  String playbackSequencePathFor(String songId) =>
-      path.join('playback_sequences', '$songId.json');
+  /// Playback order for the original score, or for one score version.
+  String playbackSequencePathFor(String songId, [String? versionId]) =>
+      versionId == null
+      ? path.join('playback_sequences', '$songId.json')
+      : path.join('playback_sequences', songId, '$versionId.json');
 
   String arrangementProfilePathFor(String songId) =>
       path.join('arrangement_profiles', '$songId.json');
@@ -91,8 +94,39 @@ class SongFileStorage {
   String originalKeyPathFor(String songId) =>
       path.join('original_keys', '$songId.json');
 
+  /// The server's AI review: suggestions per measure and what was applied.
+  Future<void> saveOmrAiReview(String songId, String jsonContent) async {
+    await _saveSidecar(omrAiReviewPathFor(songId), jsonContent);
+  }
+
+  Future<String?> loadOmrAiReview(String songId) async {
+    return _loadSidecar(omrAiReviewPathFor(songId));
+  }
+
+  /// Id of the server job that converted the song, to fetch its AI version
+  /// later.
+  Future<void> saveOmrJobId(String songId, String jobId) async {
+    await _saveSidecar(omrJobPathFor(songId), jobId);
+  }
+
+  Future<String?> loadOmrJobId(String songId) async {
+    final id = (await _loadSidecar(omrJobPathFor(songId)))?.trim();
+    return id == null || id.isEmpty ? null : id;
+  }
+
+  String omrJobPathFor(String songId) => path.join('omr_jobs', '$songId.txt');
+
+  String omrAiReviewPathFor(String songId) =>
+      path.join('omr_ai_review', '$songId.json');
+
   String omrQualityPathFor(String songId) =>
       path.join('omr_quality', '$songId.json');
+
+  String omrValidationPathFor(String songId) =>
+      path.join('omr_validation', '$songId.json');
+
+  String omrCorrectionsPathFor(String songId) =>
+      path.join('omr_corrections', '$songId.json');
 
   String omrSourcePathFor(String songId, String extension) =>
       path.join('omr_sources', '$songId$extension');
@@ -121,12 +155,16 @@ class SongFileStorage {
     return null;
   }
 
-  Future<void> savePlaybackSequence(String songId, String jsonContent) async {
-    await _saveSidecar(playbackSequencePathFor(songId), jsonContent);
+  Future<void> savePlaybackSequence(
+    String songId,
+    String jsonContent, {
+    String? versionId,
+  }) async {
+    await _saveSidecar(playbackSequencePathFor(songId, versionId), jsonContent);
   }
 
-  Future<String?> loadPlaybackSequence(String songId) async {
-    return _loadSidecar(playbackSequencePathFor(songId));
+  Future<String?> loadPlaybackSequence(String songId, {String? versionId}) {
+    return _loadSidecar(playbackSequencePathFor(songId, versionId));
   }
 
   Future<void> saveArrangementProfile(String songId, String jsonContent) async {
@@ -151,6 +189,24 @@ class SongFileStorage {
 
   Future<String?> loadOmrQuality(String songId) async {
     return _loadSidecar(omrQualityPathFor(songId));
+  }
+
+  /// Before/after items of the server's automatic OMR corrections.
+  Future<void> saveOmrCorrections(String songId, String jsonContent) async {
+    await _saveSidecar(omrCorrectionsPathFor(songId), jsonContent);
+  }
+
+  Future<String?> loadOmrCorrections(String songId) async {
+    return _loadSidecar(omrCorrectionsPathFor(songId));
+  }
+
+  /// Suspect measures the server's rule-based validation found.
+  Future<void> saveOmrValidation(String songId, String jsonContent) async {
+    await _saveSidecar(omrValidationPathFor(songId), jsonContent);
+  }
+
+  Future<String?> loadOmrValidation(String songId) async {
+    return _loadSidecar(omrValidationPathFor(songId));
   }
 
   Future<void> saveOmrSource({
@@ -238,6 +294,7 @@ class SongFileStorage {
 
   Future<void> deleteScoreVersion(String songId, String versionId) async {
     await delete(scoreVersionPathFor(songId, versionId));
+    await delete(playbackSequencePathFor(songId, versionId));
   }
 
   Future<void> _saveSidecar(String relativePath, String jsonContent) async {

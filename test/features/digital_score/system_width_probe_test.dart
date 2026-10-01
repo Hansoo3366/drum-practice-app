@@ -48,7 +48,9 @@ void main() {
       final right = maxBar > 0 ? maxBar : maxAny;
       final fill = (22 + right) / aw;
       // ignore: avoid_print
-      print('sys$sys right=${right.toStringAsFixed(1)} fill=${fill.toStringAsFixed(2)}');
+      print(
+        'sys$sys right=${right.toStringAsFixed(1)} fill=${fill.toStringAsFixed(2)}',
+      );
     }
   });
 }

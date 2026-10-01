@@ -34,36 +34,69 @@ abstract interface class ScoreEditCommand {
 }
 
 class MusicScoreEditor {
-  MusicScoreEditor(MusicScore score) : _states = [score];
+  MusicScoreEditor(MusicScore score)
+    : _states = [score],
+      _ids = [List.generate(score.measureCount, (index) => index)],
+      _nextId = score.measureCount;
 
   static const int _historyLimit = 100;
 
   final List<MusicScore> _states;
+
+  /// Identity of each bar in every state: a bar keeps its id when bars are
+  /// inserted, deleted or moved around it, and a new bar gets a new id. Lets
+  /// section boundaries follow their bars (see `remapSectionMarks`).
+  final List<List<int>> _ids;
+  int _nextId;
   int _cursor = 0;
   int? _savedCursor = 0;
 
   MusicScore get score => _states[_cursor];
+  List<int> get measureIds => _ids[_cursor];
   bool get canUndo => _cursor > 0;
   bool get canRedo => _cursor < _states.length - 1;
   bool get isDirty => _savedCursor != _cursor;
 
   void apply(ScoreEditCommand command) {
     final next = command.apply(score);
+    final ids = _idsAfter(command, measureIds, next.measureCount);
     if (_cursor < _states.length - 1) {
       if (_savedCursor != null && _savedCursor! > _cursor) {
         _savedCursor = null;
       }
       _states.removeRange(_cursor + 1, _states.length);
+      _ids.removeRange(_cursor + 1, _ids.length);
     }
     _states.add(next);
+    _ids.add(ids);
     _cursor++;
     if (_states.length > _historyLimit + 1) {
       _states.removeAt(0);
+      _ids.removeAt(0);
       _cursor--;
       if (_savedCursor case final saved?) {
         _savedCursor = saved == 0 ? null : saved - 1;
       }
     }
+  }
+
+  List<int> _idsAfter(ScoreEditCommand command, List<int> ids, int count) {
+    final next = ids.toList();
+    switch (command) {
+      case InsertMeasureCommand(:final afterMeasureIndex):
+        next.insert(afterMeasureIndex + 1, _nextId++);
+      case DuplicateMeasureCommand(:final measureIndex):
+        next.insert(measureIndex + 1, _nextId++);
+      case DeleteMeasureCommand(:final measureIndex):
+        next.removeAt(measureIndex);
+      case MoveMeasureCommand(:final fromIndex, :final toIndex):
+        next.insert(toIndex, next.removeAt(fromIndex));
+      default:
+        break;
+    }
+    if (next.length == count) return List.unmodifiable(next);
+    // An edit this does not model changed the bar count: bars start over.
+    return List.unmodifiable([for (var i = 0; i < count; i++) _nextId++]);
   }
 
   void undo() {
@@ -86,6 +119,10 @@ class MusicScoreEditor {
     _states
       ..clear()
       ..add(score);
+    _ids
+      ..clear()
+      ..add(List.generate(score.measureCount, (index) => _nextId + index));
+    _nextId += score.measureCount;
     _cursor = 0;
     _savedCursor = 0;
   }

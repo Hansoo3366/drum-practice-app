@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_client.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_service.dart';
 import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
@@ -74,6 +75,7 @@ class OmrConvertJob {
     int? progress,
     String? step,
     String? error,
+    bool clearError = false,
   }) {
     return OmrConvertJob(
       id: id,
@@ -82,7 +84,7 @@ class OmrConvertJob {
       serverJobId: serverJobId ?? this.serverJobId,
       progress: progress ?? this.progress,
       step: step ?? this.step,
-      error: error ?? this.error,
+      error: clearError ? null : error ?? this.error,
       folderId: folderId,
       originalName: originalName,
       profile: profile,
@@ -155,6 +157,25 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
     await _restore();
   }
 
+  /// Checks a failed job's server job again. The server may have finished
+  /// while the phone was offline, so nothing is uploaded again.
+  void retry(String id) {
+    final job = state.where((job) => job.id == id).firstOrNull;
+    if (job == null || job.isRunning || (job.serverJobId ?? '').isEmpty) {
+      return;
+    }
+    state = [
+      for (final item in state)
+        if (item.id == id)
+          item.copyWith(status: OmrConvertJobStatus.running, clearError: true)
+        else
+          item,
+    ];
+    unawaited(_persist());
+    unawaited(_setWakeLock());
+    unawaited(_poll(id));
+  }
+
   void dismiss(String id) {
     _polling[id] = false;
     state = [
@@ -198,8 +219,11 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
         final local = state.where((job) => job.id == id).firstOrNull;
         final serverJobId = local?.serverJobId;
         if (local == null || serverJobId == null) return;
-        final remote = await service.status(serverJobId);
-        if (!_polling.containsKey(id)) return;
+        final remote = await _retryingNetwork(
+          id,
+          () => service.status(serverJobId),
+        );
+        if (remote == null || !_polling.containsKey(id)) return;
         state = [
           for (final job in state)
             if (job.id == id)
@@ -218,17 +242,21 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
         }
         if (remote.isDone) {
           final originalBytes = await _readPending(id);
-          await service.importResult(
-            jobId: serverJobId,
-            title: local.title,
-            folderId: local.folderId,
-            original: originalBytes == null
-                ? null
-                : PickedLocalFile(
-                    name: local.originalName ?? '${local.title}.pdf',
-                    bytes: originalBytes,
-                  ),
+          final imported = await _retryingNetwork(
+            id,
+            () => service.importResult(
+              jobId: serverJobId,
+              title: local.title,
+              folderId: local.folderId,
+              original: originalBytes == null
+                  ? null
+                  : PickedLocalFile(
+                      name: local.originalName ?? '${local.title}.pdf',
+                      bytes: originalBytes,
+                    ),
+            ),
           );
+          if (imported == null) return;
           await _deletePending(id);
           _polling[id] = false;
           state = [
@@ -244,6 +272,14 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
     } on Object catch (error) {
       _fail(id, error);
     }
+  }
+
+  /// Returns null when polling stopped (job removed) during a retry.
+  Future<T?> _retryingNetwork<T>(String id, Future<T> Function() request) {
+    return retryOnNetworkError(
+      request,
+      shouldContinue: () => _polling[id] == true,
+    );
   }
 
   void _fail(String id, Object error) {
@@ -305,3 +341,44 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
 
 final omrConvertJobsProvider =
     NotifierProvider<OmrConvertJobs, List<OmrConvertJob>>(OmrConvertJobs.new);
+
+/// How long a conversion keeps retrying while the network is unreachable.
+/// The server keeps converting meanwhile, so a brief drop on a phone (Wi-Fi
+/// to mobile data, a tunnel) must not throw the finished result away.
+const omrNetworkRetryWindow = Duration(minutes: 5);
+
+bool isTransientNetworkError(Object error) =>
+    error is SocketException ||
+    error is TimeoutException ||
+    error is http.ClientException ||
+    error is HttpException;
+
+/// Runs [request], retrying transient network failures with backoff
+/// (2 s doubling to 20 s) for up to [window]. Other errors, such as a job the
+/// server reports as failed, are rethrown at once. Returns null when
+/// [shouldContinue] turns false while waiting.
+Future<T?> retryOnNetworkError<T>(
+  Future<T> Function() request, {
+  required bool Function() shouldContinue,
+  Duration window = omrNetworkRetryWindow,
+  Future<void> Function(Duration delay)? wait,
+  DateTime Function()? now,
+}) async {
+  final clock = now ?? DateTime.now;
+  final pause = wait ?? (delay) => Future<void>.delayed(delay);
+  final started = clock();
+  var delay = const Duration(seconds: 2);
+  while (true) {
+    try {
+      return await request();
+    } on Object catch (error) {
+      if (!isTransientNetworkError(error) ||
+          clock().difference(started) > window) {
+        rethrow;
+      }
+    }
+    await pause(delay);
+    if (!shouldContinue()) return null;
+    delay = Duration(seconds: (delay.inSeconds * 2).clamp(2, 20));
+  }
+}

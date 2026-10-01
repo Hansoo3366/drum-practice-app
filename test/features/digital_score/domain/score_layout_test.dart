@@ -47,9 +47,7 @@ MusicScore _score({required int measures}) {
             MusicMeasure(
               number: '${index + 1}',
               attributes: MusicAttributes(divisions: 1),
-              events: [
-                MusicNote(onset: 0, duration: 4, voice: '1', staff: 1),
-              ],
+              events: [MusicNote(onset: 0, duration: 4, voice: '1', staff: 1)],
             ),
         ],
       ),

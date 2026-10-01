@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,13 +15,19 @@ import 'package:page_a_diddle/features/digital_score/domain/arrangement_profile.
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/native_score_layout.dart';
 import 'package:page_a_diddle/features/digital_score/domain/note_input.dart';
-import 'package:page_a_diddle/features/digital_score/domain/performance_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_editor.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_layout.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_playback.dart';
+import 'package:page_a_diddle/features/digital_score/domain/score_transpose.dart';
+import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/midi_duration.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_score_view.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/verovio_text_labels.dart';
 import 'package:verovio_flutter/verovio_flutter.dart';
+
+part 'verovio_score_layout.dart';
+part 'verovio_overlay_painter.dart';
 
 /// MusicXML score view backed by Verovio's native engraving engine.
 ///
@@ -39,6 +46,7 @@ class VerovioScoreView extends StatefulWidget {
     required this.playback,
     this.playbackVisible = false,
     this.onNoteTapped,
+    this.onEventTapped,
     this.onStaffTapped,
     this.onMeasureTapped,
     this.onMeasureMoved,
@@ -46,6 +54,8 @@ class VerovioScoreView extends StatefulWidget {
     this.onNoteDragged,
     this.onPlayerIssue,
     this.highlightedMeasureIndex,
+    this.highlightedMeasureRange,
+    this.rehearsalMarks,
     this.selectedNoteAddress,
     this.absorbMeasureTaps = false,
     this.oneFingerPan = true,
@@ -56,6 +66,7 @@ class VerovioScoreView extends StatefulWidget {
     this.inputDots = 0,
     this.inputCaret,
     this.engravingXml,
+    this.engravingPageSize,
     super.key,
   });
 
@@ -63,6 +74,10 @@ class VerovioScoreView extends StatefulWidget {
 
   /// When set, Verovio engraves this MusicXML instead of a codec round-trip.
   final String? engravingXml;
+
+  /// Verovio page size in 1/10 mm. A narrow page engraves larger on screen,
+  /// which the one-bar proofreading editor uses. Defaults to A4.
+  final Size? engravingPageSize;
   final MusicScore? playbackScore;
   final PlaybackSequence playbackSequence;
   final ArrangementProfile playbackArrangement;
@@ -70,6 +85,10 @@ class VerovioScoreView extends StatefulWidget {
   final PianoScorePlaybackController playback;
   final bool playbackVisible;
   final ValueChanged<AlphaTabNoteTappedEvent>? onNoteTapped;
+
+  /// Fires for notes and rests alike in `select` mode. When set, a drag that
+  /// moves beyond the touch slop is treated as a pan, not a selection.
+  final ValueChanged<ScoreEventAddress>? onEventTapped;
   final ValueChanged<AlphaTabStaffTappedEvent>? onStaffTapped;
   final ValueChanged<int>? onMeasureTapped;
   final void Function(int fromIndex, int toIndex)? onMeasureMoved;
@@ -77,6 +96,14 @@ class VerovioScoreView extends StatefulWidget {
   final ValueChanged<AlphaTabNoteDraggedEvent>? onNoteDragged;
   final VoidCallback? onPlayerIssue;
   final int? highlightedMeasureIndex;
+
+  /// Inclusive bar range tinted while choosing a section.
+  final ({int start, int end})? highlightedMeasureRange;
+
+  /// Sections to label above the score. Defaults to rehearsal marks.
+  /// The user's sections, drawn as the score's rehearsal boxes in place of
+  /// the printed ones. Null draws the score as written. Display only.
+  final List<({int measureIndex, String label})>? rehearsalMarks;
   final ScoreEventAddress? selectedNoteAddress;
   final bool absorbMeasureTaps;
   final bool oneFingerPan;
@@ -125,6 +152,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     'footer': 'none',
     'minLastJustification': 0.0,
     'autoBeam': true,
+    // Verovio does not count ties below the notes as obstacles; keep lyrics
+    // clear of them (the option's maximum).
+    'lyricTopMinMargin': 8,
   };
 
   final _transform = TransformationController();
@@ -135,6 +165,27 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   Future<void>? _serviceReady;
   List<_VerovioPage> _pages = const <_VerovioPage>[];
   NativeScoreLayout? _layout;
+
+  /// Chord symbol boxes in scene coordinates, kept clear by section labels.
+  List<Rect> _chordRects = const [];
+
+  /// The MIDI being made or already made, and what it was made for; see
+  /// [_playbackMidi].
+  Future<nm.MidiSequence>? _midi;
+  ({
+    String? xml,
+    MusicScore? score,
+    PlaybackSequence? sequence,
+    ArrangementProfile? arrangement,
+    int bpm,
+  })
+  _midiFor = (
+    xml: null,
+    score: null,
+    sequence: null,
+    arrangement: null,
+    bpm: 0,
+  );
   nm.Score? _engraved;
   String? _parseError;
   Offset? _ghostCenter;
@@ -174,6 +225,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     }
     final visualScoreChanged =
         oldWidget.engravingXml != widget.engravingXml ||
+        !_sameMarks(oldWidget.rehearsalMarks, widget.rehearsalMarks) ||
+        oldWidget.engravingPageSize != widget.engravingPageSize ||
         !identical(oldWidget.score, widget.score) ||
         oldWidget.score.noteCount != widget.score.noteCount ||
         oldWidget.score.measureCount != widget.score.measureCount ||
@@ -200,6 +253,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     } else if (oldWidget.playbackVisible != widget.playbackVisible &&
         widget.playbackVisible) {
       unawaited(_ensureAudio());
+      unawaited(_playbackMidi().then((_) {}, onError: (Object _) {}));
     }
   }
 
@@ -251,9 +305,13 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       // Only the written document is parsed on the UI isolate. A repeated
       // performance document can be much longer than the visible score and
       // parsing it here made Android appear to hang before Verovio started.
-      final visualXml =
+      final writtenXml =
           widget.engravingXml ??
           utf8.decode(_codec.encodeMusicXml(widget.score));
+      final marks = widget.rehearsalMarks;
+      final visualXml = marks == null
+          ? writtenXml
+          : withSectionRehearsals(writtenXml, marks);
       _engraved = nm.MusicXMLParser.scoreFromMusicXML(visualXml);
       _parseError = null;
       _pages = const <_VerovioPage>[];
@@ -270,14 +328,11 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   }
 
   void _resetPlaybackState() {
-    final duration = estimateScoreDurationMs(
-      widget.playbackScore ?? widget.score,
-    );
     widget.playback.replaceState(
       widget.playback.state.copyWith(
         ready: true,
         loaded: true,
-        durationMs: duration,
+        durationMs: _estimatedDurationMs(),
         playing: false,
         currentTimeMs: 0,
         measureNumber: 1,
@@ -285,14 +340,70 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       ),
     );
     if (mounted) setState(() {});
+    if (widget.playbackVisible)
+      unawaited(_playbackMidi().then((_) {}, onError: (Object _) {}));
   }
+
+  /// Length of the performance before its MIDI exists: every bar the order
+  /// plays, repeats included, at the tempo the player will use. Playing
+  /// replaces it with the MIDI's own length.
+  double _estimatedDurationMs() {
+    final bpm = widget.score.tempoBpm ?? 120;
+    try {
+      final lengths = measureQuarterLengths(widget.score);
+      final quarters = performanceMeasureMap(
+        widget.score,
+        widget.playbackSequence,
+      ).fold<double>(0, (sum, index) => sum + lengths[index]);
+      return quarters * 60000 / bpm;
+    } on FormatException {
+      return estimateScoreDurationMs(widget.playbackScore ?? widget.score);
+    }
+  }
+
+  /// Measure indices (first part) that start a written line, or empty.
+  static List<int> _writtenLineStarts(String xml) {
+    final open = RegExp(r'<part\s[^>]*>').firstMatch(xml);
+    if (open == null) return const [];
+    final close = xml.indexOf('</part>', open.end);
+    final body = xml.substring(open.end, close < 0 ? xml.length : close);
+    final starts = <int>[];
+    var index = 0;
+    for (final measure in RegExp(
+      r'<measure\b[\s\S]*?</measure>',
+    ).allMatches(body)) {
+      if (index == 0 ||
+          RegExp(
+            r'<print\b[^>]*new-(?:system|page)="yes"',
+          ).hasMatch(measure.group(0)!)) {
+        starts.add(index);
+      }
+      index++;
+    }
+    return starts.length > 1 ? starts : const [];
+  }
+
+  /// Written line starts of the score on screen; empty when lines reflow.
+  List<int> _lineStarts = const [];
 
   Future<void> _renderWithVerovio(String xml, int generation) async {
     try {
       final timeout = _verovioOperationTimeout;
       final service = await _getService().timeout(timeout);
+      _lineStarts = _writtenLineStarts(xml);
       await service
-          .setOptionsJson(jsonEncode(_verovioOptions))
+          .setOptionsJson(
+            jsonEncode({
+              ..._verovioOptions,
+              // Lines as on the page (converted scores record them); pages
+              // still break automatically. Scores without line breaks reflow.
+              if (_lineStarts.isNotEmpty) 'breaks': 'line',
+              if (widget.engravingPageSize case final size?) ...{
+                'pageWidth': size.width.round(),
+                'pageHeight': size.height.round(),
+              },
+            }),
+          )
           .timeout(timeout);
       await service.loadData(xml).timeout(timeout);
       final pageCount = await service.pageCount.timeout(timeout);
@@ -317,8 +428,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
             .timeout(timeout);
         pages.add(
           _VerovioPage(
-            svg: _normalizeVerovioSvgForFlutter(svg),
+            svg: normalizeVerovioSvgForFlutter(svg),
             hitMap: hitMap,
+            chords: extractVerovioTextLabels(svg),
           ),
         );
         if (!mounted || generation != _renderGeneration) return;
@@ -375,6 +487,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     final measures = <NativeMeasureBox>[];
     final notes = <NativeNotePlacement>[];
     final systemStarts = <int>[];
+    final chordRects = <Rect>[];
     final part = widget.score.parts.isEmpty ? null : widget.score.parts.first;
     var pageTop = 0.0;
     var measureIndex = 0;
@@ -383,10 +496,11 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       final viewBox = page.hitMap.viewBox;
       if (viewBox.width <= 0 || viewBox.height <= 0) continue;
       final scale = viewWidth / viewBox.width;
-      final pageHeight = viewBox.height * scale;
-      final measureHits =
-          page.hitMap.byType.where((hit) => hit.type == 'measure').toList()
-            ..sort(_compareMeasurePosition);
+      final pageHeight = page.visibleHeight * scale;
+      final measureHits = orderMeasureBoxes(
+        page.hitMap.byType.where((hit) => hit.type == 'measure').toList(),
+        (hit) => hit.bbox,
+      );
       final staffHits = page.hitMap.byType
           .where((hit) => hit.type == 'staff')
           .toList();
@@ -525,7 +639,41 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
                 onset: note.onset,
                 midi: note.isRest ? null : midiForPitch(note.pitch!),
                 center: center,
+                bounds: Rect.fromPoints(
+                  _scaledPoint(match.hit.bbox.topLeft, scale, pageTop),
+                  _scaledPoint(match.hit.bbox.bottomRight, scale, pageTop),
+                ),
                 isRest: note.isRest || match.hit.type == 'rest',
+              ),
+            );
+          }
+
+          // Rests carry the codec's event id too. Map them only by that id:
+          // guessing by position could select the wrong rest in two voices.
+          for (final hit in entry.value) {
+            if (hit.type != 'rest') continue;
+            final encoded = _parseNoteEventId(hit.id);
+            if (encoded == null ||
+                encoded.measureIndex != absoluteIndex ||
+                encoded.eventIndex >= musicMeasure.events.length) {
+              continue;
+            }
+            final event = musicMeasure.events[encoded.eventIndex];
+            if (event is! MusicNote || !event.isRest) continue;
+            notes.add(
+              NativeNotePlacement(
+                partIndex: 0,
+                measureIndex: absoluteIndex,
+                eventIndex: encoded.eventIndex,
+                staff: event.staff.clamp(1, 2),
+                onset: event.onset,
+                midi: null,
+                center: _scaledPoint(hit.bbox.center, scale, pageTop),
+                bounds: Rect.fromPoints(
+                  _scaledPoint(hit.bbox.topLeft, scale, pageTop),
+                  _scaledPoint(hit.bbox.bottomRight, scale, pageTop),
+                ),
+                isRest: true,
               ),
             );
           }
@@ -598,11 +746,29 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
           }
         }
       }
+      for (final chord in page.chords) {
+        final size = chord.fontSize * scale;
+        final width = chord.text.length * size * 0.62;
+        final left = switch (chord.anchor) {
+          TextAlign.center => chord.x * scale - width / 2,
+          TextAlign.right => chord.x * scale - width,
+          _ => chord.x * scale,
+        };
+        chordRects.add(
+          Rect.fromLTWH(
+            left,
+            pageTop + chord.baselineY * scale - size * 0.9,
+            width,
+            size * 1.1,
+          ),
+        );
+      }
       pageTop += pageHeight;
     }
 
     _documentWidth = viewWidth;
     _documentHeight = math.max(pageTop, 240);
+    _chordRects = List.unmodifiable(chordRects);
     _layout = NativeScoreLayout(
       contentSize: Size(_documentWidth, _documentHeight),
       measures: measures,
@@ -615,6 +781,26 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     final layout = _layout;
     if (layout == null) return;
     final systems = <ScoreSystemSpan>[];
+    if (_lineStarts.isNotEmpty) {
+      // Lines follow the written breaks, so the file says where each starts
+      // (measure boxes vary in height with marks above them).
+      final count = layout.measures.length;
+      for (var i = 0; i < _lineStarts.length; i++) {
+        final start = _lineStarts[i];
+        final end = i + 1 < _lineStarts.length
+            ? _lineStarts[i + 1] - 1
+            : count - 1;
+        if (start < count && end >= start) {
+          systems.add(
+            ScoreSystemSpan(startMeasureIndex: start, endMeasureIndex: end),
+          );
+        }
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onSystemsChanged?.call(systems);
+      });
+      return;
+    }
     final sorted = [...layout.measures]
       ..sort((a, b) => a.rect.top.compareTo(b.rect.top));
     if (sorted.isNotEmpty) {
@@ -671,14 +857,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       widget.onPlayerIssue?.call();
       return false;
     }
+    final nm.MidiSequence sequence;
     try {
-      final sequence = await _buildPlaybackMidiSequence(
-        engraved,
-        options: nm.MidiGenerationOptions(
-          defaultBpm: (widget.score.tempoBpm ?? 120).round(),
-          includeMetronome: false,
-        ),
-      );
+      sequence = await _playbackMidi();
       await _bridge.uploadAndStart(sequence, includeMetronome: false);
     } catch (_) {
       widget.onPlayerIssue?.call();
@@ -686,7 +867,15 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     }
     _playbackAnchor = DateTime.now();
     _playbackAnchorMs = widget.playback.state.currentTimeMs;
-    widget.playback.replaceState(widget.playback.state.copyWith(playing: true));
+    widget.playback.replaceState(
+      widget.playback.state.copyWith(
+        playing: true,
+        durationMs: midiSequenceDurationMs(
+          sequence,
+          fallbackBpm: (widget.score.tempoBpm ?? 120).round(),
+        ),
+      ),
+    );
     _playbackTimer?.cancel();
     _playbackTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       if (!mounted || _playbackAnchor == null) return;
@@ -711,138 +900,53 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     return true;
   }
 
-  Future<nm.MidiSequence> _buildPlaybackMidiSequence(
-    nm.Score writtenScore, {
-    required nm.MidiGenerationOptions options,
-  }) async {
-    final sequence = widget.playbackSequence;
-    if (sequence.isEmpty) {
-      if (widget.playbackArrangement.isOff) {
-        return nm.MidiMapper.fromScore(writtenScore, options: options);
-      }
-      final arranged = composePerformanceScore(
-        widget.score,
-        arrangement: widget.playbackArrangement,
-        ignoreErrors: true,
-      );
-      return _midiForDomainScore(arranged, options: options);
+  /// The playback MIDI, made in the background as soon as the player shows
+  /// and kept while the score, order and accompaniment stay the same, so
+  /// play, pause and seek do not make it again.
+  Future<nm.MidiSequence> _playbackMidi() {
+    final bpm = (widget.score.tempoBpm ?? 120).round();
+    final current = _midi;
+    if (current != null &&
+        identical(_midiFor.xml, widget.engravingXml) &&
+        identical(_midiFor.score, widget.score) &&
+        _midiFor.sequence == widget.playbackSequence &&
+        _midiFor.arrangement == widget.playbackArrangement &&
+        _midiFor.bpm == bpm) {
+      return current;
     }
-
-    final ranges = discoverScoreSections(widget.score);
-    if (ranges.isEmpty) {
-      return nm.MidiMapper.fromScore(writtenScore, options: options);
-    }
-
-    final cached = <String, _PlaybackMidiSegment>{};
-    final segments = <_PlaybackMidiSegment>[];
-    for (final item in sequence.items) {
-      final matching = ranges.where((range) => range.section == item.section);
-      if (matching.isEmpty) {
-        return nm.MidiMapper.fromScore(writtenScore, options: options);
-      }
-      for (final range in matching) {
-        final key =
-            '${range.section}:${range.startMeasureIndex}:${range.endMeasureIndex}';
-        final segment = cached[key] ??= _PlaybackMidiSegment.fromScore(
-          _scoreForSectionRange(widget.score, range),
-          arrangement: widget.playbackArrangement,
-          options: options,
-        );
-        for (var repeat = 0; repeat < item.repeats; repeat++) {
-          segments.add(segment);
-        }
-      }
-    }
-    return _concatenateMidiSegments(segments, options.ticksPerQuarter);
-  }
-
-  nm.MidiSequence _midiForDomainScore(
-    MusicScore score, {
-    required nm.MidiGenerationOptions options,
-  }) {
-    final xml = utf8.decode(_codec.encodeMusicXml(score));
-    final engraved = nm.MusicXMLParser.scoreFromMusicXML(xml);
-    return nm.MidiMapper.fromScore(engraved, options: options);
-  }
-
-  nm.MidiSequence _concatenateMidiSegments(
-    List<_PlaybackMidiSegment> segments,
-    int ticksPerQuarter,
-  ) {
-    if (segments.isEmpty) {
-      return nm.MidiSequence(
-        ticksPerQuarter: ticksPerQuarter,
-        tracks: const <nm.MidiTrack>[],
-      );
-    }
-
-    final tracks = <({String name, int channel, List<nm.MidiEvent> events})>[];
-    var offset = 0;
-    for (final segment in segments) {
-      for (var index = 0; index < segment.sequence.tracks.length; index++) {
-        final source = segment.sequence.tracks[index];
-        while (tracks.length <= index) {
-          tracks.add((name: source.name, channel: source.channel, events: []));
-        }
-        tracks[index].events.addAll([
-          for (final event in source.events) _shiftMidiEvent(event, offset),
-        ]);
-      }
-      offset += segment.durationTicks;
-    }
-    return nm.MidiSequence(
-      ticksPerQuarter: ticksPerQuarter,
-      tracks: [
-        for (final track in tracks)
-          nm.MidiTrack(
-            name: track.name,
-            channel: track.channel,
-            events: track.events,
-          ),
-      ],
+    _midiFor = (
+      xml: widget.engravingXml,
+      score: widget.score,
+      sequence: widget.playbackSequence,
+      arrangement: widget.playbackArrangement,
+      bpm: bpm,
     );
-  }
-
-  nm.MidiEvent _shiftMidiEvent(nm.MidiEvent event, int offset) {
-    final tick = event.tick + offset;
-    return switch (event.type) {
-      nm.MidiEventType.noteOn => nm.MidiEvent.noteOn(
-        tick: tick,
-        channel: event.channel,
-        note: event.note ?? 0,
-        velocity: event.velocity ?? 0,
-      ),
-      nm.MidiEventType.noteOff => nm.MidiEvent.noteOff(
-        tick: tick,
-        channel: event.channel,
-        note: event.note ?? 0,
-        velocity: event.velocity ?? 0,
-      ),
-      nm.MidiEventType.tempo => nm.MidiEvent.tempo(
-        tick: tick,
-        bpm: event.bpm ?? 120,
-      ),
-      nm.MidiEventType.programChange => nm.MidiEvent.programChange(
-        tick: tick,
-        channel: event.channel,
-        program: event.program ?? 0,
-      ),
-      nm.MidiEventType.controlChange => nm.MidiEvent.controlChange(
-        tick: tick,
-        channel: event.channel,
-        controller: event.controller ?? 0,
-        value: event.value ?? 0,
-      ),
-      nm.MidiEventType.timeSignature => nm.MidiEvent.timeSignature(
-        tick: tick,
-        numerator: event.numerator ?? 4,
-        denominator: event.denominator ?? 4,
-      ),
-      nm.MidiEventType.marker => nm.MidiEvent.marker(
-        tick: tick,
-        text: event.markerText ?? '',
-      ),
-    };
+    final future = buildPlaybackMidiInBackground(
+      engravingXml: widget.engravingXml,
+      score: widget.score,
+      sequence: widget.playbackSequence,
+      arrangement: widget.playbackArrangement,
+      bpm: bpm,
+    );
+    _midi = future;
+    future.then(
+      (sequence) {
+        // The exact length replaces the estimate while nothing plays.
+        if (!mounted || !identical(_midi, future)) return;
+        if (widget.playback.state.playing) return;
+        widget.playback.replaceState(
+          widget.playback.state.copyWith(
+            durationMs: midiSequenceDurationMs(sequence, fallbackBpm: bpm),
+          ),
+        );
+        setState(() {});
+      },
+      onError: (Object _) {
+        // A failed build is made again on the next play.
+        if (identical(_midi, future)) _midi = null;
+      },
+    );
+    return future;
   }
 
   Future<bool> _stop() async {
@@ -881,16 +985,30 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     return true;
   }
 
+  /// Written bar playing at [ms]. The performance may repeat or skip bars,
+  /// so the playback position maps through the performance bar order and
+  /// each bar's real length rather than a uniform bar count.
   int _measureForTime(num ms) {
-    final total = math.max(
-      1,
-      (widget.playbackScore ?? widget.score).measureCount,
-    );
     final duration = math.max(1.0, widget.playback.state.durationMs);
-    return ((ms / duration) * total).floor().clamp(0, total - 1);
+    final map = performanceMeasureMap(widget.score, widget.playbackSequence);
+    return writtenMeasureAt(
+      map,
+      measureQuarterLengths(widget.score),
+      ms / duration,
+    );
   }
 
-  List<String?> get _sectionMarks => measureSectionMarks(widget.score);
+  static bool _sameMarks(
+    List<({int measureIndex, String label})>? a,
+    List<({int measureIndex, String label})>? b,
+  ) {
+    if (a == null || b == null) return a == b;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
 
   Rect? _caretRect(NativeScoreLayout layout) {
     final caret = widget.inputCaret;
@@ -981,8 +1099,26 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       return;
     }
     if (widget.inputMode == 'select' || widget.inputMode == 'off') {
-      final note = layout.noteAt(content);
-      if (note != null && !note.isRest && note.midi != null) {
+      final note = layout.noteAt(
+        content,
+        includeRests: widget.onEventTapped != null,
+      );
+      if (widget.onEventTapped != null) {
+        if (note != null) {
+          widget.onEventTapped!(
+            ScoreEventAddress(
+              partIndex: note.partIndex,
+              measureIndex: note.measureIndex,
+              eventIndex: note.eventIndex,
+            ),
+          );
+        }
+        return;
+      }
+      if (note != null &&
+          !note.isRest &&
+          note.midi != null &&
+          widget.onNoteTapped != null) {
         final part = widget.score.parts[note.partIndex];
         final measure = part.measures[note.measureIndex];
         widget.onNoteTapped?.call(
@@ -1105,9 +1241,12 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
                                   child: CustomPaint(
                                     painter: _VerovioOverlayPainter(
                                       layout: layout,
-                                      sectionMarks: _sectionMarks,
+                                      keyNames: measureKeyNames(widget.score),
+                                      chordRects: _chordRects,
                                       highlightedMeasureIndex:
                                           widget.highlightedMeasureIndex,
+                                      highlightedRange:
+                                          widget.highlightedMeasureRange,
                                       selectedNoteAddress:
                                           widget.selectedNoteAddress,
                                       playbackMeasure:
@@ -1192,6 +1331,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       ..translateByDouble(-scene.dx, -scene.dy, 0, 1);
     setState(() {});
   }
+
+  Offset? _pointerDownAt;
 
   bool get _handlesPointerInput {
     return widget.inputMode != 'off' || _measureDragFrom != null;
@@ -1293,6 +1434,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
 
   void _handlePointerDown(PointerDownEvent event) {
     _activePointers.add(event.pointer);
+    _pointerDownAt = event.position;
     if (_activePointers.length > 1) {
       if (!_multiPointerGesture) {
         _multiPointerGesture = true;
@@ -1314,7 +1456,13 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   }
 
   void _handlePointerUp(PointerUpEvent event) {
-    final shouldCommit = !_multiPointerGesture && _activePointers.length == 1;
+    final start = _pointerDownAt;
+    final panned =
+        (widget.onEventTapped != null || widget.inputMode == 'select') &&
+        start != null &&
+        (event.position - start).distance > kTouchSlop;
+    final shouldCommit =
+        !_multiPointerGesture && _activePointers.length == 1 && !panned;
     if (shouldCommit && _handlesPointerInput) {
       _commitInputAt(_scenePosition(event));
     }
@@ -1330,695 +1478,5 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       setState(() => _multiPointerGesture = false);
     }
     _clearGhost();
-  }
-}
-
-MusicScore _scoreForSectionRange(MusicScore score, ScoreSectionRange range) {
-  if (range.startMeasureIndex < 0 ||
-      range.endMeasureIndex < range.startMeasureIndex) {
-    throw const FormatException('A section range is invalid.');
-  }
-  if (score.parts.any(
-    (part) => range.endMeasureIndex >= part.measures.length,
-  )) {
-    throw const FormatException('A section is outside the score.');
-  }
-  return score.copyWith(
-    parts: [
-      for (final part in score.parts)
-        part.copyWith(
-          measures: [
-            for (
-              var index = range.startMeasureIndex;
-              index <= range.endMeasureIndex;
-              index++
-            )
-              part.measures[index].copyWith(
-                number: '${index - range.startMeasureIndex + 1}',
-              ),
-          ],
-        ),
-    ],
-  );
-}
-
-class _PlaybackMidiSegment {
-  const _PlaybackMidiSegment({
-    required this.sequence,
-    required this.durationTicks,
-  });
-
-  factory _PlaybackMidiSegment.fromScore(
-    MusicScore score, {
-    required ArrangementProfile arrangement,
-    required nm.MidiGenerationOptions options,
-  }) {
-    final performance = composePerformanceScore(
-      score,
-      arrangement: arrangement,
-      ignoreErrors: true,
-    );
-    final xml = utf8.decode(const MusicXmlCodec().encodeMusicXml(performance));
-    final engraved = nm.MusicXMLParser.scoreFromMusicXML(xml);
-    return _PlaybackMidiSegment(
-      sequence: nm.MidiMapper.fromScore(engraved, options: options),
-      durationTicks: _musicScoreDurationTicks(
-        performance,
-        options.ticksPerQuarter,
-      ),
-    );
-  }
-
-  final nm.MidiSequence sequence;
-  final int durationTicks;
-}
-
-int _musicScoreDurationTicks(MusicScore score, int ticksPerQuarter) {
-  if (score.parts.isEmpty) return 0;
-  return score.parts.first.measures.fold<int>(0, (sum, measure) {
-    final time =
-        measure.attributes.time ??
-        const MusicTimeSignature(beats: 4, beatType: 4);
-    final quarterNotes = time.beats * 4 / time.beatType;
-    return sum + (quarterNotes * ticksPerQuarter).round();
-  });
-}
-
-class _VerovioPage {
-  const _VerovioPage({required this.svg, required this.hitMap});
-
-  final String svg;
-  final PageHitMap hitMap;
-}
-
-String _normalizeVerovioSvgForFlutter(String source) {
-  final rootViewBox = RegExp(
-    r'<svg\b[^>]*\bviewBox="([^"]+)"',
-  ).firstMatch(source)?.group(1);
-  final definitionMatch = RegExp(
-    r'<svg\b(?=[^>]*\bclass="definition-scale")([^>]*)>',
-  ).firstMatch(source);
-  if (rootViewBox == null || definitionMatch == null) return source;
-
-  final rootSize = _parseSvgViewBoxSize(rootViewBox);
-  final definitionViewBox = RegExp(
-    r'\bviewBox="([^"]+)"',
-  ).firstMatch(definitionMatch.group(0)!)?.group(1);
-  final definitionSize = definitionViewBox == null
-      ? null
-      : _parseSvgViewBoxSize(definitionViewBox);
-  if (rootSize == null || definitionSize == null) return source;
-  if (definitionSize.width <= 0 || definitionSize.height <= 0) return source;
-
-  final openStart = definitionMatch.start;
-  final openEnd = definitionMatch.end;
-  final closeStart = source.indexOf('</svg>', openEnd);
-  if (closeStart < 0) return source;
-  final scaleX = rootSize.width / definitionSize.width;
-  final scaleY = rootSize.height / definitionSize.height;
-  final opening = '<g transform="scale($scaleX $scaleY)">';
-  final normalizedBuffer = StringBuffer()
-    ..write(source.substring(0, openStart))
-    ..write(opening)
-    ..write(source.substring(openEnd, closeStart))
-    ..write('</g>')
-    ..write(source.substring(closeStart + '</svg>'.length));
-  var normalized = normalizedBuffer.toString();
-
-  // Verovio uses a small CSS rule to make open paths inherit the page color.
-  // flutter_svg does not apply that stylesheet, so carry the stroke onto
-  // shapes that explicitly declare a stroke width.
-  normalized = normalized.replaceAllMapped(
-    RegExp(
-      r"""<(path|ellipse|polygon|polyline|rect)\b[^>]*\bstroke-width\s*=\s*["'][^"']+["'][^>]*>""",
-    ),
-    (match) {
-      final element = match.group(0)!;
-      if (RegExp(r'\bstroke\s*=').hasMatch(element)) return element;
-      final insertAt = element.endsWith('/>')
-          ? element.length - 2
-          : element.length - 1;
-      return '${element.substring(0, insertAt)} stroke="black"${element.substring(insertAt)}';
-    },
-  );
-  // flutter_svg cannot load Verovio's embedded SMuFL WOFF2 font into the
-  // device font registry.  Symbols embedded in text (most notably the
-  // metronome note) would otherwise fall back to an unrelated private-use
-  // glyph and appear as a large, overlapping block in the top-left corner.
-  // Keep the engraving intact and use the platform music-note glyph for this
-  // small class of inline symbols.
-  normalized = normalized.replaceAllMapped(
-    RegExp(r'[\uE000-\uF8FF]'),
-    (_) => '♩',
-  );
-  normalized = normalized.replaceAllMapped(RegExp(r'&#x([0-9a-fA-F]+);'), (
-    match,
-  ) {
-    final codePoint = int.tryParse(match.group(1)!, radix: 16);
-    if (codePoint == null || codePoint < 0xE000 || codePoint > 0xF8FF) {
-      return match.group(0)!;
-    }
-    return '♩';
-  });
-  // flutter_svg does not preserve the positions of Verovio's direction and
-  // tempo text inside the flattened definition-scale viewport. Leaving those
-  // text nodes in place makes later annotations jump to the first system and
-  // overlap the clefs. Keep pure measure numbers for navigation; the source
-  // MusicXML and PDF export still retain all annotations.
-  normalized = normalized.replaceAllMapped(
-    RegExp(r'<text\b[^>]*>[\s\S]*?</text>'),
-    (match) {
-      final plainText = match
-          .group(0)!
-          .replaceAll(RegExp(r'<[^>]+>'), '')
-          .replaceAll(RegExp(r'\s+'), '')
-          .trim();
-      return RegExp(r'^\d+$').hasMatch(plainText) ? match.group(0)! : '';
-    },
-  );
-  return normalized.replaceAll(
-    RegExp(r'<style\b[^>]*>.*?</style>', dotAll: true),
-    '',
-  );
-}
-
-Size? _parseSvgViewBoxSize(String value) {
-  final values = value
-      .trim()
-      .split(RegExp(r'[ ,]+'))
-      .map(double.tryParse)
-      .toList();
-  if (values.length != 4 || values.any((value) => value == null)) return null;
-  return Size(values[2]!, values[3]!);
-}
-
-class _VerovioPages extends StatelessWidget {
-  const _VerovioPages({
-    required this.pages,
-    required this.width,
-    required this.onHeightChanged,
-  });
-
-  final List<_VerovioPage> pages;
-  final double width;
-  final ValueChanged<double> onHeightChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    var top = 0.0;
-    final children = <Widget>[];
-    for (var index = 0; index < pages.length; index++) {
-      final page = pages[index];
-      final viewBox = page.hitMap.viewBox;
-      final height = viewBox.width <= 0
-          ? 0.0
-          : width * viewBox.height / viewBox.width;
-      children.add(
-        Positioned(
-          left: 0,
-          top: top,
-          width: width,
-          height: height,
-          child: SvgPicture.string(
-            page.svg,
-            fit: BoxFit.fill,
-            alignment: Alignment.topCenter,
-          ),
-        ),
-      );
-      top += height;
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) => onHeightChanged(top));
-    return Stack(children: children);
-  }
-}
-
-class _MeasureGeometry {
-  const _MeasureGeometry({
-    required this.measureIndex,
-    required this.element,
-    required this.box,
-  });
-
-  final int measureIndex;
-  final ElementHit element;
-  final NativeMeasureBox box;
-}
-
-_MeasureGeometry? _measureForHit(
-  ElementHit hit,
-  List<_MeasureGeometry> measures,
-) {
-  if (hit.parentId != null) {
-    for (final measure in measures) {
-      if (measure.element.id == hit.parentId) return measure;
-    }
-  }
-  final center = hit.bbox.center;
-  for (final measure in measures) {
-    if (measure.element.bbox.contains(center)) return measure;
-  }
-  return null;
-}
-
-List<_RenderedNoteMatch> _matchRenderedNotes({
-  required List<ElementHit> hits,
-  required List<(int, MusicNote)> sourceNotes,
-  required int partIndex,
-  required int measureIndex,
-}) {
-  final sourceByIndex = <int, MusicNote>{
-    for (final source in sourceNotes) source.$1: source.$2,
-  };
-  final used = <int>{};
-  final matches = <_RenderedNoteMatch>[];
-
-  // MusicXML ids are added by MusicXmlCodec before Verovio renders the score.
-  // Prefer them over visual sorting so chords and multiple voices keep their
-  // actual event addresses.
-  for (final hit in hits) {
-    final encoded = _parseNoteEventId(hit.id);
-    if (encoded == null ||
-        encoded.partIndex != partIndex ||
-        encoded.measureIndex != measureIndex ||
-        used.contains(encoded.eventIndex)) {
-      continue;
-    }
-    final note = sourceByIndex[encoded.eventIndex];
-    if (note == null) continue;
-    used.add(encoded.eventIndex);
-    matches.add(
-      _RenderedNoteMatch(eventIndex: encoded.eventIndex, note: note, hit: hit),
-    );
-  }
-
-  // Imported MusicXML may not carry a usable id through Verovio's MusicXML
-  // converter. Fall back to horizontal engraving order, which is the correct
-  // order for onset mapping (the old top-first order put later chord notes in
-  // front of earlier beats).
-  final remainingHits =
-      hits
-          .where((hit) => !matches.any((match) => identical(match.hit, hit)))
-          .toList()
-        ..sort(_compareNotePosition);
-  final remainingSources =
-      sourceNotes.where((source) => !used.contains(source.$1)).toList()
-        ..sort((a, b) {
-          final onset = a.$2.onset.compareTo(b.$2.onset);
-          if (onset != 0) return onset;
-          final staff = a.$2.staff.compareTo(b.$2.staff);
-          return staff == 0 ? a.$1.compareTo(b.$1) : staff;
-        });
-  final count = math.min(remainingHits.length, remainingSources.length);
-  for (var index = 0; index < count; index++) {
-    final source = remainingSources[index];
-    matches.add(
-      _RenderedNoteMatch(
-        eventIndex: source.$1,
-        note: source.$2,
-        hit: remainingHits[index],
-      ),
-    );
-  }
-  return matches;
-}
-
-({int partIndex, int measureIndex, int eventIndex})? _parseNoteEventId(
-  String id,
-) {
-  final match = RegExp(r'(?:^|-)p(\d+)-m(\d+)-e(\d+)(?:-|$)').firstMatch(id);
-  if (match == null) return null;
-  return (
-    partIndex: int.parse(match.group(1)!),
-    measureIndex: int.parse(match.group(2)!),
-    eventIndex: int.parse(match.group(3)!),
-  );
-}
-
-_StaffGeometry _fitStaffGeometry(
-  List<_StaffMetricPoint> points, {
-  required double fallbackTop,
-  required double fallbackGap,
-  required bool bass,
-}) {
-  final reference = bass ? -2 : 2;
-  if (points.isEmpty) {
-    return _StaffGeometry(top: fallbackTop, lineGap: fallbackGap);
-  }
-
-  // A measure can contain a single pitched event (or the hit map can expose
-  // only one reliable note box). Keep that note on its rendered pitch instead
-  // of falling back to a guessed position that may move the ghost several
-  // staff steps away from the touch.
-  if (points.length == 1) {
-    final point = points.single;
-    final top = point.y + (point.steps - reference) * fallbackGap / 2;
-    return _StaffGeometry(top: top, lineGap: fallbackGap);
-  }
-
-  // Fit all note boxes instead of using only the two most distant notes.
-  // Stem/flag extents can move an individual hit-box centre; least-squares
-  // fitting makes the staff estimate stable across mixed rhythms and chords.
-  final meanSteps =
-      points.fold<double>(0, (sum, point) => sum + point.steps) / points.length;
-  final meanY =
-      points.fold<double>(0, (sum, point) => sum + point.y) / points.length;
-  var covariance = 0.0;
-  var variance = 0.0;
-  for (final point in points) {
-    final stepsDelta = point.steps - meanSteps;
-    covariance += stepsDelta * (point.y - meanY);
-    variance += stepsDelta * stepsDelta;
-  }
-  if (variance <= 0) {
-    final point = points.first;
-    final top = point.y + (point.steps - reference) * fallbackGap / 2;
-    return _StaffGeometry(top: top, lineGap: fallbackGap);
-  }
-  final slope = covariance / variance;
-  if (!slope.isFinite || slope.abs() < 0.1) {
-    final point = points.first;
-    final top = point.y + (point.steps - reference) * fallbackGap / 2;
-    return _StaffGeometry(top: top, lineGap: fallbackGap);
-  }
-  final lineGap = (slope.abs() * 2).clamp(
-    math.max(2.0, fallbackGap * 0.55),
-    math.max(4.0, fallbackGap * 1.8),
-  );
-  final intercept = meanY - slope * meanSteps;
-  final top = intercept + slope * reference;
-  return _StaffGeometry(top: top, lineGap: lineGap.toDouble());
-}
-
-int _diatonicStepsForPitch(MusicPitch pitch) {
-  return (pitch.octave - 4) * 7 + pitch.step.index;
-}
-
-int _compareMeasurePosition(ElementHit a, ElementHit b) {
-  final top = a.bbox.top.compareTo(b.bbox.top);
-  if (top != 0) return top;
-  return a.bbox.left.compareTo(b.bbox.left);
-}
-
-int _compareNotePosition(ElementHit a, ElementHit b) {
-  final left = a.bbox.left.compareTo(b.bbox.left);
-  if (left != 0) return left;
-  return a.bbox.top.compareTo(b.bbox.top);
-}
-
-class _RenderedNoteMatch {
-  const _RenderedNoteMatch({
-    required this.eventIndex,
-    required this.note,
-    required this.hit,
-  });
-
-  final int eventIndex;
-  final MusicNote note;
-  final ElementHit hit;
-}
-
-class _StaffMetricPoint {
-  const _StaffMetricPoint({required this.steps, required this.y});
-
-  final int steps;
-  final double y;
-}
-
-class _StaffGeometry {
-  const _StaffGeometry({required this.top, required this.lineGap});
-
-  final double top;
-  final double lineGap;
-}
-
-Rect _scaledRect(Rect rect, double scale, double pageTop) {
-  return Rect.fromLTRB(
-    rect.left * scale,
-    pageTop + rect.top * scale,
-    rect.right * scale,
-    pageTop + rect.bottom * scale,
-  );
-}
-
-Offset _scaledPoint(Offset point, double scale, double pageTop) {
-  return Offset(point.dx * scale, pageTop + point.dy * scale);
-}
-
-class _VerovioOverlayPainter extends CustomPainter {
-  const _VerovioOverlayPainter({
-    required this.layout,
-    required this.sectionMarks,
-    required this.highlightedMeasureIndex,
-    required this.selectedNoteAddress,
-    required this.playbackMeasure,
-    required this.ghostCenter,
-    required this.ghostRest,
-    required this.ghostLineGap,
-    required this.ghostDurationType,
-    required this.ghostAlter,
-    required this.ghostDots,
-    required this.caret,
-    required this.measureDragTo,
-  });
-
-  final NativeScoreLayout layout;
-  final List<String?> sectionMarks;
-  final int? highlightedMeasureIndex;
-  final ScoreEventAddress? selectedNoteAddress;
-  final int? playbackMeasure;
-  final Offset? ghostCenter;
-  final bool ghostRest;
-  final double ghostLineGap;
-  final String ghostDurationType;
-  final int ghostAlter;
-  final int ghostDots;
-  final Rect? caret;
-  final int? measureDragTo;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final highlight = Paint()
-      ..color = AppColors.accent.withValues(alpha: 0.12)
-      ..style = PaintingStyle.fill;
-    for (final measure in layout.measures) {
-      if (measure.measureIndex == highlightedMeasureIndex ||
-          measure.measureIndex == playbackMeasure ||
-          measure.measureIndex == measureDragTo) {
-        canvas.drawRect(measure.rect, highlight);
-      }
-      final section = measure.measureIndex < sectionMarks.length
-          ? sectionMarks[measure.measureIndex]
-          : null;
-      if (section != null && section.isNotEmpty) {
-        final textPainter = TextPainter(
-          text: TextSpan(
-            text: section,
-            style: const TextStyle(
-              color: AppColors.ink,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-          maxLines: 1,
-        )..layout(maxWidth: math.max(24, measure.rect.width - 8));
-        textPainter.paint(
-          canvas,
-          Offset(measure.rect.left + 20, measure.rect.top + 2),
-        );
-      }
-    }
-    final selectedAddress = selectedNoteAddress;
-    if (selectedAddress != null) {
-      for (final note in layout.notes) {
-        if (note.partIndex != selectedAddress.partIndex ||
-            note.measureIndex != selectedAddress.measureIndex ||
-            note.eventIndex != selectedAddress.eventIndex) {
-          continue;
-        }
-        NativeMeasureBox? measure;
-        for (final candidate in layout.measures) {
-          if (candidate.measureIndex == note.measureIndex) {
-            measure = candidate;
-            break;
-          }
-        }
-        final gap = measure?.lineGapFor(note.staff) ?? nativeStaffLineGap;
-        final rect = Rect.fromCenter(
-          center: note.center,
-          width: gap * 3.4,
-          height: gap * 2.8,
-        );
-        final paint = Paint()
-          ..color = AppColors.accent
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = math.max(1.5, gap * 0.18);
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(rect, Radius.circular(gap * 0.45)),
-          paint,
-        );
-        break;
-      }
-    }
-    final inputCaret = caret;
-    if (inputCaret != null) {
-      final caretPaint = Paint()
-        ..color = AppColors.accent
-        ..style = PaintingStyle.fill;
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(inputCaret, Radius.circular(inputCaret.width)),
-        caretPaint,
-      );
-    }
-    final ghost = ghostCenter;
-    if (ghost == null) return;
-    if (ghostRest) {
-      _drawGhostRest(canvas, ghost);
-    } else {
-      _drawGhostNote(canvas, ghost);
-    }
-  }
-
-  void _drawGhostNote(Canvas canvas, Offset center) {
-    final gap = ghostLineGap.clamp(4.0, 18.0).toDouble();
-    final color = AppColors.accent.withValues(alpha: 0.78);
-    final noteHeadCodePoint = switch (ghostDurationType) {
-      'whole' => 0xE0A2,
-      'half' => 0xE0A3,
-      _ => 0xE0A4,
-    };
-    final noteHead = TextPainter(
-      text: TextSpan(
-        text: String.fromCharCode(noteHeadCodePoint),
-        style: TextStyle(
-          color: color,
-          fontFamily: 'Bravura',
-          fontSize: gap * 4,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    final noteWidth = math.max(gap, noteHead.width);
-    noteHead.paint(
-      canvas,
-      Offset(center.dx - noteHead.width / 2, center.dy - noteHead.height / 2),
-    );
-
-    if (ghostDurationType != 'whole') {
-      final stem = Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = math.max(1.2, gap * 0.16)
-        ..strokeCap = StrokeCap.square;
-      final stemX = center.dx + noteWidth * 0.45;
-      final stemTop = center.dy - gap * 3.4;
-      canvas.drawLine(Offset(stemX, center.dy), Offset(stemX, stemTop), stem);
-      if (ghostDurationType == 'eighth' || ghostDurationType == '16th') {
-        final flag = Path()
-          ..moveTo(stemX, stemTop)
-          ..quadraticBezierTo(
-            stemX + gap * 1.15,
-            stemTop + gap * 0.35,
-            stemX + gap * 0.25,
-            stemTop + gap * 0.95,
-          );
-        canvas.drawPath(flag, stem);
-        if (ghostDurationType == '16th') {
-          final second = Path()
-            ..moveTo(stemX, stemTop + gap * 0.65)
-            ..quadraticBezierTo(
-              stemX + gap * 1.05,
-              stemTop + gap,
-              stemX + gap * 0.25,
-              stemTop + gap * 1.6,
-            );
-          canvas.drawPath(second, stem);
-        }
-      }
-    }
-
-    if (ghostDots > 0) {
-      canvas.drawCircle(
-        Offset(center.dx + noteWidth * 0.85, center.dy),
-        math.max(1.4, gap * 0.18),
-        Paint()..color = color,
-      );
-    }
-
-    if (ghostAlter != 0) {
-      final accidental = TextPainter(
-        text: TextSpan(
-          text: String.fromCharCode(ghostAlter > 0 ? 0xE262 : 0xE260),
-          style: TextStyle(
-            color: color,
-            fontFamily: 'Bravura',
-            fontSize: gap * 1.65,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      accidental.paint(
-        canvas,
-        Offset(
-          center.dx - noteWidth * 0.9 - accidental.width,
-          center.dy - accidental.height * 0.58,
-        ),
-      );
-    }
-  }
-
-  void _drawGhostRest(Canvas canvas, Offset center) {
-    final gap = ghostLineGap.clamp(4.0, 18.0).toDouble();
-    final paint = Paint()
-      ..color = AppColors.accent.withValues(alpha: 0.78)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = math.max(1.2, gap * 0.2)
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final path = Path()
-      ..moveTo(center.dx - gap * 0.7, center.dy - gap * 0.7)
-      ..lineTo(center.dx + gap * 0.6, center.dy - gap * 0.05)
-      ..lineTo(center.dx - gap * 0.35, center.dy + gap * 0.55)
-      ..lineTo(center.dx + gap * 0.75, center.dy + gap * 0.85);
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _VerovioOverlayPainter oldDelegate) {
-    return oldDelegate.layout != layout ||
-        oldDelegate.sectionMarks != sectionMarks ||
-        oldDelegate.highlightedMeasureIndex != highlightedMeasureIndex ||
-        oldDelegate.selectedNoteAddress != selectedNoteAddress ||
-        oldDelegate.playbackMeasure != playbackMeasure ||
-        oldDelegate.ghostCenter != ghostCenter ||
-        oldDelegate.ghostRest != ghostRest ||
-        oldDelegate.ghostLineGap != ghostLineGap ||
-        oldDelegate.ghostDurationType != ghostDurationType ||
-        oldDelegate.ghostAlter != ghostAlter ||
-        oldDelegate.ghostDots != ghostDots ||
-        oldDelegate.caret != caret ||
-        oldDelegate.measureDragTo != measureDragTo;
-  }
-}
-
-class _ScoreError extends StatelessWidget {
-  const _ScoreError({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(
-          message,
-          style: const TextStyle(color: AppColors.ink),
-          textAlign: TextAlign.center,
-        ),
-      ),
-    );
   }
 }

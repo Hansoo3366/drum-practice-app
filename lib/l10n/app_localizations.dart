@@ -3305,7 +3305,7 @@ abstract class AppLocalizations {
   /// Empty playback sequence when the score has no section marks
   ///
   /// In en, this message translates to:
-  /// **'Mark a section on this measure first'**
+  /// **'Tap a bar to start a section'**
   String get noSections;
 
   /// Arrangement sheet when the score has no chord symbols
@@ -3397,6 +3397,438 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Can\'t play'**
   String get playFailed;
+
+  /// Open the one-bar score proofreading editor
+  ///
+  /// In en, this message translates to:
+  /// **'Proofread'**
+  String get proofread;
+
+  /// Current bar in the proofreading editor
+  ///
+  /// In en, this message translates to:
+  /// **'Bar {number} of {count}'**
+  String proofreadBar(int number, int count);
+
+  /// Move the selected note up one staff position
+  ///
+  /// In en, this message translates to:
+  /// **'Step up'**
+  String get noteStepUp;
+
+  /// Move the selected note down one staff position
+  ///
+  /// In en, this message translates to:
+  /// **'Step down'**
+  String get noteStepDown;
+
+  /// Make the selected note sharp
+  ///
+  /// In en, this message translates to:
+  /// **'Sharp'**
+  String get noteSharp;
+
+  /// Make the selected note flat
+  ///
+  /// In en, this message translates to:
+  /// **'Flat'**
+  String get noteFlat;
+
+  /// Make the selected note natural
+  ///
+  /// In en, this message translates to:
+  /// **'Natural'**
+  String get noteNatural;
+
+  /// Delete the selected note; a lone note becomes a rest
+  ///
+  /// In en, this message translates to:
+  /// **'Delete note'**
+  String get deleteNote;
+
+  /// Turn the selected rest into a note
+  ///
+  /// In en, this message translates to:
+  /// **'Make note'**
+  String get restToNote;
+
+  /// Select the previous note in the bar
+  ///
+  /// In en, this message translates to:
+  /// **'Previous note'**
+  String get previousNote;
+
+  /// Select the next note in the bar
+  ///
+  /// In en, this message translates to:
+  /// **'Next note'**
+  String get nextNote;
+
+  /// Go to the previous bar
+  ///
+  /// In en, this message translates to:
+  /// **'Previous bar'**
+  String get previousBar;
+
+  /// Go to the next bar
+  ///
+  /// In en, this message translates to:
+  /// **'Next bar'**
+  String get nextBar;
+
+  /// Example chord symbols in the chord input
+  ///
+  /// In en, this message translates to:
+  /// **'C, F#m7, B♭/D'**
+  String get chordSymbolHint;
+
+  /// Default name for a saved proofreading version
+  ///
+  /// In en, this message translates to:
+  /// **'Proofread {n}'**
+  String proofreadVersionName(int n);
+
+  /// Shown when proofreading is opened with unsaved score changes
+  ///
+  /// In en, this message translates to:
+  /// **'Save or discard your changes first'**
+  String get saveBeforeProofread;
+
+  /// Jump to a bar number in the proofreading editor
+  ///
+  /// In en, this message translates to:
+  /// **'Go to bar'**
+  String get goToBar;
+
+  /// Selected bar range for a playback section
+  ///
+  /// In en, this message translates to:
+  /// **'Bars {start}–{end}'**
+  String sectionBarRange(int start, int end);
+
+  /// Heading of the playback order list
+  ///
+  /// In en, this message translates to:
+  /// **'Order'**
+  String get sectionOrder;
+
+  /// Solo section name
+  ///
+  /// In en, this message translates to:
+  /// **'Solo'**
+  String get sectionSolo;
+
+  /// Interlude section name
+  ///
+  /// In en, this message translates to:
+  /// **'Interlude'**
+  String get sectionInterlude;
+
+  /// First bar of a new section; a second tap picks its last bar
+  ///
+  /// In en, this message translates to:
+  /// **'Bar {number} · tap the last bar too, or pick a name'**
+  String sectionBarPickEnd(int number);
+
+  /// Bars picked for a new section
+  ///
+  /// In en, this message translates to:
+  /// **'Bars {start}–{end} · tap a later line to extend'**
+  String sectionRange(int start, int end);
+
+  /// How to divide the score into sections
+  ///
+  /// In en, this message translates to:
+  /// **'Tap a bar to start a new section there'**
+  String get sectionStartHint;
+
+  /// Section containing the selected bar
+  ///
+  /// In en, this message translates to:
+  /// **'{name} · bars {start}–{end}'**
+  String sectionInfo(String name, int start, int end);
+
+  /// Enter a custom section name
+  ///
+  /// In en, this message translates to:
+  /// **'Custom…'**
+  String get sectionCustom;
+
+  /// Remove the section boundary at the selected bar
+  ///
+  /// In en, this message translates to:
+  /// **'Merge with previous'**
+  String get sectionRemoveBoundary;
+
+  /// Bars before the first named section
+  ///
+  /// In en, this message translates to:
+  /// **'No name'**
+  String get sectionUnnamed;
+
+  /// Custom section name dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Section name'**
+  String get sectionNameTitle;
+
+  /// Playback order is the written order
+  ///
+  /// In en, this message translates to:
+  /// **'Plays as written'**
+  String get playbackAsWritten;
+
+  /// Length of the playback order
+  ///
+  /// In en, this message translates to:
+  /// **'{bars} bars · {time}'**
+  String playbackSummary(int bars, String time);
+
+  /// Bars the playback order leaves out
+  ///
+  /// In en, this message translates to:
+  /// **'{count} bars not played'**
+  String playbackSkipped(int count);
+
+  /// Fill the order with every section once
+  ///
+  /// In en, this message translates to:
+  /// **'Start from the score\'s order'**
+  String get buildOrderFromSections;
+
+  /// Clear the custom playback order
+  ///
+  /// In en, this message translates to:
+  /// **'Play as written'**
+  String get resetPlaybackOrder;
+
+  /// Default name of a performance version
+  ///
+  /// In en, this message translates to:
+  /// **'Performance {n}'**
+  String performanceVersionName(int n);
+
+  /// How many times a section plays
+  ///
+  /// In en, this message translates to:
+  /// **'×{count}'**
+  String repeatTimes(int count);
+
+  /// Leave dialog when only the playback order changed
+  ///
+  /// In en, this message translates to:
+  /// **'Save the playback order before leaving?'**
+  String get sequenceUnsavedBody;
+
+  /// Blocked action while the playback order is unsaved
+  ///
+  /// In en, this message translates to:
+  /// **'Save or discard the playback order first'**
+  String get saveSequenceFirst;
+
+  /// Fetch the server AI review of a converted score as a version
+  ///
+  /// In en, this message translates to:
+  /// **'Get AI correction'**
+  String get fetchAiVersion;
+
+  /// Result of fetching the AI correction
+  ///
+  /// In en, this message translates to:
+  /// **'Getting the AI correction… this can take a few minutes.'**
+  String get aiFetching;
+
+  /// Result of fetching the AI correction
+  ///
+  /// In en, this message translates to:
+  /// **'The AI review found nothing to change.'**
+  String get aiFetchUnchanged;
+
+  /// Result of fetching the AI correction
+  ///
+  /// In en, this message translates to:
+  /// **'The server no longer has this conversion. Convert the score again to get an AI correction.'**
+  String get aiFetchExpired;
+
+  /// Result of fetching the AI correction
+  ///
+  /// In en, this message translates to:
+  /// **'AI review is not available on the server right now.'**
+  String get aiFetchUnavailable;
+
+  /// Result of fetching the AI correction
+  ///
+  /// In en, this message translates to:
+  /// **'Could not get the AI correction.'**
+  String get aiFetchFailed;
+
+  /// Which pass of a written repeat a playback step plays
+  ///
+  /// In en, this message translates to:
+  /// **'Pass {pass}'**
+  String endingPass(int pass);
+
+  /// Structure panel tab: divide the score into sections
+  ///
+  /// In en, this message translates to:
+  /// **'Sections'**
+  String get structureTabSections;
+
+  /// Structure panel tab: set the playback order
+  ///
+  /// In en, this message translates to:
+  /// **'Order'**
+  String get structureTabOrder;
+
+  /// Create a new score version laid out in the playback order
+  ///
+  /// In en, this message translates to:
+  /// **'Make a score in this order'**
+  String get makeScoreFromOrder;
+
+  /// Open the version made earlier from this order
+  ///
+  /// In en, this message translates to:
+  /// **'Open the score in this order'**
+  String get openScoreFromOrder;
+
+  /// The current version is not changed
+  ///
+  /// In en, this message translates to:
+  /// **'This score stays as it is.'**
+  String get scoreFromOrderKeepsThis;
+
+  /// Name of the version made by transposing, with the new key
+  ///
+  /// In en, this message translates to:
+  /// **'Transposed to {key}'**
+  String transposedVersionName(String key);
+
+  /// Menu action that makes a new version with a piano part (right-hand chords, left-hand bass) under the melody
+  ///
+  /// In en, this message translates to:
+  /// **'Add a piano part'**
+  String get makeThreeStaff;
+
+  /// Name of the version made by adding a piano part under the melody
+  ///
+  /// In en, this message translates to:
+  /// **'With piano'**
+  String get threeStaffVersionName;
+
+  /// Shown when a piano part is asked for a score without chord symbols
+  ///
+  /// In en, this message translates to:
+  /// **'There are no chord symbols to make a piano part from'**
+  String get threeStaffNeedsChords;
+
+  /// Shown when a piano part is asked for a score that has several staves or parts
+  ///
+  /// In en, this message translates to:
+  /// **'A piano part can only be added to a one-staff melody'**
+  String get threeStaffNeedsMelody;
+
+  /// Name of the generated piano part in the score
+  ///
+  /// In en, this message translates to:
+  /// **'Piano'**
+  String get pianoPartName;
+
+  /// Heading for how the right hand of the generated piano part plays
+  ///
+  /// In en, this message translates to:
+  /// **'Right hand'**
+  String get pianoPattern;
+
+  /// Accompaniment pattern: chord struck once and held
+  ///
+  /// In en, this message translates to:
+  /// **'Held'**
+  String get pianoPatternHeld;
+
+  /// Accompaniment pattern: chord struck on every beat
+  ///
+  /// In en, this message translates to:
+  /// **'Every beat'**
+  String get pianoPatternBeats;
+
+  /// Accompaniment pattern: broken chord in eighth notes
+  ///
+  /// In en, this message translates to:
+  /// **'Broken'**
+  String get pianoPatternBroken;
+
+  /// Heading for where the right hand of the generated piano part lies
+  ///
+  /// In en, this message translates to:
+  /// **'Register'**
+  String get pianoRegister;
+
+  /// Right-hand register around middle C
+  ///
+  /// In en, this message translates to:
+  /// **'Middle'**
+  String get pianoRegisterMiddle;
+
+  /// Right-hand register about a fourth below the middle one
+  ///
+  /// In en, this message translates to:
+  /// **'Low'**
+  String get pianoRegisterLow;
+
+  /// Button that asks the server for an accompaniment style per section and chord symbols to check
+  ///
+  /// In en, this message translates to:
+  /// **'AI suggestion'**
+  String get pianoAskAdvice;
+
+  /// Shown when the AI accompaniment suggestion could not be fetched
+  ///
+  /// In en, this message translates to:
+  /// **'No suggestion available right now'**
+  String get pianoAdviceFailed;
+
+  /// Heading for the suggested accompaniment styles of sections
+  ///
+  /// In en, this message translates to:
+  /// **'By section'**
+  String get pianoSectionStyles;
+
+  /// Button that drops the per-section styles so the chosen style applies to the whole score
+  ///
+  /// In en, this message translates to:
+  /// **'One style for all'**
+  String get pianoOneStyle;
+
+  /// One suggested section style
+  ///
+  /// In en, this message translates to:
+  /// **'From bar {bar}: {pattern} · {register}'**
+  String pianoSectionStyle(int bar, String pattern, String register);
+
+  /// Heading for chord symbols the AI suggests changing
+  ///
+  /// In en, this message translates to:
+  /// **'Chords to check'**
+  String get pianoChordFixes;
+
+  /// Shown when the AI suggests no chord changes
+  ///
+  /// In en, this message translates to:
+  /// **'None'**
+  String get pianoNoChordFixes;
+
+  /// One suggested chord change
+  ///
+  /// In en, this message translates to:
+  /// **'Bar {bar}: {current} → {suggested}'**
+  String pianoChordFix(int bar, String current, String suggested);
+
+  /// Button that makes the version with the piano part
+  ///
+  /// In en, this message translates to:
+  /// **'Make'**
+  String get pianoMake;
 }
 
 class _AppLocalizationsDelegate

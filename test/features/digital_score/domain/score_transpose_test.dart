@@ -148,6 +148,45 @@ void main() {
       expect(canTransposeScore(highest, semitones: 1), isFalse);
     });
   });
+
+  test('chord symbols never get a double flat or double sharp', () {
+    // A major down a major third to F: the letter shift takes F to D, so an
+    // F flat chord would become D double flat; it is written as C.
+    final moved = transposePitchClass(
+      step: PitchStep.f,
+      alter: -1,
+      semitones: -4,
+      letterShift: 5,
+    );
+    expect((moved.step, moved.alter), (PitchStep.c, 0));
+    final sharp = simpleChordSpelling(PitchStep.f, 2);
+    expect((sharp.step, sharp.alter), (PitchStep.g, 0));
+    final plain = simpleChordSpelling(PitchStep.e, 1);
+    expect((plain.step, plain.alter), (PitchStep.e, 1));
+  });
+
+  test('names the key of every bar, including minor keys', () {
+    MusicMeasure bar(int fifths, [String? mode]) => MusicMeasure(
+      number: '1',
+      attributes: MusicAttributes(
+        divisions: 1,
+        keyFifths: fifths,
+        keyMode: mode,
+      ),
+      events: const [],
+    );
+    final score = MusicScore(
+      parts: [
+        MusicPart(
+          id: 'P1',
+          name: 'Piano',
+          measures: [bar(-1), bar(-2, 'minor'), bar(1), bar(4, 'minor')],
+        ),
+      ],
+    );
+
+    expect(measureKeyNames(score), ['F', 'Gm', 'G', 'C♯m']);
+  });
 }
 
 MusicScore _score({
