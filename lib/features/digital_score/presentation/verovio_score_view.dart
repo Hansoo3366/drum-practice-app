@@ -10,7 +10,9 @@ import 'package:flutter_notemus/flutter_notemus.dart' as nm;
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
 import 'package:page_a_diddle/core/score_engine/alphatab_bridge.dart';
+import 'package:page_a_diddle/features/digital_score/data/engraved_pdf_exporter.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
+import 'package:page_a_diddle/features/digital_score/data/score_sound_font.dart';
 import 'package:page_a_diddle/features/digital_score/domain/arrangement_profile.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/native_score_layout.dart';
@@ -171,7 +173,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
 
   /// The MIDI being made or already made, and what it was made for; see
   /// [_playbackMidi].
-  Future<nm.MidiSequence>? _midi;
+  Future<PlaybackMidi>? _midi;
   ({
     String? xml,
     MusicScore? score,
@@ -288,7 +290,16 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
 
   Future<void> _ensureAudio() async {
     try {
-      final ok = await _audio.initialize(primarySoundFontPath: '');
+      // With the SoundFont the parts sound like their instruments; without
+      // it (not bundled, or not readable) the synthesizer uses waveforms.
+      final ok = await _audio.initialize(
+        primarySoundFontPath: await scoreSoundFontPath(),
+      );
+      if (kDebugMode && ok) {
+        debugPrint(
+          'Score audio: ${await _audio.hasSoundFont() ? 'SoundFont' : 'waveforms'}',
+        );
+      }
       if (!mounted) return;
       _audioReady = ok;
       if (!ok) widget.onPlayerIssue?.call();
@@ -316,7 +327,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       _parseError = null;
       _pages = const <_VerovioPage>[];
       _layout = null;
-      unawaited(_renderWithVerovio(visualXml, generation));
+      _rendering = _renderWithVerovio(visualXml, generation);
     } catch (_) {
       _engraved = null;
       _parseError = '악보를 표시할 수 없습니다.';
@@ -461,6 +472,59 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       }
       setState(() {});
     }
+  }
+
+  /// The engraving of the pages on screen, while it runs.
+  Future<void> _rendering = Future.value();
+
+  /// Exports wait for each other: the engraver holds one document at a
+  /// time.
+  Future<void> _exportQueue = Future.value();
+
+  Future<T> _serial<T>(Future<T> Function() job) {
+    final result = _exportQueue.then((_) => job());
+    _exportQueue = result.then<void>((_) {}, onError: (Object _) {});
+    return result;
+  }
+
+  /// Engraves [xml] on A4 pages for export, whatever the screen shows: the
+  /// same engraver and options as the viewer, so the file looks like the
+  /// screen. The pages on screen are not touched.
+  Future<List<EngravedPage>> engravePages(String xml) {
+    return _serial(() async {
+      // Not while the screen's own pages are being engraved.
+      await _rendering;
+      const timeout = _verovioOperationTimeout;
+      final service = await _getService().timeout(timeout);
+      await service
+          .setOptionsJson(
+            jsonEncode({
+              ..._verovioOptions,
+              if (_writtenLineStarts(xml).isNotEmpty) 'breaks': 'line',
+            }),
+          )
+          .timeout(timeout);
+      await service.loadData(xml).timeout(timeout);
+      final pageCount = await service.pageCount.timeout(timeout);
+      final pages = <EngravedPage>[];
+      for (var pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+        final svg = await service.renderToSvg(pageIndex + 1).timeout(timeout);
+        final box = RegExp(
+          r'<svg\b[^>]*\bviewBox="([^"]+)"',
+        ).firstMatch(svg)?.group(1);
+        final size = box == null ? null : _parseSvgViewBoxSize(box);
+        if (size == null) continue;
+        pages.add(
+          EngravedPage(
+            svg: normalizeVerovioSvgForFlutter(svg),
+            labels: extractVerovioTextLabels(svg),
+            width: size.width,
+            height: size.height,
+          ),
+        );
+      }
+      return pages;
+    });
   }
 
   Future<VerovioAsyncService> _getService() async {
@@ -859,7 +923,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     }
     final nm.MidiSequence sequence;
     try {
-      sequence = await _playbackMidi();
+      final midi = await _playbackMidi();
+      sequence = midi.sequence;
+      await _setInstruments(midi);
       await _bridge.uploadAndStart(sequence, includeMetronome: false);
     } catch (_) {
       widget.onPlayerIssue?.call();
@@ -903,7 +969,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   /// The playback MIDI, made in the background as soon as the player shows
   /// and kept while the score, order and accompaniment stay the same, so
   /// play, pause and seek do not make it again.
-  Future<nm.MidiSequence> _playbackMidi() {
+  Future<PlaybackMidi> _playbackMidi() {
     final bpm = (widget.score.tempoBpm ?? 120).round();
     final current = _midi;
     if (current != null &&
@@ -930,13 +996,13 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     );
     _midi = future;
     future.then(
-      (sequence) {
+      (midi) {
         // The exact length replaces the estimate while nothing plays.
         if (!mounted || !identical(_midi, future)) return;
         if (widget.playback.state.playing) return;
         widget.playback.replaceState(
           widget.playback.state.copyWith(
-            durationMs: midiSequenceDurationMs(sequence, fallbackBpm: bpm),
+            durationMs: midiSequenceDurationMs(midi.sequence, fallbackBpm: bpm),
           ),
         );
         setState(() {});
@@ -947,6 +1013,23 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       },
     );
     return future;
+  }
+
+  /// Tells the synthesizer which instrument plays each channel (the piano
+  /// unless the score names another, as a generated strings or brass part
+  /// does) and how loud, so the accompaniment stays behind the melody.
+  Future<void> _setInstruments(PlaybackMidi midi) async {
+    try {
+      for (var channel = 0; channel < 16; channel++) {
+        await _audio.setChannelProgram(
+          channel: channel,
+          program: midi.programs[channel] ?? 0,
+          volume: midi.levels[channel] ?? 1.0,
+        );
+      }
+    } on Object {
+      // A synthesizer without instruments plays every part alike.
+    }
   }
 
   Future<bool> _stop() async {

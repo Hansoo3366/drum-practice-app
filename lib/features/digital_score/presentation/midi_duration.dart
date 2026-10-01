@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter_notemus/flutter_notemus.dart' as nm;
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
@@ -8,6 +9,7 @@ import 'package:page_a_diddle/features/digital_score/domain/arrangement_profile.
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/performance_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
+import 'package:xml/xml.dart';
 
 /// Length of [sequence] in milliseconds, following its tempo events, so the
 /// play head and the stop point match the audio rather than an estimate.
@@ -149,13 +151,152 @@ nm.MidiSequence playbackMidi(
   return mergeTiedNotes(sequence, staves);
 }
 
+/// The MIDI of a score with the instrument of each channel.
+class PlaybackMidi {
+  const PlaybackMidi(this.sequence, this.programs, this.levels);
+
+  final nm.MidiSequence sequence;
+
+  /// General MIDI program (from 0) by MIDI channel; a channel not listed
+  /// plays the piano.
+  final Map<int, int> programs;
+
+  /// Volume by MIDI channel, 1.0 for full and for a channel not listed.
+  final Map<int, double> levels;
+}
+
+/// General MIDI program (from 0) of every staff of [musicXml] in score
+/// order: that of its part's `<midi-program>`, the piano without one or for
+/// a sung part.
+List<int> staffPrograms(String musicXml) {
+  final root = XmlDocument.parse(musicXml).rootElement;
+  final byPart = <String?, int>{};
+  for (final part in root.findAllElements('score-part')) {
+    final written = int.tryParse(
+      part.findAllElements('midi-program').firstOrNull?.innerText.trim() ?? '',
+    );
+    // Written from 1. A sung part (choir aahs, voice oohs, synth voice:
+    // 52-54) is played on the piano: sampled voices blur a quick melody.
+    final program = ((written ?? 1) - 1).clamp(0, 127);
+    byPart[part.getAttribute('id')] = program >= 52 && program <= 54
+        ? 0
+        : program;
+  }
+  final programs = <int>[];
+  for (final part in root.findElements('part')) {
+    var staves = 1;
+    for (final element in part.findAllElements('staves')) {
+      final count = int.tryParse(element.innerText.trim()) ?? 1;
+      if (count > staves) staves = count;
+    }
+    for (var staff = 0; staff < staves; staff++) {
+      programs.add(byPart[part.getAttribute('id')] ?? 0);
+    }
+  }
+  return programs;
+}
+
+/// How loud each staff of [musicXml] plays next to the first part (1.0), in
+/// score order: the parts under it accompany, and instruments that hold
+/// their notes at full strength (organ, strings, pads) cover more than a
+/// piano that fades.
+List<double> staffLevels(String musicXml) {
+  final root = XmlDocument.parse(musicXml).rootElement;
+  final programs = staffPrograms(musicXml);
+  final levels = <double>[];
+  var first = true;
+  for (final part in root.findElements('part')) {
+    var staves = 1;
+    for (final element in part.findAllElements('staves')) {
+      final count = int.tryParse(element.innerText.trim()) ?? 1;
+      if (count > staves) staves = count;
+    }
+    for (var staff = 0; staff < staves; staff++) {
+      final program = programs[levels.length];
+      // General MIDI families: organs 16-23, strings and ensembles 40-55,
+      // brass 56-63, pads 88-95.
+      final sustained =
+          (program >= 16 && program <= 23) ||
+          (program >= 40 && program <= 55) ||
+          (program >= 88 && program <= 95);
+      final brass = program >= 56 && program <= 63;
+      levels.add(
+        first
+            ? 1.0
+            : sustained
+            ? 0.22
+            : brass
+            ? 0.35
+            : 0.5,
+      );
+    }
+    first = false;
+  }
+  return levels;
+}
+
+/// The program of each channel of [sequence], made from [musicXml]: the
+/// mapper writes one track per staff, in score order.
+Map<int, int> channelPrograms(nm.MidiSequence sequence, String musicXml) =>
+    _byChannel(sequence, staffPrograms(musicXml));
+
+/// The level of each channel of [sequence]; see [staffLevels].
+Map<int, double> channelLevels(nm.MidiSequence sequence, String musicXml) =>
+    _byChannel(sequence, staffLevels(musicXml));
+
+Map<int, T> _byChannel<T>(nm.MidiSequence sequence, List<T> staves) {
+  final programs = <int, T>{};
+  var staff = 0;
+  for (final track in sequence.tracks) {
+    final name = track.name.toLowerCase();
+    if (name == 'conductor' || name == 'metronome') continue;
+    if (staff < staves.length) {
+      for (final event in track.events) {
+        if (event.type == nm.MidiEventType.noteOn) {
+          programs[event.channel] = staves[staff];
+        }
+      }
+    }
+    staff++;
+  }
+  return programs;
+}
+
+/// A Standard MIDI File of [midi] in which every channel is set to its
+/// instrument, so other programs play the parts as this one does.
+Uint8List playbackMidiFile(PlaybackMidi midi) {
+  final sequence = midi.sequence;
+  return nm.MidiFileWriter.write(
+    nm.MidiSequence(
+      ticksPerQuarter: sequence.ticksPerQuarter,
+      tracks: [
+        for (final track in sequence.tracks)
+          nm.MidiTrack(
+            name: track.name,
+            channel: track.channel,
+            events: [
+              for (final event in track.events)
+                event.type == nm.MidiEventType.programChange
+                    ? nm.MidiEvent.programChange(
+                        tick: event.tick,
+                        channel: event.channel,
+                        program: midi.programs[event.channel] ?? 0,
+                      )
+                    : event,
+            ],
+          ),
+      ],
+    ),
+  );
+}
+
 /// The MIDI the player plays for [score]: its bars in [performanceMeasureMap]
 /// order, the order the play head follows and the expanded copy uses.
 ///
 /// Made from the file [engravingXml] when it is on screen and no
 /// accompaniment is added, so tuplets, ties and every voice play as written;
 /// otherwise from the editing model.
-nm.MidiSequence buildPlaybackMidi({
+PlaybackMidi buildPlaybackMidi({
   required String? engravingXml,
   required MusicScore score,
   required PlaybackSequence sequence,
@@ -182,16 +323,21 @@ nm.MidiSequence buildPlaybackMidi({
       ),
     ),
   );
-  return playbackMidi(
+  final midi = playbackMidi(
     playing,
     options: nm.MidiGenerationOptions(defaultBpm: bpm, includeMetronome: false),
     codec: codec,
+  );
+  return PlaybackMidi(
+    midi,
+    channelPrograms(midi, playing),
+    channelLevels(midi, playing),
   );
 }
 
 /// [buildPlaybackMidi] off the UI isolate: reading a long score takes long
 /// enough to stall the screen.
-Future<nm.MidiSequence> buildPlaybackMidiInBackground({
+Future<PlaybackMidi> buildPlaybackMidiInBackground({
   required String? engravingXml,
   required MusicScore score,
   required PlaybackSequence sequence,

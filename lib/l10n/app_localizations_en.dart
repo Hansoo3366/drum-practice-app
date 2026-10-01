@@ -1946,18 +1946,18 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get makeThreeStaff => 'Add a piano part';
+  String get makeThreeStaff => 'Make an instrument score';
 
   @override
-  String get threeStaffVersionName => 'With piano';
+  String get threeStaffVersionName => 'With accompaniment';
 
   @override
   String get threeStaffNeedsChords =>
-      'There are no chord symbols to make a piano part from';
+      'There are no chord symbols to make an accompaniment from';
 
   @override
   String get threeStaffNeedsMelody =>
-      'A piano part can only be added to a one-staff melody';
+      'Accompaniment parts can only be added to a one-staff melody';
 
   @override
   String get pianoPartName => 'Piano';
@@ -2013,4 +2013,49 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get pianoMake => 'Make';
+
+  @override
+  String get accompanimentInstruments => 'Instruments';
+
+  @override
+  String get organPartName => 'Organ';
+
+  @override
+  String get stringsPartName => 'Strings';
+
+  @override
+  String get padPartName => 'Pad';
+
+  @override
+  String get brassPartName => 'Brass';
+
+  @override
+  String get pianoPatternAuto => 'By section';
+
+  @override
+  String get accompanimentOutput => 'Result';
+
+  @override
+  String get accompanimentSeparateScores => 'One score per instrument';
+
+  @override
+  String get accompanimentOneScore => 'All in one score';
+
+  @override
+  String get accompanimentDensity => 'Density';
+
+  @override
+  String get accompanimentDensityLight => 'Light';
+
+  @override
+  String get accompanimentDensityNormal => 'Normal';
+
+  @override
+  String get accompanimentDensityFull => 'Full';
+
+  @override
+  String get pianoSplitPoint => 'Right hand lowest note';
+
+  @override
+  String get pianoSplitAuto => 'Auto';
 }

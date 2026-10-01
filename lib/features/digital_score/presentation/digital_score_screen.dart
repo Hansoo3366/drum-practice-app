@@ -14,6 +14,7 @@ import 'package:page_a_diddle/core/score_engine/alphatab_bridge.dart';
 import 'package:page_a_diddle/core/storage/song_file_storage.dart';
 import 'package:page_a_diddle/features/digital_score/data/digital_score_data.dart';
 import 'package:page_a_diddle/features/digital_score/data/digital_score_editor_service.dart';
+import 'package:page_a_diddle/features/digital_score/data/engraved_pdf_exporter.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_ai_reviewer.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_service.dart';
@@ -35,6 +36,7 @@ import 'package:page_a_diddle/features/digital_score/domain/three_staff_arrangem
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_transpose.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/arrangement_panel.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/midi_duration.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/omr_correction_screen.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_part_sheet.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_score_view.dart';
@@ -345,13 +347,15 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     setState(() => _exporting = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final exported = await const ScoreExportService().encode(
-        written: written,
-        title: data.song.title,
-        sequence: _sequence,
-        arrangement: _arrangement,
-        kind: kind,
-      );
+      final exported =
+          await _exportFromFile(data, written, kind) ??
+          await const ScoreExportService().encode(
+            written: written,
+            title: data.song.title,
+            sequence: _sequence,
+            arrangement: _arrangement,
+            kind: kind,
+          );
       final savedPath = await FilePicker.saveFile(
         dialogTitle: exported.fileName,
         fileName: exported.fileName,
@@ -367,6 +371,96 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     } finally {
       if (mounted) setState(() => _exporting = false);
     }
+  }
+
+  /// The export made from the version's own file, so nothing the editing
+  /// model does not hold is lost (tuplets, dynamics, generated instrument
+  /// parts and their sounds): MusicXML as written with the user's sections,
+  /// in playing order when an order is set; MIDI as it plays; PDF as the
+  /// viewer engraves it, every part and staff.
+  ///
+  /// Null when there is no file to export from (unsaved edits, playback
+  /// accompaniment on, a project export): the model is exported then.
+  Future<ScoreExport?> _exportFromFile(
+    DigitalScoreData data,
+    MusicScore written,
+    ScoreExportKind kind,
+  ) async {
+    final editor = _editor;
+    if (editor == null ||
+        kind == ScoreExportKind.project ||
+        _editing ||
+        editor.isDirty ||
+        _arrangement.isNotOff) {
+      return null;
+    }
+    final l10n = context.l10n;
+    final view = _scoreViewKey.currentState;
+    final String source;
+    try {
+      source = await _activeSourceXml(data, editor);
+    } on Object {
+      return null;
+    }
+    final title = safeExportFileName(data.song.title);
+    if (kind == ScoreExportKind.midi) {
+      final midi = await buildPlaybackMidiInBackground(
+        engravingXml: source,
+        score: written,
+        sequence: _sequence,
+        arrangement: ArrangementProfile.off,
+        bpm: (written.tempoBpm ?? 120).round(),
+      );
+      return ScoreExport(
+        bytes: playbackMidiFile(midi),
+        fileName: '$title.mid',
+        extension: 'mid',
+      );
+    }
+    // The score in playing order when the user set one, with the sections
+    // at the bars where each step starts.
+    var xml = source;
+    var score = written;
+    var sequence = _sequence;
+    if (_sequence.steps.isNotEmpty) {
+      xml = expandMusicXml(source, performanceMeasureMap(written, _sequence));
+      score = const MusicXmlCodec().decodeXml(xml);
+      sequence = PlaybackSequence(
+        marks: performanceSectionMarks(written, _sequence),
+      );
+    }
+    if (sequence.marks.isNotEmpty) {
+      xml = withSectionRehearsals(xml, [
+        for (final section in scoreSections(score, sequence))
+          if (section.name.isNotEmpty && !section.continued)
+            (
+              measureIndex: section.startMeasureIndex,
+              label: scoreSectionLabel(l10n, section),
+            ),
+      ]);
+    }
+    if (kind == ScoreExportKind.musicXml) {
+      return ScoreExport(
+        bytes: Uint8List.fromList(utf8.encode(xml)),
+        fileName: '$title.musicxml',
+        extension: 'musicxml',
+      );
+    }
+    if (view == null) return null;
+    final pages = await view.engravePages(xml);
+    if (pages.isEmpty) return null;
+    return ScoreExport(
+      bytes: await const EngravedPdfExporter().export(
+        pages,
+        title: data.song.title,
+        text: await rootBundle.load('assets/fonts/SUIT-Regular.ttf'),
+        fallbacks: [
+          await rootBundle.load('assets/fonts/JetBrainsMono-Regular.ttf'),
+        ],
+      ),
+      fileName: '$title.pdf',
+      extension: 'pdf',
+    );
   }
 
   void _apply(
@@ -1352,8 +1446,8 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       final shown = await _activeSourceXml(data, editor);
       // A score that already has a generated piano part gets a new one, in
       // the style chosen now, from its melody.
-      final earlier = generatedPianoPart(shown);
-      final source = withoutGeneratedPianoPart(shown);
+      final earlier = generatedAccompaniment(shown);
+      final source = withoutGeneratedAccompaniment(shown);
       final obstacle = analyzeLeadSheet(source).obstacle;
       if (obstacle != null) {
         messenger.showSnackBar(
@@ -1372,32 +1466,67 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       final request = await showPianoPartSheet(
         context,
         advise: () => _arrangementAdvice(source, score),
-        initial: earlier?.plan ?? const AccompanimentPlan(),
+        initial: earlier?.setup ?? const AccompanimentSetup(),
+        roles: {
+          for (final section in scoreSections(score, _sequence))
+            if (!section.continued)
+              section.startMeasureIndex: SectionRole.fromSectionName(
+                section.name,
+              ),
+        },
       );
       if (!mounted || request == null) return;
       setState(() => _saving = true);
       final service = ref.read(digitalScoreEditorServiceProvider);
-      final catalog = await service.addXmlVersion(
-        songId: data.song.id,
-        musicXml: threeStaffMusicXml(
-          applyChordCorrections(source, request.corrections),
-          pianoName: l10n.pianoPartName,
-          plan: request.plan,
-        ),
-        catalog: _versionCatalog,
-        name: _uniqueVersionName(l10n.threeStaffVersionName),
-      );
-      // Same bars: the sections and order carry over.
-      await service.saveSequence(
-        songId: data.song.id,
-        versionId: catalog.activeId,
-        sequence: _sequence,
-      );
+      final corrected = applyChordCorrections(source, request.corrections);
+      final names = {
+        for (final instrument in request.instruments)
+          instrument: accompanimentInstrumentLabel(l10n, instrument),
+      };
+      // One score per instrument, named after it, or one for them all.
+      final scores = request.separate
+          ? [
+              for (final instrument in request.instruments)
+                (
+                  name: names[instrument]!,
+                  xml: accompanimentMusicXml(
+                    corrected,
+                    setup: request.setupFor(instrument),
+                    names: names,
+                  ),
+                ),
+            ]
+          : [
+              (
+                name: l10n.threeStaffVersionName,
+                xml: accompanimentMusicXml(
+                  corrected,
+                  setup: request.setup,
+                  names: names,
+                ),
+              ),
+            ];
+      var catalog = _versionCatalog;
+      for (final made in scores) {
+        catalog = await service.addXmlVersion(
+          songId: data.song.id,
+          musicXml: made.xml,
+          catalog: catalog,
+          name: _uniqueVersionName(made.name, catalog: catalog),
+        );
+        // Same bars: the sections and order carry over.
+        await service.saveSequence(
+          songId: data.song.id,
+          versionId: catalog.activeId,
+          sequence: _sequence,
+        );
+      }
       if (!mounted) return;
+      final opened = catalog.activeId;
       setState(() {
         _versionCatalog = catalog.copyWith(activeId: _activeVersionId);
       });
-      await _switchVersion(versionId: catalog.activeId, data: data);
+      await _switchVersion(versionId: opened, data: data);
       messenger.showSnackBar(SnackBar(content: Text(l10n.scoreSaved)));
     } on Object {
       messenger.showSnackBar(SnackBar(content: Text(l10n.saveFailed)));
@@ -1432,8 +1561,10 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   }
 
   /// [name], or "[name] 2", "[name] 3" when a version has that name.
-  String _uniqueVersionName(String name) {
-    final used = {for (final version in _versionCatalog.versions) version.name};
+  String _uniqueVersionName(String name, {ScoreVersionCatalog? catalog}) {
+    final used = {
+      for (final version in (catalog ?? _versionCatalog).versions) version.name,
+    };
     if (!used.contains(name)) return name;
     var number = 2;
     while (used.contains('$name $number')) {

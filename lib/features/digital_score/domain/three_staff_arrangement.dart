@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:xml/xml.dart';
 
+part 'instrument_idioms.dart';
+
 /// Why a score cannot be made into a melody + piano score.
 enum ThreeStaffObstacle { noMeasures, severalParts, severalStaves, noChords }
 
@@ -55,6 +57,9 @@ class LeadSheetAnalysis {
 
 /// How the right hand plays a chord.
 enum AccompanimentPattern {
+  /// As the section asks: see [SectionRole].
+  auto,
+
   /// Struck once and held until the next chord.
   held,
 
@@ -76,7 +81,7 @@ enum AccompanimentRegister {
 
 class AccompanimentStyle {
   const AccompanimentStyle({
-    this.pattern = AccompanimentPattern.held,
+    this.pattern = AccompanimentPattern.auto,
     this.register = AccompanimentRegister.middle,
   });
 
@@ -184,33 +189,173 @@ LeadSheetAnalysis analyzeLeadSheet(String xml) {
   );
 }
 
-/// Adds a piano part under the melody of a lead sheet: the right hand holds
-/// each chord symbol's chord under the melody, the left hand its bass note.
+/// An instrument an accompaniment part can be made for.
+enum AccompanimentInstrument {
+  /// Two staves: chords in the right hand, the bass in the left, in the
+  /// pattern and register of an [AccompanimentPlan].
+  piano,
+
+  /// Two staves of held chords and bass, tied on while the chord stays.
+  organ,
+
+  /// Two staves: held chords above middle C and the bass, tied on while
+  /// the chord stays.
+  strings,
+
+  /// One staff of held chords around middle C.
+  pad,
+
+  /// One staff: a three-part hit of one beat on every chord.
+  brass,
+}
+
+/// Which parts to make, and how the piano plays.
+/// How many notes a part plays at once.
+enum AccompanimentDensity {
+  /// At most three notes in a chord, nothing doubled.
+  light,
+
+  /// As the section asks.
+  normal,
+
+  /// Full chords, the top or the bass doubled at the octave.
+  full,
+}
+
+class AccompanimentSetup {
+  const AccompanimentSetup({
+    this.instruments = const [AccompanimentInstrument.piano],
+    this.piano = const AccompanimentPlan(),
+    this.roles = const {},
+    this.density = AccompanimentDensity.normal,
+    this.splitPoint,
+  });
+
+  /// In score order, each at most once.
+  final List<AccompanimentInstrument> instruments;
+  final AccompanimentPlan piano;
+
+  /// What each stretch of the song is, by the index of its first bar; the
+  /// role holds until the next entry. Every instrument plays a verse
+  /// differently from a chorus.
+  final Map<int, SectionRole> roles;
+  final AccompanimentDensity density;
+
+  /// The lowest note (MIDI number) the piano's right hand may play: what
+  /// lies under it belongs to the left hand's staff. Null leaves it to the
+  /// register.
+  final int? splitPoint;
+
+  SectionRole roleAt(int measureIndex) {
+    int? start;
+    for (final index in roles.keys) {
+      if (index <= measureIndex && (start == null || index > start)) {
+        start = index;
+      }
+    }
+    return start == null ? SectionRole.unknown : roles[start]!;
+  }
+}
+
+/// What a stretch of a song is for, which decides how each instrument plays
+/// it: sparse in a verse, full in a chorus, resting in a bridge.
+enum SectionRole {
+  intro,
+  verse,
+  preChorus,
+  chorus,
+  bridge,
+  interlude,
+  solo,
+  outro,
+
+  /// No section named, or a name that says nothing: a middle way.
+  unknown;
+
+  /// The role of a section as the structure panel names it ("INTRO",
+  /// "PRE", a rehearsal mark such as "Verse 2", or a Korean name of the
+  /// user's own).
+  static SectionRole fromSectionName(String name) {
+    // "VERSE 2", "CHORUS1": the number says which, not what.
+    final plain = name
+        .trim()
+        .toUpperCase()
+        .replaceAll(RegExp(r'[\s\-_.]+'), '')
+        .replaceAll(RegExp(r'\d+$'), '');
+    return switch (plain) {
+      'INTRO' || 'IN' || '인트로' || '전주' => intro,
+      'VERSE' || 'V' || '벌스' || '절' => verse,
+      'PRE' || 'PRECHORUS' || '프리' || '프리코러스' => preChorus,
+      'CHORUS' || 'CH' || '코러스' || '후렴' => chorus,
+      'BRIDGE' || 'BR' || '브리지' || '브릿지' => bridge,
+      'INTERLUDE' || 'INTER' || '간주' => interlude,
+      'SOLO' || '솔로' => solo,
+      'OUTRO' || 'OUT' || 'ENDING' || '아웃트로' || '엔딩' || '후주' => outro,
+      _ => unknown,
+    };
+  }
+}
+
+/// Adds accompaniment parts under the melody of a lead sheet, made from its
+/// chord symbols: for the piano the right hand holds each chord and the left
+/// hand its bass note; see [AccompanimentInstrument] for the others.
 ///
 /// The melody part stays exactly as written, with its lyrics, chord symbols,
-/// repeats and line breaks. The piano part has the same bars, keys, times and
-/// barlines. Chords are struck again at every barline and held until the next
-/// chord symbol; "N.C." and the bars before the first symbol are rests. A
-/// chord lasting less than a beat is passed over, and a chord tone a semitone
-/// from a held melody note is left out.
+/// repeats and line breaks. The new parts have the same bars, keys, times and
+/// barlines. "N.C." and the bars before the first symbol are rests. A chord
+/// lasting less than a beat is passed over, and a chord tone a semitone from
+/// a held melody note is left out.
 ///
-/// Throws a [FormatException] when [analyzeLeadSheet] finds an obstacle.
+/// [names] are the part names shown in the score.
 ///
-/// The style is written into the file, so the part can be made again from
-/// an edited melody; see [regeneratePianoPart].
-String threeStaffMusicXml(
+/// Throws a [FormatException] when [analyzeLeadSheet] finds an obstacle or
+/// no instrument is asked for.
+///
+/// What was made is written into the file, so the parts can be made again
+/// from an edited melody; see [regenerateAccompaniment].
+String accompanimentMusicXml(
   String xml, {
-  String pianoName = 'Piano',
-  AccompanimentPlan plan = const AccompanimentPlan(),
+  AccompanimentSetup setup = const AccompanimentSetup(),
+  Map<AccompanimentInstrument, String> names = const {},
 }) {
   final obstacle = analyzeLeadSheet(xml).obstacle;
   if (obstacle != null) {
     throw FormatException('Not a lead sheet: ${obstacle.name}');
   }
-  return _withPianoPart(xml, pianoName: pianoName, plan: plan);
+  if (setup.instruments.isEmpty) {
+    throw const FormatException('No instrument to make a part for.');
+  }
+  return _withParts(xml, setup: setup, names: names);
 }
 
-/// The piano part [threeStaffMusicXml] put into a score, as recorded in it.
+/// [accompanimentMusicXml] with a piano part only: a melody + piano score
+/// of three staves.
+String threeStaffMusicXml(
+  String xml, {
+  String pianoName = 'Piano',
+  AccompanimentPlan plan = const AccompanimentPlan(),
+}) => accompanimentMusicXml(
+  xml,
+  setup: AccompanimentSetup(piano: plan),
+  names: {AccompanimentInstrument.piano: pianoName},
+);
+
+/// The parts [accompanimentMusicXml] put into a score, as recorded in it.
+class GeneratedAccompaniment {
+  const GeneratedAccompaniment({
+    required this.setup,
+    required this.names,
+    required this.partIds,
+  });
+
+  final AccompanimentSetup setup;
+  final Map<AccompanimentInstrument, String> names;
+
+  /// Part ids in the order of [AccompanimentSetup.instruments].
+  final List<String> partIds;
+}
+
+/// The generated piano part of a score, as recorded in it.
 class GeneratedPianoPart {
   const GeneratedPianoPart({
     required this.partId,
@@ -223,144 +368,244 @@ class GeneratedPianoPart {
   final AccompanimentPlan plan;
 }
 
-/// The generated piano part of [xml], or null when it has none.
-GeneratedPianoPart? generatedPianoPart(String xml) {
-  if (!xml.contains(_pianoPartField)) return null;
-  return _generatedPianoPart(XmlDocument.parse(xml));
+/// The generated accompaniment of [xml], or null when it has none.
+GeneratedAccompaniment? generatedAccompaniment(String xml) {
+  if (!xml.contains(_recordPrefix)) return null;
+  return _generated(XmlDocument.parse(xml));
 }
 
-GeneratedPianoPart? _generatedPianoPart(XmlDocument document) {
+/// The generated piano part of [xml], or null when it has none.
+GeneratedPianoPart? generatedPianoPart(String xml) {
+  final generated = generatedAccompaniment(xml);
+  final at =
+      generated?.setup.instruments.indexOf(AccompanimentInstrument.piano) ?? -1;
+  if (generated == null || at < 0) return null;
+  return GeneratedPianoPart(
+    partId: generated.partIds[at],
+    name: generated.names[AccompanimentInstrument.piano] ?? 'Piano',
+    plan: generated.setup.piano,
+  );
+}
+
+/// [xml] without its generated parts: the lead sheet they were made from.
+/// A score without any is returned as it is.
+String withoutGeneratedAccompaniment(String xml) {
+  if (!xml.contains(_recordPrefix)) return xml;
+  final document = XmlDocument.parse(xml);
+  final generated = _generated(document);
+  if (generated == null) return xml;
+  _removeGenerated(document, generated.partIds);
+  return document.toXmlString();
+}
+
+/// Makes the generated parts of [xml] again from the melody and chord
+/// symbols as they are now, as recorded or as [setup] says. A score without
+/// generated parts is returned as it is.
+String regenerateAccompaniment(String xml, {AccompanimentSetup? setup}) {
+  if (!xml.contains(_recordPrefix)) return xml;
+  final document = XmlDocument.parse(xml);
+  final generated = _generated(document);
+  if (generated == null) return xml;
+  _removeGenerated(document, generated.partIds);
+  return _withParts(
+    document.toXmlString(),
+    setup: setup ?? generated.setup,
+    names: generated.names,
+  );
+}
+
+/// [withoutGeneratedAccompaniment] under its first name.
+String withoutGeneratedPianoPart(String xml) =>
+    withoutGeneratedAccompaniment(xml);
+
+/// [regenerateAccompaniment], with [plan] for the piano when given.
+String regeneratePianoPart(String xml, {AccompanimentPlan? plan}) {
+  if (plan == null) return regenerateAccompaniment(xml);
+  final generated = generatedAccompaniment(xml);
+  if (generated == null) return xml;
+  return regenerateAccompaniment(
+    xml,
+    setup: AccompanimentSetup(
+      instruments: generated.setup.instruments,
+      piano: plan,
+      roles: generated.setup.roles,
+      density: generated.setup.density,
+      splitPoint: generated.setup.splitPoint,
+    ),
+  );
+}
+
+const _recordPrefix = 'page-a-diddle:';
+const _recordField = 'page-a-diddle:accompaniment';
+
+/// The record of a score made before other instruments could be added.
+const _pianoRecordField = 'page-a-diddle:piano-part';
+
+XmlElement? _field(XmlElement root, String name) => root
+    .findAllElements('miscellaneous-field')
+    .where((field) => field.getAttribute('name') == name)
+    .firstOrNull;
+
+GeneratedAccompaniment? _generated(XmlDocument document) {
   final root = document.rootElement;
-  final field = _pianoField(root);
-  if (field == null) return null;
+  final field = _field(root, _recordField);
+  final old = field == null ? _field(root, _pianoRecordField) : null;
   final Object? record;
   try {
-    record = jsonDecode(field.innerText);
+    record = jsonDecode((field ?? old)?.innerText ?? '');
   } on FormatException {
     return null;
   }
   if (record is! Map) return null;
-  final id = record['part'];
-  final scorePart = root
-      .findAllElements('score-part')
-      .where((part) => part.getAttribute('id') == id)
-      .firstOrNull;
+  final entries = field != null
+      ? record['parts']
+      : [
+          {...record, 'instrument': AccompanimentInstrument.piano.name},
+        ];
+  if (entries is! List) return null;
+
   final parts = root.findElements('part').toList();
-  final part = parts.where((p) => p.getAttribute('id') == id).firstOrNull;
-  // The record of a part that is gone, or that is the only part, counts
-  // for nothing.
-  if (id is! String || scorePart == null || part == null || parts.length < 2) {
-    return null;
-  }
+  final bars = parts.isEmpty ? 0 : parts.first.findElements('measure').length;
   AccompanimentStyle style(Object? raw) {
     if (raw is! Map) return const AccompanimentStyle();
     return AccompanimentStyle(
       pattern:
           AccompanimentPattern.values.asNameMap()[raw['pattern']] ??
-          AccompanimentPattern.held,
+          AccompanimentPattern.auto,
       register:
           AccompanimentRegister.values.asNameMap()[raw['register']] ??
           AccompanimentRegister.middle,
     );
   }
 
-  // Section styles are by bar index: they hold while the bars are the ones
-  // the part was made for.
-  final bars = parts.first.findElements('measure').length;
-  final sections = <int, AccompanimentStyle>{};
-  final rawSections = record['sections'];
-  if (rawSections is Map && record['bars'] == bars) {
-    for (final entry in rawSections.entries) {
+  final instruments = <AccompanimentInstrument>[];
+  final names = <AccompanimentInstrument, String>{};
+  final ids = <String>[];
+  var piano = const AccompanimentPlan();
+  for (final entry in entries) {
+    if (entry is! Map) continue;
+    final id = entry['part'];
+    final instrument = AccompanimentInstrument.values
+        .asNameMap()[entry['instrument']];
+    if (id is! String || instrument == null) continue;
+    if (instruments.contains(instrument)) continue;
+    final scorePart = root
+        .findAllElements('score-part')
+        .where((part) => part.getAttribute('id') == id)
+        .firstOrNull;
+    // The record of a part that is gone counts for nothing, and the first
+    // part is the melody whatever a record says.
+    if (scorePart == null ||
+        !parts.skip(1).any((part) => part.getAttribute('id') == id)) {
+      continue;
+    }
+    instruments.add(instrument);
+    ids.add(id);
+    names[instrument] =
+        scorePart.getElement('part-name')?.innerText ??
+        _specs[instrument]!.name;
+    if (instrument != AccompanimentInstrument.piano) continue;
+    // Section styles are by bar index: they hold while the bars are the
+    // ones the part was made for.
+    final sections = <int, AccompanimentStyle>{};
+    final rawSections = entry['sections'];
+    if (rawSections is Map && record['bars'] == bars) {
+      for (final section in rawSections.entries) {
+        final index = int.tryParse('${section.key}');
+        if (index != null && index >= 0 && index < bars) {
+          sections[index] = style(section.value);
+        }
+      }
+    }
+    piano = AccompanimentPlan(base: style(entry['base']), sections: sections);
+  }
+  if (instruments.isEmpty) return null;
+  // Roles are by bar index too.
+  final roles = <int, SectionRole>{};
+  final rawRoles = record['roles'];
+  if (rawRoles is Map && record['bars'] == bars) {
+    for (final entry in rawRoles.entries) {
       final index = int.tryParse('${entry.key}');
-      if (index != null && index >= 0 && index < bars) {
-        sections[index] = style(entry.value);
+      final role = SectionRole.values.asNameMap()[entry.value];
+      if (index != null && index >= 0 && index < bars && role != null) {
+        roles[index] = role;
       }
     }
   }
-  return GeneratedPianoPart(
-    partId: id,
-    name: scorePart.getElement('part-name')?.innerText ?? 'Piano',
-    plan: AccompanimentPlan(base: style(record['base']), sections: sections),
+  return GeneratedAccompaniment(
+    setup: AccompanimentSetup(
+      instruments: instruments,
+      piano: piano,
+      roles: roles,
+      density:
+          AccompanimentDensity.values.asNameMap()[record['density']] ??
+          AccompanimentDensity.normal,
+      splitPoint: record['split'] is int ? record['split'] as int : null,
+    ),
+    names: names,
+    partIds: ids,
   );
 }
 
-/// [xml] without its generated piano part: the lead sheet it was made from.
-/// A score without one is returned as it is.
-String withoutGeneratedPianoPart(String xml) {
-  if (!xml.contains(_pianoPartField)) return xml;
-  final document = XmlDocument.parse(xml);
-  final generated = _generatedPianoPart(document);
-  if (generated == null) return xml;
-  _removePianoPart(document, generated.partId);
-  return document.toXmlString();
-}
-
-/// Makes the generated piano part of [xml] again from the melody and chord
-/// symbols as they are now, in the recorded style or in [plan]. A score
-/// without a generated piano part is returned as it is.
-String regeneratePianoPart(String xml, {AccompanimentPlan? plan}) {
-  if (!xml.contains(_pianoPartField)) return xml;
-  final document = XmlDocument.parse(xml);
-  final generated = _generatedPianoPart(document);
-  if (generated == null) return xml;
-  _removePianoPart(document, generated.partId);
-  return _withPianoPart(
-    document.toXmlString(),
-    pianoName: generated.name,
-    plan: plan ?? generated.plan,
-  );
-}
-
-const _pianoPartField = 'page-a-diddle:piano-part';
-
-XmlElement? _pianoField(XmlElement root) => root
-    .findAllElements('miscellaneous-field')
-    .where((field) => field.getAttribute('name') == _pianoPartField)
-    .firstOrNull;
-
-void _removePianoPart(XmlDocument document, String id) {
+void _removeGenerated(XmlDocument document, List<String> ids) {
   final root = document.rootElement;
   for (final name in const ['score-part', 'part']) {
     root
         .findAllElements(name)
-        .where((element) => element.getAttribute('id') == id)
+        .where((element) => ids.contains(element.getAttribute('id')))
         .toList()
         .forEach((element) => element.remove());
   }
-  final field = _pianoField(root);
-  final miscellaneous = field?.parentElement;
-  field?.remove();
-  if (miscellaneous != null && miscellaneous.childElements.isEmpty) {
-    final identification = miscellaneous.parentElement;
-    miscellaneous.remove();
-    if (identification != null && identification.childElements.isEmpty) {
-      identification.remove();
+  for (final name in const [_recordField, _pianoRecordField]) {
+    final field = _field(root, name);
+    final miscellaneous = field?.parentElement;
+    field?.remove();
+    if (miscellaneous != null && miscellaneous.childElements.isEmpty) {
+      final identification = miscellaneous.parentElement;
+      miscellaneous.remove();
+      if (identification != null && identification.childElements.isEmpty) {
+        identification.remove();
+      }
     }
   }
 }
 
-/// Records the style of the piano part [id] where MusicXML keeps data of
-/// the program that wrote the file.
-void _recordPianoPart(
+/// Records the generated parts where MusicXML keeps data of the program
+/// that wrote the file.
+void _record(
   XmlElement root,
-  String id,
-  AccompanimentPlan plan,
+  List<(String, AccompanimentInstrument)> parts,
+  AccompanimentSetup setup,
   int bars,
 ) {
+  final piano = setup.piano;
+  final roles = setup.roles;
   Map<String, String> style(AccompanimentStyle style) => {
     'pattern': style.pattern.name,
     'register': style.register.name,
   };
   final record = jsonEncode({
-    'part': id,
     'bars': bars,
-    'base': style(plan.base),
-    'sections': {
-      for (final entry in plan.sections.entries)
-        '${entry.key}': style(entry.value),
+    'density': setup.density.name,
+    if (setup.splitPoint != null) 'split': setup.splitPoint,
+    'roles': {
+      for (final entry in roles.entries) '${entry.key}': entry.value.name,
     },
+    'parts': [
+      for (final (id, instrument) in parts)
+        {
+          'part': id,
+          'instrument': instrument.name,
+          if (instrument == AccompanimentInstrument.piano) ...{
+            'base': style(piano.base),
+            'sections': {
+              for (final entry in piano.sections.entries)
+                '${entry.key}': style(entry.value),
+            },
+          },
+        },
+    ],
   });
-  _pianoField(root)?.remove();
   var identification = root.getElement('identification');
   if (identification == null) {
     identification = XmlElement(XmlName('identification'));
@@ -384,62 +629,124 @@ void _recordPianoPart(
   miscellaneous.children.add(
     XmlElement(
       XmlName('miscellaneous-field'),
-      [XmlAttribute(XmlName('name'), _pianoPartField)],
+      [XmlAttribute(XmlName('name'), _recordField)],
       [XmlText(record)],
     ),
   );
 }
 
-String _withPianoPart(
-  String xml, {
-  required String pianoName,
-  required AccompanimentPlan plan,
-}) {
-  final document = XmlDocument.parse(xml);
-  final root = document.rootElement;
-  final melody = root.findElements('part').first;
-  final bars = _readBars(melody);
+/// Where the top note of a chord may lie, how low its bottom note may go,
+/// and the top note to start from.
+typedef _Range = ({
+  int lowestTop,
+  int highestTop,
+  int lowestBottom,
+  int target,
+});
 
-  final ids = {
-    for (final part in root.findAllElements('score-part'))
-      part.getAttribute('id'),
-  };
-  var number = 2;
-  while (ids.contains('P$number')) {
-    number++;
-  }
-  final id = 'P$number';
+/// How an instrument's part is written.
+class _Spec {
+  const _Spec({
+    required this.name,
+    required this.program,
+    required this.staves,
+    required this.range,
+    this.tones = 4,
+    this.sustained = false,
+    this.hits = false,
+  });
 
-  final out = StringBuffer('<part id="$id">');
+  final String name;
+
+  /// General MIDI program, counted from 1.
+  final int program;
+
+  /// Two: the chords above, the bass below. One: the chords only.
+  final int staves;
+  final _Range range;
+
+  /// The most notes in a chord.
+  final int tones;
+
+  /// Held over the barline while the chord stays, not struck again.
+  final bool sustained;
+
+  /// A hit of one beat on each chord, then silence.
+  final bool hits;
+}
+
+// Piano middle: C4..D5 on top and nothing under F3. Low: A3..G4 on top and
+// nothing under E3, clear of the left hand.
+const _Range _pianoMiddle = (
+  lowestTop: 60,
+  highestTop: 74,
+  lowestBottom: 53,
+  target: 67,
+);
+const _Range _pianoLow = (
+  lowestTop: 57,
+  highestTop: 67,
+  lowestBottom: 52,
+  target: 62,
+);
+
+const _specs = <AccompanimentInstrument, _Spec>{
+  AccompanimentInstrument.piano: _Spec(
+    name: 'Piano',
+    program: 1,
+    staves: 2,
+    range: _pianoMiddle,
+  ),
+  AccompanimentInstrument.organ: _Spec(
+    name: 'Organ',
+    program: 17,
+    staves: 2,
+    range: _pianoMiddle,
+    sustained: true,
+  ),
+  // G4..A5 on top and nothing under B3.
+  AccompanimentInstrument.strings: _Spec(
+    name: 'Strings',
+    program: 49,
+    staves: 2,
+    range: (lowestTop: 67, highestTop: 81, lowestBottom: 59, target: 74),
+    sustained: true,
+  ),
+  AccompanimentInstrument.pad: _Spec(
+    name: 'Pad',
+    program: 90,
+    staves: 1,
+    range: (lowestTop: 59, highestTop: 71, lowestBottom: 52, target: 64),
+    sustained: true,
+  ),
+  // F4..G5 on top and nothing under A3, in three parts.
+  AccompanimentInstrument.brass: _Spec(
+    name: 'Brass',
+    program: 62,
+    staves: 1,
+    range: (lowestTop: 65, highestTop: 79, lowestBottom: 57, target: 72),
+    tones: 3,
+    hits: true,
+  ),
+};
+
+/// A stretch of a bar with one chord, or none.
+class _Segment {
+  const _Segment(this.start, this.end, this.chord, {required this.restated});
+
+  final int start;
+  final int end;
+  final _Chord? chord;
+
+  /// Begins at a chord symbol, not with a chord held from before.
+  final bool restated;
+}
+
+/// The chords of every bar on the grid the bar can be written in.
+List<List<_Segment>> _segments(List<_Bar> bars) {
+  final out = <List<_Segment>>[];
   _Chord? sounding;
-  int? previousTop;
-  for (var index = 0; index < bars.length; index++) {
-    final bar = bars[index];
-    out.write('<measure');
-    for (final attribute in bar.measureAttributes) {
-      out.write(' ${attribute.toXmlString()}');
-    }
-    out.write('>');
-    final attributes = [
-      if (index == 0 && !bar.attributes.any((e) => e.name.local == 'divisions'))
-        '<divisions>${bar.divisions}</divisions>',
-      for (final name in const ['divisions', 'key', 'time'])
-        for (final element in bar.attributes)
-          if (element.name.local == name) element.toXmlString(),
-      if (index == 0) ...[
-        '<staves>2</staves>',
-        '<clef number="1"><sign>G</sign><line>2</line></clef>',
-        '<clef number="2"><sign>F</sign><line>4</line></clef>',
-      ],
-    ];
-    if (attributes.isNotEmpty) {
-      out.write('<attributes>${attributes.join()}</attributes>');
-    }
-    for (final barline in bar.leftBarlines) {
-      out.write(barline.toXmlString());
-    }
-
-    // Chord changes on the grid the bar can be written in.
+  for (final bar in bars) {
     final unit = _unit(bar.divisions);
     final changes = <int, _Chord?>{};
     for (final (onset, chord) in bar.chords) {
@@ -478,79 +785,223 @@ String _withPianoPart(
         }
       }
     }
-    final style = plan.styleAt(index);
-    final rightHand = <_Strike>[];
-    final leftHand = <_Strike>[];
+    final segments = <_Segment>[];
     for (var i = 0; i < starts.length; i++) {
       final start = starts[i];
-      if (changes.containsKey(start)) sounding = changes[start];
+      final restated = changes.containsKey(start);
+      if (restated) sounding = changes[start];
       final end = i + 1 < starts.length ? starts[i + 1] : bar.length;
-      List<_Pitch> right = const [];
-      _Pitch? left;
       // A pickup shorter than a beat is left to the melody.
-      final chord = bar.length < beat ? null : sounding;
-      if (chord != null) {
-        int? melodyLow;
-        for (final note in bar.melody) {
-          if (note.onset < end && note.end > start) {
-            melodyLow = math.min(melodyLow ?? note.midi, note.midi);
-          }
-        }
-        right = _rightHand(
-          chord,
-          below: melodyLow,
-          near: previousTop,
-          register: style.register,
-        );
-        if (right.isNotEmpty) previousTop = right.last.midi;
-        // A chord tone a semitone from a melody note held for a beat or
-        // more grates against it: the melody has that place.
-        final clear = [
-          for (final pitch in right)
-            if (!bar.melody.any(
-              (note) =>
-                  (note.midi - pitch.midi).abs() == 1 &&
-                  math.min(end, note.end) - math.max(start, note.onset) >= beat,
-            ))
-              pitch,
-        ];
-        if (clear.length >= 2) right = clear;
-        left = _leftHand(chord);
-      }
-      leftHand.add(_Strike(start, end, [if (left != null) left]));
-      rightHand.addAll(
-        _pattern(style.pattern, start, end, right, bar: bar, beat: beat),
+      segments.add(
+        _Segment(
+          start,
+          end,
+          bar.length < beat ? null : sounding,
+          restated: restated,
+        ),
       );
     }
     if (anticipates) sounding = anticipated;
+    out.add(segments);
+  }
+  return out;
+}
 
-    out.write(_staff(bar, rightHand, staff: 1, voice: 1));
-    out.write('<backup><duration>${bar.length}</duration></backup>');
-    out.write(_staff(bar, leftHand, staff: 2, voice: 5));
-    for (final barline in bar.rightBarlines) {
-      out.write(barline.toXmlString());
+String _withParts(
+  String xml, {
+  required AccompanimentSetup setup,
+  required Map<AccompanimentInstrument, String> names,
+}) {
+  final document = XmlDocument.parse(xml);
+  final root = document.rootElement;
+  final melody = root.findElements('part').first;
+  final bars = _readBars(melody);
+  final segments = _segments(bars);
+  final ids = {
+    for (final part in root.findAllElements('score-part'))
+      part.getAttribute('id'),
+  };
+  final made = <(String, AccompanimentInstrument)>[];
+  for (final instrument in setup.instruments) {
+    if (made.any((part) => part.$2 == instrument)) continue;
+    final spec = _specs[instrument]!;
+    var number = 2;
+    while (ids.contains('P$number')) {
+      number++;
     }
-    out.write('</measure>');
-  }
-  out.write('</part>');
+    final id = 'P$number';
+    ids.add(id);
+    made.add((id, instrument));
 
-  final partList = root.getElement('part-list');
-  if (partList != null) {
-    final scorePart = XmlElement(
-      XmlName('score-part'),
-      [XmlAttribute(XmlName('id'), id)],
-      [
-        XmlElement(XmlName('part-name'), [], [XmlText(pianoName)]),
-      ],
-    );
-    partList.children.add(scorePart);
+    // The strikes of every bar: the chords, and the bass under them, as
+    // this instrument plays the section the bar is in.
+    final upper = <List<_Strike>>[];
+    final lower = <List<_Strike>>[];
+    final dynamics = <String?>[];
+    final state = _PartState();
+    SectionRole? previousRole;
+    for (var index = 0; index < bars.length; index++) {
+      final role = setup.roleAt(index);
+      final written = _writeBar(
+        instrument,
+        bars[index],
+        segments[index],
+        role: role,
+        place: _placeOf(setup.roles, index, bars.length),
+        style: setup.piano.styleAt(index),
+        density: setup.density,
+        splitPoint: setup.splitPoint,
+        state: state,
+      );
+      upper.add(written.chords);
+      lower.add(written.basses);
+      dynamics.add(
+        role == previousRole ? null : _dynamicsFor(instrument, role),
+      );
+      previousRole = role;
+    }
+    if (spec.sustained) {
+      _tieCommonTones(bars, upper);
+      _tieCommonTones(bars, lower);
+    }
+
+    final name = names[instrument] ?? spec.name;
+    // A piano alone under the melody needs no name.
+    final labelled =
+        setup.instruments.toSet().length > 1 ||
+        instrument != AccompanimentInstrument.piano;
+    final out = StringBuffer('<part id="$id">');
+    for (var index = 0; index < bars.length; index++) {
+      final bar = bars[index];
+      out.write('<measure');
+      for (final attribute in bar.measureAttributes) {
+        out.write(' ${attribute.toXmlString()}');
+      }
+      out.write('>');
+      final attributes = [
+        if (index == 0 &&
+            !bar.attributes.any((e) => e.name.local == 'divisions'))
+          '<divisions>${bar.divisions}</divisions>',
+        for (final name in const ['divisions', 'key', 'time'])
+          for (final element in bar.attributes)
+            if (element.name.local == name) element.toXmlString(),
+        if (index == 0 && spec.staves == 2) ...[
+          '<staves>2</staves>',
+          '<clef number="1"><sign>G</sign><line>2</line></clef>',
+          '<clef number="2"><sign>F</sign><line>4</line></clef>',
+        ],
+        if (index == 0 && spec.staves == 1)
+          '<clef><sign>G</sign><line>2</line></clef>',
+      ];
+      if (attributes.isNotEmpty) {
+        out.write('<attributes>${attributes.join()}</attributes>');
+      }
+      for (final barline in bar.leftBarlines) {
+        out.write(barline.toXmlString());
+      }
+      if (index == 0 && labelled) {
+        // Which staff is whose, where part names are not printed.
+        out.write(
+          XmlElement(
+            XmlName('direction'),
+            [XmlAttribute(XmlName('placement'), 'above')],
+            [
+              XmlElement(XmlName('direction-type'), [], [
+                XmlElement(XmlName('words'), [], [XmlText(name)]),
+              ]),
+              if (spec.staves == 2)
+                XmlElement(XmlName('staff'), [], [XmlText('1')]),
+            ],
+          ).toXmlString(),
+        );
+      }
+      final dynamic = dynamics[index];
+      if (dynamic != null && upper[index].any((s) => s.pitches.isNotEmpty)) {
+        out.write(
+          '<direction placement="below"><direction-type><dynamics>'
+          '<$dynamic/></dynamics></direction-type>'
+          '${spec.staves == 2 ? '<staff>1</staff>' : ''}</direction>',
+        );
+      }
+      out.write(_staff(bar, upper[index], staff: 1, voice: 1));
+      if (spec.staves == 2) {
+        out.write('<backup><duration>${bar.length}</duration></backup>');
+        out.write(_staff(bar, lower[index], staff: 2, voice: 5));
+      }
+      for (final barline in bar.rightBarlines) {
+        out.write(barline.toXmlString());
+      }
+      out.write('</measure>');
+    }
+    out.write('</part>');
+
+    XmlElement leaf(String tag, String text) =>
+        XmlElement(XmlName(tag), [], [XmlText(text)]);
+    root
+        .getElement('part-list')
+        ?.children
+        .add(
+          XmlElement(
+            XmlName('score-part'),
+            [XmlAttribute(XmlName('id'), id)],
+            [
+              leaf('part-name', name),
+              // The sound, for programs that play the file.
+              XmlElement(
+                XmlName('score-instrument'),
+                [XmlAttribute(XmlName('id'), '$id-I1')],
+                [leaf('instrument-name', name)],
+              ),
+              XmlElement(
+                XmlName('midi-instrument'),
+                [XmlAttribute(XmlName('id'), '$id-I1')],
+                [
+                  leaf('midi-channel', '${made.length + 1}'),
+                  leaf('midi-program', '${spec.program}'),
+                ],
+              ),
+            ],
+          ),
+        );
+    root.children.add(XmlDocument.parse(out.toString()).rootElement.copy());
   }
-  root.children.add(XmlDocument.parse(out.toString()).rootElement.copy());
-  _recordPianoPart(root, id, plan, bars.length);
+  _record(root, made, setup, bars.length);
   return document.toXmlString();
 }
 
-/// One bar's notes or rests on one staff of the piano part.
+/// Ties every note a strike has in common with the strike right after it,
+/// within the bar and over the barline: a sustained instrument keeps holding
+/// what the next chord shares with the last. A repeat, ending or double bar
+/// between two bars starts the notes again.
+void _tieCommonTones(List<_Bar> bars, List<List<_Strike>> strikes) {
+  _Strike? previous;
+  var previousBar = -1;
+  for (var index = 0; index < bars.length; index++) {
+    for (final strike in strikes[index]) {
+      final before = previous;
+      if (before != null && strike.pitches.isNotEmpty) {
+        final adjacent = previousBar == index
+            ? before.end == strike.start
+            : before.end == bars[previousBar].length &&
+                  strike.start == 0 &&
+                  bars[previousBar].rightBarlines.isEmpty &&
+                  bars[index].leftBarlines.isEmpty;
+        if (adjacent) {
+          for (final pitch in strike.pitches) {
+            if (before.pitches.contains(pitch)) {
+              before.tiedTo.add(pitch);
+              strike.tiedFrom.add(pitch);
+            }
+          }
+        }
+      }
+      previous = strike;
+      previousBar = index;
+    }
+  }
+}
+
+/// One bar's notes or rests on one staff of a generated part.
 String _staff(
   _Bar bar,
   List<_Strike> strikes, {
@@ -622,12 +1073,16 @@ String _staff(
         );
         continue;
       }
-      final tiedFrom = i > 0;
-      final tiedTo = i < pieces.values.length - 1;
       for (var p = 0; p < pitches.length; p++) {
         final pitch = pitches[p];
+        // Tied within the strike, or to the strike beside it.
+        final tiedFrom =
+            i > 0 || (i == 0 && strikes[s].tiedFrom.contains(pitch));
+        final tiedTo =
+            i < pieces.values.length - 1 || strikes[s].tiedTo.contains(pitch);
         final line = (pitch.step, pitch.octave);
         var accidental = '';
+        // An accidental tied from before holds for that note only.
         if (!tiedFrom) {
           final current = inForce[line] ?? _keyAlter(pitch.step, bar.fifths);
           if (current != pitch.alter) {
@@ -667,13 +1122,22 @@ String _staff(
 
 /// Notes struck together at [start] and held to [end]; a rest when empty.
 class _Strike {
-  const _Strike(this.start, this.end, this.pitches);
+  _Strike(this.start, this.end, this.pitches, {this.restated = true});
 
   final int start;
   final int end;
 
   /// From the bottom up.
   final List<_Pitch> pitches;
+
+  /// Begins at a chord symbol or within a pattern: not a chord held on
+  /// from the bar before.
+  final bool restated;
+
+  /// Pitches tied from the strike before this one and to the one after it:
+  /// the notes a sustained instrument keeps holding while the chord changes.
+  final tiedFrom = <_Pitch>{};
+  final tiedTo = <_Pitch>{};
 }
 
 /// The right hand's strikes for [chord] sounding from [start] to [end].
@@ -723,6 +1187,16 @@ class _Pitch {
   final int octave;
 
   int get midi => 12 * (octave + 1) + step.naturalSemitone + alter;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _Pitch &&
+      other.step == step &&
+      other.alter == alter &&
+      other.octave == octave;
+
+  @override
+  int get hashCode => Object.hash(step, alter, octave);
 }
 
 /// A chord tone as letters and semitones above the root.
@@ -981,18 +1455,18 @@ _Chord? _readChord(XmlElement harmony) {
   );
 }
 
-/// Letter and alteration of the right hand's tones: at most four, leaving
-/// the root and then the fifth to the left hand when there are more.
-List<(PitchStep, int)> _rightHandTones(_Chord chord) {
+/// Letter and alteration of a chord's tones: at most [most], leaving the
+/// root and then the fifth to the bass when there are more.
+List<(PitchStep, int)> _chordTones(_Chord chord, int most) {
   var tones = <_Tone>[(letters: 0, semitones: 0), ...chord.tones];
-  if (tones.length > 4) tones = tones.sublist(1);
-  if (tones.length > 4) {
+  if (tones.length > most) tones = tones.sublist(1);
+  if (tones.length > most) {
     tones = [
       for (final tone in tones)
         if (tone.letters != 4) tone,
     ];
   }
-  if (tones.length > 4) tones = tones.sublist(0, 4);
+  if (tones.length > most) tones = tones.sublist(0, most);
   return [
     for (final tone in tones) _spell(chord.rootStep, chord.rootAlter, tone),
   ];
@@ -1017,31 +1491,36 @@ List<(PitchStep, int)> _rightHandTones(_Chord chord) {
   return (step, alter);
 }
 
-/// The chord in close position around middle C, as near to [near] (the last
+/// The chord in close position within [range], as near to [near] (the last
 /// top note) as it gets, and under [below] (the lowest melody note above it)
 /// where the melody is high enough for that.
-List<_Pitch> _rightHand(
+List<_Pitch> _voicing(
   _Chord chord, {
+  required _Range range,
+  required int tones,
   int? below,
   int? near,
-  AccompanimentRegister register = AccompanimentRegister.middle,
 }) {
-  final tones = _rightHandTones(chord);
+  final chordTones = _chordTones(chord, tones);
   List<List<_Pitch>> voicings({
     required int lowestTop,
     required int highestTop,
     required int lowestBottom,
   }) {
     final found = <List<_Pitch>>[];
-    for (var t = 0; t < tones.length; t++) {
+    for (var t = 0; t < chordTones.length; t++) {
       for (var octave = 2; octave <= 6; octave++) {
-        final top = _Pitch(tones[t].$1, tones[t].$2, octave);
+        final top = _Pitch(chordTones[t].$1, chordTones[t].$2, octave);
         if (top.midi < lowestTop || top.midi > highestTop) continue;
         final voicing = [top];
-        for (var other = 0; other < tones.length; other++) {
+        for (var other = 0; other < chordTones.length; other++) {
           if (other == t) continue;
           for (var under = octave; under >= 0; under--) {
-            final pitch = _Pitch(tones[other].$1, tones[other].$2, under);
+            final pitch = _Pitch(
+              chordTones[other].$1,
+              chordTones[other].$2,
+              under,
+            );
             if (pitch.midi < top.midi) {
               voicing.add(pitch);
               break;
@@ -1055,20 +1534,24 @@ List<_Pitch> _rightHand(
     return found;
   }
 
-  // Middle: C4..D5 on top and nothing under F3. Low: A3..G4 on top and
-  // nothing under E3, clear of the left hand. Wider when a chord does not fit.
-  final low = register == AccompanimentRegister.low;
-  var choices = low
-      ? voicings(lowestTop: 57, highestTop: 67, lowestBottom: 52)
-      : voicings(lowestTop: 60, highestTop: 74, lowestBottom: 53);
+  // Wider when a chord does not fit.
+  var choices = voicings(
+    lowestTop: range.lowestTop,
+    highestTop: range.highestTop,
+    lowestBottom: range.lowestBottom,
+  );
   if (choices.isEmpty) {
-    choices = voicings(lowestTop: 55, highestTop: 76, lowestBottom: 48);
+    choices = voicings(
+      lowestTop: range.lowestTop - 5,
+      highestTop: range.highestTop + 2,
+      lowestBottom: range.lowestBottom - 5,
+    );
   }
   if (choices.isEmpty) return const [];
-  var target = near ?? (low ? 62 : 67);
-  // A change of register does not follow the last chord across.
-  if (low && target > 67) target = 62;
-  if (!low && target < 60) target = 67;
+  // A change of range does not follow the last chord across.
+  var target = near == null || near < range.lowestTop || near > range.highestTop
+      ? range.target
+      : near;
   if (below != null) {
     final under = choices.where((v) => v.last.midi < below).toList();
     if (under.isNotEmpty) {
@@ -1086,7 +1569,7 @@ List<_Pitch> _rightHand(
 }
 
 /// The bass note (the slash bass, or the root) between E2 and E flat 3.
-_Pitch _leftHand(_Chord chord) {
+_Pitch _bass(_Chord chord) {
   final step = chord.bassStep ?? chord.rootStep;
   final alter = chord.bassStep == null ? chord.rootAlter : chord.bassAlter;
   for (var octave = 1; octave <= 4; octave++) {

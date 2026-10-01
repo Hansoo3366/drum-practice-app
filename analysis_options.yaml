@@ -12,6 +12,8 @@ include: package:flutter_lints/flutter.yaml
 analyzer:
   exclude:
     - "**/*.g.dart"
+    # Vendored packages keep their own rules.
+    - "third_party/**"
   language:
     strict-casts: true
     strict-inference: true

@@ -8,10 +8,48 @@ import 'package:page_a_diddle/features/digital_score/domain/three_staff_arrangem
 /// How the piano part is to be made: its style, and the chord symbols the
 /// user agreed to change first.
 class PianoPartRequest {
-  const PianoPartRequest({required this.plan, this.corrections = const []});
+  const PianoPartRequest({
+    required this.plan,
+    this.instruments = const [AccompanimentInstrument.piano],
+    this.roles = const {},
+    this.density = AccompanimentDensity.normal,
+    this.splitPoint,
+    this.separate = true,
+    this.corrections = const [],
+  });
 
+  /// The parts to make, in score order.
+  final List<AccompanimentInstrument> instruments;
+
+  /// How the piano plays, when it is among them.
   final AccompanimentPlan plan;
+
+  /// What each stretch of the song is, by first bar.
+  final Map<int, SectionRole> roles;
+  final AccompanimentDensity density;
+
+  /// Lowest note of the piano's right hand, or null for the register's own.
+  final int? splitPoint;
+
+  /// One score per instrument (the melody with that part under it), or all
+  /// the parts under the melody in one score.
+  final bool separate;
   final List<ChordCorrection> corrections;
+
+  AccompanimentSetup get setup => _setup(instruments);
+
+  /// The setup of the score for [instrument] alone.
+  AccompanimentSetup setupFor(AccompanimentInstrument instrument) =>
+      _setup([instrument]);
+
+  AccompanimentSetup _setup(List<AccompanimentInstrument> parts) =>
+      AccompanimentSetup(
+        instruments: parts,
+        piano: plan,
+        roles: roles,
+        density: density,
+        splitPoint: splitPoint,
+      );
 }
 
 /// Asks for the style of the piano part. [advise] fetches a recommendation
@@ -19,24 +57,40 @@ class PianoPartRequest {
 /// recommendation can be had.
 ///
 /// [initial] is the style the sheet opens with: that of the piano part the
-/// score already has, when it is made again.
+/// score already has, when it is made again. [roles] are the sections of
+/// the score as the structure panel names them; a recommendation may read
+/// them differently.
 Future<PianoPartRequest?> showPianoPartSheet(
   BuildContext context, {
   required Future<ArrangementAdvice> Function() advise,
-  AccompanimentPlan initial = const AccompanimentPlan(),
+  AccompanimentSetup initial = const AccompanimentSetup(),
+  Map<int, SectionRole> roles = const {},
 }) {
   return showModalBottomSheet<PianoPartRequest>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (context) => _PianoPartSheet(advise: advise, initial: initial),
+    builder: (context) =>
+        _PianoPartSheet(advise: advise, initial: initial, roles: roles),
   );
 }
+
+String accompanimentInstrumentLabel(
+  AppLocalizations l10n,
+  AccompanimentInstrument instrument,
+) => switch (instrument) {
+  AccompanimentInstrument.piano => l10n.pianoPartName,
+  AccompanimentInstrument.organ => l10n.organPartName,
+  AccompanimentInstrument.strings => l10n.stringsPartName,
+  AccompanimentInstrument.pad => l10n.padPartName,
+  AccompanimentInstrument.brass => l10n.brassPartName,
+};
 
 String accompanimentPatternLabel(
   AppLocalizations l10n,
   AccompanimentPattern pattern,
 ) => switch (pattern) {
+  AccompanimentPattern.auto => l10n.pianoPatternAuto,
   AccompanimentPattern.held => l10n.pianoPatternHeld,
   AccompanimentPattern.beats => l10n.pianoPatternBeats,
   AccompanimentPattern.broken => l10n.pianoPatternBroken,
@@ -51,18 +105,30 @@ String accompanimentRegisterLabel(
 };
 
 class _PianoPartSheet extends StatefulWidget {
-  const _PianoPartSheet({required this.advise, required this.initial});
+  const _PianoPartSheet({
+    required this.advise,
+    required this.initial,
+    required this.roles,
+  });
 
   final Future<ArrangementAdvice> Function() advise;
-  final AccompanimentPlan initial;
+  final AccompanimentSetup initial;
+  final Map<int, SectionRole> roles;
 
   @override
   State<_PianoPartSheet> createState() => _PianoPartSheetState();
 }
 
 class _PianoPartSheetState extends State<_PianoPartSheet> {
-  late var _base = widget.initial.base;
-  late var _sections = Map.of(widget.initial.sections);
+  late final _instruments = widget.initial.instruments.toSet();
+  late var _roles = widget.initial.roles.isNotEmpty
+      ? Map.of(widget.initial.roles)
+      : Map.of(widget.roles);
+  var _separate = true;
+  late var _density = widget.initial.density;
+  late var _split = widget.initial.splitPoint;
+  late var _base = widget.initial.piano.base;
+  late var _sections = Map.of(widget.initial.piano.sections);
   var _corrections = <ChordCorrection>[];
   final _accepted = <ChordCorrection>{};
   var _note = '';
@@ -81,6 +147,8 @@ class _PianoPartSheetState extends State<_PianoPartSheet> {
       setState(() {
         _base = advice.plan.base;
         _sections = Map.of(advice.plan.sections);
+        // The recommendation reads the song's sections for itself.
+        _roles = {..._roles, ...advice.roles};
         _corrections = advice.corrections;
         _accepted.clear();
         _note = advice.note;
@@ -124,38 +192,128 @@ class _PianoPartSheetState extends State<_PianoPartSheet> {
               ],
             ),
             const SizedBox(height: 8),
-            Text(l10n.pianoPattern, style: theme.textTheme.titleSmall),
-            const SizedBox(height: 8),
-            SegmentedButton<AccompanimentPattern>(
-              showSelectedIcon: false,
-              segments: [
-                for (final pattern in AccompanimentPattern.values)
-                  ButtonSegment(
-                    value: pattern,
-                    label: Text(accompanimentPatternLabel(l10n, pattern)),
-                  ),
-              ],
-              selected: {_base.pattern},
-              onSelectionChanged: (value) =>
-                  setState(() => _base = _base.copyWith(pattern: value.single)),
+            Text(
+              l10n.accompanimentInstruments,
+              style: theme.textTheme.titleSmall,
             ),
-            const SizedBox(height: 16),
-            Text(l10n.pianoRegister, style: theme.textTheme.titleSmall),
             const SizedBox(height: 8),
-            SegmentedButton<AccompanimentRegister>(
-              showSelectedIcon: false,
-              segments: [
-                for (final register in AccompanimentRegister.values)
-                  ButtonSegment(
-                    value: register,
-                    label: Text(accompanimentRegisterLabel(l10n, register)),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final instrument in AccompanimentInstrument.values)
+                  FilterChip(
+                    label: Text(accompanimentInstrumentLabel(l10n, instrument)),
+                    selected: _instruments.contains(instrument),
+                    onSelected: (selected) => setState(() {
+                      if (selected) {
+                        _instruments.add(instrument);
+                      } else {
+                        _instruments.remove(instrument);
+                      }
+                    }),
                   ),
               ],
-              selected: {_base.register},
-              onSelectionChanged: (value) => setState(
-                () => _base = _base.copyWith(register: value.single),
+            ),
+            if (_instruments.length > 1) ...[
+              const SizedBox(height: 16),
+              Text(l10n.accompanimentOutput, style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              SegmentedButton<bool>(
+                showSelectedIcon: false,
+                segments: [
+                  ButtonSegment(
+                    value: true,
+                    label: Text(l10n.accompanimentSeparateScores),
+                  ),
+                  ButtonSegment(
+                    value: false,
+                    label: Text(l10n.accompanimentOneScore),
+                  ),
+                ],
+                selected: {_separate},
+                onSelectionChanged: (value) =>
+                    setState(() => _separate = value.single),
               ),
+            ],
+            const SizedBox(height: 16),
+            Text(l10n.accompanimentDensity, style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            SegmentedButton<AccompanimentDensity>(
+              showSelectedIcon: false,
+              segments: [
+                ButtonSegment(
+                  value: AccompanimentDensity.light,
+                  label: Text(l10n.accompanimentDensityLight),
+                ),
+                ButtonSegment(
+                  value: AccompanimentDensity.normal,
+                  label: Text(l10n.accompanimentDensityNormal),
+                ),
+                ButtonSegment(
+                  value: AccompanimentDensity.full,
+                  label: Text(l10n.accompanimentDensityFull),
+                ),
+              ],
+              selected: {_density},
+              onSelectionChanged: (value) =>
+                  setState(() => _density = value.single),
             ),
+            // Pattern, register and split point are the piano's.
+            if (_instruments.contains(AccompanimentInstrument.piano)) ...[
+              const SizedBox(height: 16),
+              Text(l10n.pianoSplitPoint, style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              SegmentedButton<int>(
+                showSelectedIcon: false,
+                segments: [
+                  // 0 stands for "by the register".
+                  ButtonSegment(value: 0, label: Text(l10n.pianoSplitAuto)),
+                  const ButtonSegment(value: 55, label: Text('G3')),
+                  const ButtonSegment(value: 60, label: Text('C4')),
+                ],
+                selected: {
+                  const {55, 60}.contains(_split) ? _split! : 0,
+                },
+                onSelectionChanged: (value) => setState(
+                  () => _split = value.single == 0 ? null : value.single,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(l10n.pianoPattern, style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              SegmentedButton<AccompanimentPattern>(
+                showSelectedIcon: false,
+                segments: [
+                  for (final pattern in AccompanimentPattern.values)
+                    ButtonSegment(
+                      value: pattern,
+                      label: Text(accompanimentPatternLabel(l10n, pattern)),
+                    ),
+                ],
+                selected: {_base.pattern},
+                onSelectionChanged: (value) => setState(
+                  () => _base = _base.copyWith(pattern: value.single),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(l10n.pianoRegister, style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              SegmentedButton<AccompanimentRegister>(
+                showSelectedIcon: false,
+                segments: [
+                  for (final register in AccompanimentRegister.values)
+                    ButtonSegment(
+                      value: register,
+                      label: Text(accompanimentRegisterLabel(l10n, register)),
+                    ),
+                ],
+                selected: {_base.register},
+                onSelectionChanged: (value) => setState(
+                  () => _base = _base.copyWith(register: value.single),
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             Row(
               children: [
@@ -249,11 +407,20 @@ class _PianoPartSheetState extends State<_PianoPartSheet> {
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: _asking
+                onPressed: _asking || _instruments.isEmpty
                     ? null
                     : () => Navigator.pop(
                         context,
                         PianoPartRequest(
+                          instruments: [
+                            for (final instrument
+                                in AccompanimentInstrument.values)
+                              if (_instruments.contains(instrument)) instrument,
+                          ],
+                          roles: _roles,
+                          density: _density,
+                          splitPoint: _split,
+                          separate: _separate,
                           plan: AccompanimentPlan(
                             base: _base,
                             sections: _sections,

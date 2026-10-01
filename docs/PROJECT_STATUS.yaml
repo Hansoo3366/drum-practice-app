@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-01T17:00:00+09:00"
+last_updated: "2026-10-01T17:52:00+09:00"
 current_phase:
   id: "M8-11"
   name: "모바일 1마디 교정 에디터 (raw MusicXML)"
@@ -15,9 +15,9 @@ current_phase:
 summary: "피아노 제품은 PDF→MusicXML 변환, 원본 대조·AI 승인 보정, 조옮김, Verse/Chorus Section·Arrangement, 단선 멜로디 3단 변환, 악기별 편곡 순서로 개발한다. 2026-09-28 사용자 결정(D-171)으로 변환 결과를 폰·태블릿에서 직접 고치는 1마디 교정 에디터 M8-11을 시작했다. 편집은 raw MusicXML을 직접 바꿔 셈여림·아티큘레이션·가사·레이아웃을 보존하고 이름 있는 새 버전으로만 저장하며, Lomse 편집기는 동결했다. 엔진(음높이·임시표·붙임줄·화음·음↔쉼표·코드 심벌·음가 Replace·빔)과 확대 교정 화면, 전자악보 화면 진입·버전 저장을 구현해 Pixel Fold API 35의 Ditto 변환본에서 확인했다. 남은 일은 마디 추가·삭제, 물리 기기 확인, 교정 화면의 PDF·AI 대조 연결이다. F-07의 코드 심벌 인식(harmony 0개)과 정답률 검증은 계속 남아 있다. 드럼 앱에는 반영하지 않는다."
 
 progress:
-  completed_items: 95
+  completed_items: 97
   total_items: 133
-  percent: 71
+  percent: 73
   source: "docs/ROADMAP.md"
 
 completed:
@@ -323,6 +323,10 @@ completed:
     result: "서버 보정: 도돌이 시작 오인식 복구, 가사 대시를 가사 줄 —로, 곡선에서 생긴 보조 성부 마디 쉼표 제거, 오선 밖 쉼표 V009."
   - id: "F-08a"
     result: "analyzeLeadSheet: 파트·보표 수, 코드 기호 수와 코드가 울리는 마디 수, 조·박자, 멜로디 음역으로 3단 변환 가능 여부와 막는 이유를 판단한다."
+  - id: "F-08c"
+    result: "반주 설정에서 패턴·음역·두께·분할점·구간별 스타일을 고르고 악기마다 따로 된 버전으로 저장한다. 내보내기는 버전 파일에서 만든다: MusicXML 원문, 악기 프로그램이 들어간 MIDI, Verovio 조판 PDF(모든 파트·가사·코드·구간 박스)."
+  - id: "F-08e"
+    result: "accompanimentMusicXml: 피아노·오르간·스트링·패드·브라스 파트를 코드 기호로 만들어 멜로디 아래에 붙인다. 오르간·스트링·패드는 화음을 마디 너머로 이어 누르고, 브라스는 3성 한 박 히트. 파트마다 이름과 MIDI 프로그램을 기록한다."
   - id: "F-08b"
     result: "threeStaffMusicXml: 멜로디 파트를 그대로 두고 코드 기호로 피아노 파트(오른손 밀집 보이싱, 왼손 베이스)를 덧붙여 새 버전으로 저장한다. 메뉴 \"피아노 반주 추가(3단)\"."
 in_progress:
@@ -1179,6 +1183,26 @@ decisions:
     date: "2026-09-29"
     status: "active"
     decision: "사용자 결정(\"qwen 도 제외, 조를 잘 못읽네\")으로 Qwen 3.8 Flash도 비교 대상에서 뺀다. 남은 후보는 GPT-5.6 Terra와 Gemini 3.8 Flash다. 두 모델이 같은 코드로 고친 마디는 나의 약함은 67마디 중 18개다."
+  - id: "D-197"
+    date: "2026-10-01"
+    status: "active"
+    decision: "내보내기는 버전의 파일에서 만든다(편집 중이거나 재생용 반주를 켠 경우만 예전처럼 편집 모델에서). MusicXML은 파일 원문에 사용자의 구간 이름을 연습 기호로 넣은 것, 순서를 정했으면 그 순서로 펼친 것. MIDI는 재생과 같은 시퀀스에 채널별 악기를 넣은 것. PDF는 뷰어와 같은 Verovio 조판을 A4로 다시 떠서 글자(가사·코드·마디 번호·구간 이름)를 SUIT TTF로 얹은 것. pdf 패키지가 OTF(CFF)를 유니코드로 내장하지 못해 SUIT-Regular.ttf를 자산에 추가했다."
+  - id: "D-196"
+    date: "2026-10-01"
+    status: "active"
+    decision: "악기별 악보는 리드시트(멜로디+코드)를 구간 역할에 따라 각 악기의 연주 방식으로 다시 쓴 것이다. 역할은 구조 패널의 구간 이름에서 읽고(영어·한국어·연습 기호), AI 추천이 있으면 그 역할로 덮는다. 기본 결과는 악기마다 따로 된 버전(위에 멜로디·가사·코드, 아래에 그 악기 파트)이며 한 악보에 모두 넣는 합주 총보도 고를 수 있다. 음표는 규칙이 쓰고 AI는 역할·스타일·코드 교정만 추천한다."
+  - id: "D-195"
+    date: "2026-10-01"
+    status: "active"
+    decision: "악기별 음색은 flutter_notemus의 네이티브 시퀀서를 고쳐서 낸다. 패키지를 third_party/flutter_notemus로 가져와 dependency_overrides로 쓰고, TinySoundFont(MIT)로 SoundFont를 재생한다. 음원은 GeneralUser GS v2.0.3(31MB)를 piano flavor에만 넣는다. 악기는 파트의 MusicXML midi-program을 따르고(없으면 피아노, 노래 파트는 피아노로 대신), 첫 파트 아래의 파트는 반주로 보고 작게 낸다. 음원을 읽지 못하면 원래의 파형으로 재생한다."
+  - id: "D-194"
+    date: "2026-10-01"
+    status: "active"
+    decision: "사용자 결정(\"안내 문장만 번역하라니까 악보 안에 용어도 다 번역했네\")으로 피아노 앱의 한국어는 안내 문장·버튼·메뉴에만 쓴다. 악보에 그려지는 음악 용어(구간 이름 Intro·Verse·Chorus 등, 악기 파트 이름 Piano·Strings 등)는 영어 그대로 둔다."
+  - id: "D-193"
+    date: "2026-10-01"
+    status: "active"
+    decision: "악기별 반주 파트의 규칙: 오르간은 피아노와 같은 음역의 화음+베이스를 붙임줄로 이어 누른다(코드 기호가 다시 적힌 마디, 도돌이·엔딩·겹세로줄에서는 다시 침). 스트링은 맨 위 음 G4~A5의 화음+베이스를 같은 방식으로 지속. 패드는 한 보표, 맨 위 음 B3~B4의 지속 화음. 브라스는 한 보표 3성(맨 위 음 F4~G5)으로 코드마다 한 박만 치고 쉰다. 모든 악기가 멜로디 아래에 둘 수 있으면 아래에 두고, 멜로디와 반음으로 부딪히는 음은 뺀다. 패턴·음역 선택과 AI 구간 추천은 피아노 파트에만 적용한다. 악기 이름은 파트 첫 마디 위 글자로 적는다(앱이 파트 이름을 그리지 않으므로). 악기가 피아노 하나뿐이면 적지 않는다."
   - id: "D-192"
     date: "2026-10-01"
     status: "active"
@@ -1220,6 +1244,21 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-09-28T10:26:44+09:00"
   checks:
+    - name: "accompaniment_options_and_export_20261001"
+      result: "passed_with_known_gaps"
+      detail: "두께 3종×분할점 3종×33곡×5악기 = 297개 변환 구조 검사 실패 0(분할점 아래로 5반음 넘게 내려간 오른손 화음 0, 한 옥타브 넘는 오른손 화음 0). PDF는 데스크톱에서 Verovio SVG로 만들어 래스터 확인하고, 에뮬레이터 빌드 2034에서 Organ 버전을 실제로 내보내 꺼내 본 결과 두 파트·한글 가사·코드·구간 박스·셈여림이 들어감(SUIT TTF·JetBrainsMono 내장). MIDI 파일의 채널별 프로그램 체인지 단위 테스트. 369 통과·1 실패(옛 alphaTab). 미확인: MusicXML·MIDI 내보내기의 기기 저장(같은 저장 경로 사용), 다른 프로그램에서 열어 보기."
+    - name: "sustained_parts_smoother_20261001"
+      result: "passed_with_known_gaps"
+      detail: "오르간·스트링 베이스를 새 화음의 근음·3음이면 유지, 스트링·패드는 두 박 미만 화음 건너뛰기. 33곡×3악기 구조 검사 실패 0, 363 통과·1 실패(옛 alphaTab). 빌드 2032 설치, 미리듣기 WAV 3개. 미확인: 쿵짝 인상이 실제로 줄었는지(테스트 유저 재청취 필요)."
+    - name: "instrument_idioms_20261001"
+      result: "passed_with_known_gaps"
+      detail: "구간 역할별 악기 규칙(피아노 자동 패턴, 오르간 공통음 레가토·성부 증가, 스트링 1→4성, 패드 넓은 지속 화음, 브라스 휴지·리드인·1/3박 히트·드라이브, 셈여림)을 33곡×5악기에 적용: 실패 0, 붙임줄 26,747개 짝 맞음, Verovio 읽기 정상. 단위·위젯 테스트 추가, 361 통과·1 실패(옛 alphaTab). 서버 role 필드 배포. 에뮬레이터 빌드 2031에서 Piano·Organ 버전 생성과 Organ 악보 표기 확인. 미확인: 귀로 듣는 확인, 연주자 관점의 적절성(테스트 유저 의견 필요)."
+    - name: "soundfont_playback_20261001"
+      result: "passed_with_known_gaps"
+      detail: "재생 엔진에 TinySoundFont와 GeneralUser GS를 붙여 채널별 악기·볼륨으로 재생. 데스크톱에서 같은 엔진 코드를 시험(악기별 음량 변화, 30음 동시 클리핑 0, 재타건·정지·메트로놈, 음원 없을 때 파형 대체)하고 실제 곡을 렌더링해 멜로디 대 반주 크기를 측정. 테스트 352 통과·1 실패(옛 alphaTab SoundFont 테스트). 에뮬레이터 빌드 2028에서 음원 로드 로그와 재생 진행 확인, 드럼 빌드에 음원 미포함 확인. 미확인: 귀로 듣는 확인, 실제 기기 소리."
+    - name: "accompaniment_instruments_20261001"
+      result: "passed_with_known_gaps"
+      detail: "33곡에 다섯 악기를 모두 붙여 검사: 멜로디 불변, 모든 파트·보표의 마디 길이 일치, 붙임줄 13,445개 짝 맞음(쉼표나 다른 음으로 이어지는 붙임줄 없음), 재생 MIDI·반복 펼침·조옮김·재생성 동일성 통과, Verovio로 읽은 생성 음 89,231개 중 틀리게 읽히는 음은 조표가 겹친 옛 파일 2개뿐. 테스트 351 통과·1 실패(SoundFont 부재). 에뮬레이터 빌드 2024에서 피아노+스트링+브라스 생성, 악기 이름 표시, 설정 화면이 기존 악기를 기억하는 것 확인. 한계: 재생 엔진이 단일 사인파라 악기별 음색 없음, 귀로 듣는 확인 없음."
     - name: "piano_part_regeneration_20261001"
       result: "passed"
       detail: "3단 버전의 반주 스타일을 MusicXML miscellaneous-field에 기록하고, 교정 저장 시와 스타일 변경 시 피아노 파트를 다시 만든다. 33곡에서 재생성 동일성·리드시트 복원·조옮김·펼친 사본·코드 편집 반영 확인, 테스트 344 통과·1 실패(SoundFont 부재). 에뮬레이터 빌드 2022에서 코드 G→Em 교정 후 반주 변경, 스타일 변경 재생성 확인."

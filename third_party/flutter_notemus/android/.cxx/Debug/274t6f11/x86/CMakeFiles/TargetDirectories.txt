@@ -1,0 +1,3 @@
+/Users/hansookim/Desktop/Web/drum-practice-app/third_party/flutter_notemus/android/.cxx/Debug/274t6f11/x86/CMakeFiles/flutter_notemus_native.dir
+/Users/hansookim/Desktop/Web/drum-practice-app/third_party/flutter_notemus/android/.cxx/Debug/274t6f11/x86/CMakeFiles/edit_cache.dir
+/Users/hansookim/Desktop/Web/drum-practice-app/third_party/flutter_notemus/android/.cxx/Debug/274t6f11/x86/CMakeFiles/rebuild_cache.dir

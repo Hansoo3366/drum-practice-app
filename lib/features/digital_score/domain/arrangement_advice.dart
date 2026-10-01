@@ -27,6 +27,7 @@ class ChordCorrection {
 class ArrangementAdvice {
   const ArrangementAdvice({
     required this.plan,
+    this.roles = const {},
     this.corrections = const [],
     this.note = '',
   });
@@ -46,6 +47,7 @@ class ArrangementAdvice {
     }
 
     final sections = <int, AccompanimentStyle>{};
+    final roles = <int, SectionRole>{};
     for (final raw in json['sections'] as List? ?? const []) {
       final bar = raw is Map ? raw['bar'] : null;
       final parsed = style(raw);
@@ -53,6 +55,8 @@ class ArrangementAdvice {
         continue;
       }
       sections[bar - 1] = parsed;
+      final role = _roleNames[(raw as Map)['role']];
+      if (role != null) roles[bar - 1] = role;
     }
     final corrections = <ChordCorrection>[];
     for (final raw in json['chords'] as List? ?? const []) {
@@ -87,17 +91,33 @@ class ArrangementAdvice {
         base: style(json['base']) ?? const AccompanimentStyle(),
         sections: sections,
       ),
+      roles: roles,
       corrections: corrections,
       note: json['note']?.toString() ?? '',
     );
   }
 
   final AccompanimentPlan plan;
+
+  /// What the adviser takes each stretch of the song for, by first bar.
+  final Map<int, SectionRole> roles;
   final List<ChordCorrection> corrections;
 
   /// The adviser's reasoning in a sentence.
   final String note;
 }
+
+/// The adviser's names for what a section is.
+const _roleNames = <Object?, SectionRole>{
+  'intro': SectionRole.intro,
+  'verse': SectionRole.verse,
+  'prechorus': SectionRole.preChorus,
+  'chorus': SectionRole.chorus,
+  'bridge': SectionRole.bridge,
+  'interlude': SectionRole.interlude,
+  'solo': SectionRole.solo,
+  'outro': SectionRole.outro,
+};
 
 /// The chord symbols of each bar of the first part, in written order.
 List<List<XmlElement>> _bars(String xml) => _barsOf(XmlDocument.parse(xml));

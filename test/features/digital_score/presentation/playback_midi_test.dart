@@ -152,9 +152,76 @@ void main() {
     );
 
     // The repeat is played out: C (held), C (held), D.
-    final quarter = direct.ticksPerQuarter;
-    expect(ons(direct), [(0, 72), (4 * quarter, 72), (8 * quarter, 74)]);
-    expect(ons(background), ons(direct));
+    final quarter = direct.sequence.ticksPerQuarter;
+    expect(ons(direct.sequence), [
+      (0, 72),
+      (4 * quarter, 72),
+      (8 * quarter, 74),
+    ]);
+    expect(ons(background.sequence), ons(direct.sequence));
+    expect(background.programs, direct.programs);
+    expect(background.levels, {0: 1.0});
+    expect(direct.programs, {0: 0});
+    // One part: nothing is turned down.
+    expect(staffLevels(xml), [1.0, 1.0]);
+  });
+
+  test('each staff plays the instrument its part names', () {
+    // A voice without an instrument, strings on two staves, brass on one.
+    const xml =
+        '<score-partwise version="4.0"><part-list>'
+        '<score-part id="P1"><part-name>Voice</part-name></score-part>'
+        '<score-part id="P2"><part-name>Strings</part-name><midi-instrument id="P2-I1">'
+        '<midi-channel>2</midi-channel><midi-program>49</midi-program></midi-instrument></score-part>'
+        '<score-part id="P3"><part-name>Brass</part-name><midi-instrument id="P3-I1">'
+        '<midi-program>62</midi-program></midi-instrument></score-part>'
+        '</part-list>'
+        '<part id="P1"><measure number="1"><attributes><divisions>1</divisions></attributes>'
+        '<note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note></measure></part>'
+        '<part id="P2"><measure number="1"><attributes><divisions>1</divisions><staves>2</staves></attributes>'
+        '<note><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff></note>'
+        '<backup><duration>4</duration></backup>'
+        '<note><pitch><step>C</step><octave>3</octave></pitch><duration>4</duration><voice>5</voice><type>whole</type><staff>2</staff></note></measure></part>'
+        '<part id="P3"><measure number="1"><attributes><divisions>1</divisions></attributes>'
+        '<note><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note></measure></part>'
+        '</score-partwise>';
+
+    expect(staffPrograms(xml), [0, 48, 48, 61]);
+    // A part marked as sung plays on the piano.
+    expect(
+      staffPrograms(
+        xml.replaceFirst(
+          '<part-name>Voice</part-name>',
+          '<part-name>Voice</part-name><midi-instrument id="P1-I1">'
+              '<midi-program>54</midi-program></midi-instrument>',
+        ),
+      ),
+      [0, 48, 48, 61],
+    );
+    final midi = playbackMidi(
+      xml,
+      options: nm.MidiGenerationOptions(
+        defaultBpm: 120,
+        includeMetronome: false,
+      ),
+    );
+    expect(channelPrograms(midi, xml), {0: 0, 1: 48, 2: 48, 3: 61});
+    // The exported file names the instruments too.
+    final file = playbackMidiFile(
+      PlaybackMidi(midi, channelPrograms(midi, xml), const {}),
+    );
+    expect(String.fromCharCodes(file.sublist(0, 4)), 'MThd');
+    final changes = <int, int>{};
+    for (var i = 0; i + 1 < file.length; i++) {
+      // Program change: status 0xC0 | channel, then the program.
+      if (file[i] & 0xF0 == 0xC0 && file[i - 1] == 0) {
+        changes[file[i] & 0x0F] = file[i + 1];
+      }
+    }
+    expect(changes, {0: 0, 1: 48, 2: 48, 3: 61});
+    // The voice leads; held strings are quieter than the brass hits.
+    expect(staffLevels(xml), [1.0, 0.22, 0.22, 0.35]);
+    expect(channelLevels(midi, xml), {0: 1.0, 1: 0.22, 2: 0.22, 3: 0.35});
   });
 
   test('the copy for the player leaves a plain score as it is', () {

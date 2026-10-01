@@ -225,8 +225,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
           .read(digitalScoreEditorServiceProvider)
           .addXmlVersion(
             songId: widget.songId,
-            // A generated piano part follows the edited melody and chords.
-            musicXml: regeneratePianoPart(_xml),
+            // Generated parts follow the edited melody and chords.
+            musicXml: regenerateAccompaniment(_xml),
             catalog: widget.catalog,
             name: name,
           );

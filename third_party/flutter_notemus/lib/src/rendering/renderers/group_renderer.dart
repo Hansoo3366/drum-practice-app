@@ -1,0 +1,712 @@
+// lib/src/rendering/renderers/group_renderer.dart
+// Refactored implementation: Usa StaffPositionCalculator
+//
+// MELHORIAS IMPLEMENTADAS (Fase 2):
+// ✅ Uses StaffPositioncalculator unificado (elimina 41 lines duplicadas)
+// ✅ Corrige possible bug de sinal invertido no calculation de position
+// ✅ 100% conformidade with system unificado de posicionamento
+
+import 'package:flutter/material.dart';
+import '../../../core/core.dart'; // 🆕 Tipos do core
+import '../../layout/collision_detector.dart'; // CORREÇÃO: Import collision detector
+import '../../layout/layout_engine.dart';
+import '../../smufl/smufl_metadata_loader.dart';
+import '../../theme/music_score_theme.dart';
+import '../smufl_positioning_engine.dart';
+import '../staff_coordinate_system.dart';
+import '../staff_position_calculator.dart';
+
+class GroupRenderer {
+  final StaffCoordinateSystem coordinates;
+  final SmuflMetadata metadata;
+  final MusicScoreTheme theme;
+  final double glyphSize;
+  final double staffLineThickness;
+  final double stemThickness;
+  final CollisionDetector?
+  collisionDetector; // CORREÇÃO: Adicionar collision detector
+  late final SMuFLPositioningEngine positioningEngine;
+
+  GroupRenderer({
+    required this.coordinates,
+    required this.metadata,
+    required this.theme,
+    required this.glyphSize,
+    required this.staffLineThickness,
+    required this.stemThickness,
+    this.collisionDetector, // CORREÇÃO: Parâmetro opcional
+  }) {
+    // Initialize with already loaded metadata
+    positioningEngine = SMuFLPositioningEngine(metadataLoader: metadata);
+  }
+
+  /// Collects the runs of notes joined by a single beam.
+  ///
+  /// A beam NEVER crosses a line break: when the music runs out of system the
+  /// group is closed at the last note of that system and the remainder is
+  /// re-beamed on the next one (Gould, *Behind Bars*, p.17 — "beams are broken
+  /// at the end of a system"; the very few cross-system beams that exist in the
+  /// literature are an editorial device, not automatic engraving). The scan
+  /// therefore stops as soon as [PositionedElement.system] changes, otherwise a
+  /// `start..end` run whose `end` was pushed to the next line would be drawn as
+  /// one long beam running backwards over the staff below.
+  ///
+  /// [beamTypes] is `LayoutEngine.beams` — the engine's resolved beam
+  /// membership, published as a VALUE (M-26). It is consulted first and
+  /// [Note.beam] is the fallback, so a caller that hands this renderer a bare
+  /// element list with author-set beams and no layout engine still works.
+  /// Reading `note.beam` alone would find NOTHING here now that the engine no
+  /// longer writes its answer back into the model.
+  Map<int, List<int>> _identifyBeamGroups(
+    List<PositionedElement> elements,
+    Map<Note, BeamType>? beamTypes,
+  ) {
+    BeamType? beamOf(Note note) => beamTypes?[note] ?? note.beam;
+    final groups = <int, List<int>>{};
+    int groupId = 0;
+    for (int i = 0; i < elements.length; i++) {
+      final element = elements[i].element;
+      if (element is Note && beamOf(element) == BeamType.start) {
+        final system = elements[i].system;
+        final group = <int>[i];
+        for (int j = i + 1; j < elements.length; j++) {
+          if (elements[j].system != system) break;
+          final nextElement = elements[j].element;
+          if (nextElement is Note) {
+            group.add(j);
+            if (beamOf(nextElement) == BeamType.end) break;
+          } else {
+            break;
+          }
+        }
+        if (group.length >= 2) {
+          groups[groupId++] = group;
+        }
+      }
+    }
+    return groups;
+  }
+
+  /// [octaveShifts] maps a note to the 8va/8vb displacement of the bracket span
+  /// it falls in (0, and so absent, outside every span). A LIST-level renderer
+  /// needs the map rather than a single int because one beam, tie or slur can
+  /// straddle the start or the end of a bracket, and each end has to be drawn at
+  /// the position the layout engine actually registered for its own note.
+  void renderBeams(
+    Canvas canvas,
+    List<PositionedElement> elements,
+    Clef currentClef, {
+    Map<Note, int> octaveShifts = const {},
+    Map<Note, BeamType>? beamTypes,
+  }) {
+    final beamGroups = _identifyBeamGroups(elements, beamTypes);
+    for (final group in beamGroups.values) {
+      if (group.length < 2) continue;
+
+      final positions = <Offset>[];
+      final staffPositions = <int>[];
+      final durations = <DurationType>[];
+      final groupElements = <PositionedElement>[];
+
+      for (final index in group) {
+        final element = elements[index];
+        groupElements.add(element);
+        if (element.element is Note) {
+          final note = element.element as Note;
+          // MELHORIA: Use StaffPositioncalculator unificado
+          final staffPos = StaffPositionCalculator.calculate(
+            note.pitch,
+            currentClef,
+            extraOctaveShift: octaveShifts[note] ?? 0,
+          );
+          final noteY = StaffPositionCalculator.toPixelY(
+            staffPos,
+            coordinates.staffSpace,
+            coordinates.staffBaseline.dy,
+          );
+          positions.add(Offset(element.position.dx, noteY));
+          staffPositions.add(staffPos);
+          durations.add(note.duration.type);
+        }
+      }
+      if (staffPositions.isNotEmpty) {
+        final avgPos =
+            staffPositions.reduce((a, b) => a + b) / staffPositions.length;
+        final stemUp = avgPos <= 0;
+        _renderBeamGroup(
+          canvas,
+          groupElements,
+          positions,
+          durations,
+          stemUp,
+          currentClef,
+          octaveShifts,
+        );
+      }
+    }
+  }
+
+  void _renderBeamGroup(
+    Canvas canvas,
+    List<PositionedElement> groupElements,
+    List<Offset> positions,
+    List<DurationType> durations,
+    bool stemUp,
+    Clef currentClef,
+    Map<Note, int> octaveShifts,
+  ) {
+    if (positions.length < 2) return;
+
+    int maxBeams = 0;
+    final beamCounts = durations.map((duration) {
+      final beams = switch (duration) {
+        DurationType.eighth => 1,
+        DurationType.sixteenth => 2,
+        DurationType.thirtySecond => 3,
+        DurationType.sixtyFourth => 4,
+        _ => 0,
+      };
+      if (beams > maxBeams) maxBeams = beams;
+      return beams;
+    }).toList();
+
+    // Fix: VISUAL: Valores ajustados empiricamente
+    // Valores teóricos de Behind Bars (0.5 SS thickness, 0.25 SS spacing)
+    // produziam beams very grossas visualmente no Flutter
+    //
+    // Valores calibrados for melhor aparência:
+    // - beamThickness: ~0.35-0.4 SS (more fino)
+    // - beamSpacing: ~0.35-0.4 SS (more espaçado)
+    final beamThickness = coordinates.staffSpace * 0.4; // Mais fino
+    final beamSpacing = coordinates.staffSpace * 0.60; // Mais espaçado
+
+    // Fix: SMuFL: Use âncoras das cabeças de note
+    final stemEndpoints = <Offset>[];
+    final staffPositions = <int>[];
+
+    for (int i = 0; i < positions.length; i++) {
+      final element = groupElements[i].element as Note;
+      final noteGlyph = durations[i].glyphName;
+      final staffPos = StaffPositionCalculator.calculate(
+        element.pitch,
+        currentClef,
+        extraOctaveShift: octaveShifts[element] ?? 0,
+      );
+      staffPositions.add(staffPos);
+
+      // Use âncora SMuFL for position of the stem
+      final stemAnchor = stemUp
+          ? positioningEngine.getStemUpAnchor(noteGlyph)
+          : positioningEngine.getStemDownAnchor(noteGlyph);
+
+      final stemX = positions[i].dx + (stemAnchor.dx * coordinates.staffSpace);
+      final stemY = positions[i].dy + (stemAnchor.dy * coordinates.staffSpace);
+      stemEndpoints.add(Offset(stemX, stemY));
+    }
+
+    final beamAngleSpaces = positioningEngine.calculateBeamAngle(
+      noteStaffPositions: staffPositions,
+      stemUp: stemUp,
+    );
+
+    final beamHeightSpaces = positioningEngine.calculateBeamHeight(
+      staffPosition: staffPositions.first,
+      stemUp: stemUp,
+      allStaffPositions: staffPositions,
+      beamCount: maxBeams,
+    );
+    final beamHeightPixels = beamHeightSpaces * coordinates.staffSpace;
+
+    // Primeira and última position of the beam
+    final firstNoteY = positions.first.dy;
+    final lastNoteY = positions.last.dy;
+    final avgNoteY = (firstNoteY + lastNoteY) / 2;
+    final beamBaseY = stemUp
+        ? avgNoteY - beamHeightPixels
+        : avgNoteY + beamHeightPixels;
+
+    // Convertsr angle de spaces for slope pixel
+    final xDistance = stemEndpoints.last.dx - stemEndpoints.first.dx;
+    final beamAnglePixels = (beamAngleSpaces * coordinates.staffSpace);
+    double beamSlope = xDistance > 0 ? beamAnglePixels / xDistance : 0.0;
+
+    final melodicDelta = staffPositions.last - staffPositions.first;
+    if (melodicDelta != 0 && beamSlope != 0.0) {
+      final expectedSign = melodicDelta > 0 ? -1.0 : 1.0;
+      if (beamSlope.sign != expectedSign) {
+        beamSlope = -beamSlope;
+      }
+    }
+
+    final firstStem = Offset(stemEndpoints.first.dx, beamBaseY);
+
+    double getBeamY(double x) {
+      return firstStem.dy + (beamSlope * (x - firstStem.dx));
+    }
+
+    final stemPaint = Paint()
+      ..color = theme.stemColor
+      ..strokeWidth = stemThickness;
+    final beamPaint = Paint()
+      ..color = theme.beamColor ?? theme.stemColor
+      ..style = PaintingStyle.fill;
+
+    // Draw beams
+    for (int beamLevel = 0; beamLevel < maxBeams; beamLevel++) {
+      Path? currentPath;
+      int pathStartIndex = -1;
+      for (int i = 0; i < groupElements.length; i++) {
+        if (beamCounts[i] > beamLevel) {
+          if (currentPath == null) {
+            currentPath = Path();
+            pathStartIndex = i;
+          }
+        }
+        bool shouldEndPath = false;
+        if (i == groupElements.length - 1) {
+          shouldEndPath = currentPath != null;
+        } else {
+          if (beamCounts[i] > beamLevel && beamCounts[i + 1] <= beamLevel) {
+            shouldEndPath = true;
+          }
+        }
+        if (shouldEndPath && currentPath != null && pathStartIndex >= 0) {
+          int endIndex = i;
+          if (beamCounts[i] <= beamLevel && i > pathStartIndex) {
+            endIndex = i - 1;
+          }
+          if (pathStartIndex <= endIndex) {
+            final yOffset = stemUp
+                ? beamLevel * beamSpacing
+                : -beamLevel * beamSpacing;
+            final startX = stemEndpoints[pathStartIndex].dx;
+            final endX = stemEndpoints[endIndex].dx;
+            final startY = getBeamY(startX) + yOffset;
+            final endY = getBeamY(endX) + yOffset;
+            final beamDirection = stemUp ? 1.0 : -1.0;
+            currentPath.moveTo(startX, startY);
+            currentPath.lineTo(endX, endY);
+            currentPath.lineTo(endX, endY + beamThickness * beamDirection);
+            currentPath.lineTo(startX, startY + beamThickness * beamDirection);
+            currentPath.close();
+            canvas.drawPath(currentPath, beamPaint);
+          }
+          currentPath = null;
+          pathStartIndex = -1;
+        }
+      }
+    }
+
+    // Fix: Desenhar cabeças de note
+    // Important: Not use stroke/outline for avoid retângulos
+    for (int i = 0; i < positions.length; i++) {
+      final noteGlyph = durations[i].glyphName;
+      final notePosition = positions[i];
+
+      final character = metadata.getCodepoint(noteGlyph);
+      if (character.isNotEmpty) {
+        final textPainter = TextPainter(
+          text: TextSpan(
+            text: character,
+            style: TextStyle(
+              // Font independence: family from the loaded descriptor.
+              fontFamily: metadata.font.fontFamily,
+              package: metadata.font.fontPackage,
+              fontSize: glyphSize,
+              color: theme.noteheadColor,
+              height: 1.0,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+
+        final baselineCorrection = -textPainter.height * 0.5;
+        textPainter.paint(
+          canvas,
+          Offset(notePosition.dx, notePosition.dy + baselineCorrection),
+        );
+      }
+    }
+
+    // Draw stems
+    for (int i = 0; i < positions.length; i++) {
+      final stemX = stemEndpoints[i].dx;
+      final beamY = getBeamY(stemX);
+      canvas.drawLine(
+        Offset(stemX, positions[i].dy),
+        Offset(stemX, beamY),
+        stemPaint,
+      );
+    }
+  }
+
+  /// Identifica grupos de notes ligadas by ties (público for SlurRenderer)
+  Map<int, List<int>> identifyTieGroups(List<PositionedElement> elements) {
+    final groups = <int, List<int>>{};
+    int groupId = 0;
+    for (int i = 0; i < elements.length; i++) {
+      final element = elements[i].element;
+      if (!_elementHasTieState(element, TieType.start)) {
+        continue;
+      }
+
+      final group = <int>[i];
+      for (int j = i + 1; j < elements.length; j++) {
+        final nextElement = elements[j].element;
+        if (!_elementCanParticipateInTie(nextElement)) {
+          continue;
+        }
+        if (!_elementsShareTiedPitch(element, nextElement)) {
+          continue;
+        }
+
+        group.add(j);
+        if (_elementHasTieState(nextElement, TieType.end)) {
+          break;
+        }
+      }
+
+      if (group.length >= 2) {
+        groups[groupId++] = group;
+      }
+    }
+    return groups;
+  }
+
+  /// [octaveShifts] maps a note to the 8va/8vb displacement of the bracket span
+  /// it falls in (0, and so absent, outside every span). A LIST-level renderer
+  /// needs the map rather than a single int because one beam, tie or slur can
+  /// straddle the start or the end of a bracket, and each end has to be drawn at
+  /// the position the layout engine actually registered for its own note.
+  void renderTies(
+    Canvas canvas,
+    List<PositionedElement> elements,
+    Clef currentClef, {
+    Map<Note, int> octaveShifts = const {},
+  }) {
+    final tieGroups = identifyTieGroups(elements);
+    for (final group in tieGroups.values) {
+      final startElement = elements[group.first];
+      final endElement = elements[group.last];
+      if (startElement.element is! Note || endElement.element is! Note) {
+        continue;
+      }
+
+      final startNote = startElement.element as Note;
+      // MELHORIA: Use StaffPositioncalculator
+      final startStaffPos = StaffPositionCalculator.calculate(
+        startNote.pitch,
+        currentClef,
+        extraOctaveShift: octaveShifts[startNote] ?? 0,
+      );
+
+      // Fix: LACERDA: "Ties/slurs are of the lado OPOSTO das stem"
+      // If stem up, tie/slur embaixo; if stem down, tie/slur in top
+      final stemUp =
+          startStaffPos <=
+          0; // Haste para cima quando nota está abaixo/na linha central
+      final tieAbove = !stemUp; // Ligadura oposta à haste
+
+      // MELHORIA: Use StaffPositioncalculator.toPixelY
+      final startNoteY = StaffPositionCalculator.toPixelY(
+        startStaffPos,
+        coordinates.staffSpace,
+        coordinates.staffBaseline.dy,
+      );
+      final endNoteOfTie = endElement.element as Note;
+      final endStaffPos = StaffPositionCalculator.calculate(
+        endNoteOfTie.pitch,
+        currentClef,
+        extraOctaveShift: octaveShifts[endNoteOfTie] ?? 0,
+      );
+      final endNoteY = StaffPositionCalculator.toPixelY(
+        endStaffPos,
+        coordinates.staffSpace,
+        coordinates.staffBaseline.dy,
+      );
+      final noteWidth = coordinates.staffSpace * 1.18;
+
+      // Fix: SMuFL: Tie/slur Not must tocar as cabeças de note
+      // Distance mínima: 0.25 staff spaces (Behind Bars, p. 180)
+      final clearance = coordinates.staffSpace * 0.25;
+
+      final startPoint = Offset(
+        startElement.position.dx + noteWidth * 0.75, // Mais à direita
+        startNoteY +
+            (tieAbove
+                ? -(clearance + coordinates.staffSpace * 0.15)
+                : (clearance + coordinates.staffSpace * 0.15)),
+      );
+      final endPoint = Offset(
+        endElement.position.dx + noteWidth * 0.25, // Mais à esquerda
+        endNoteY +
+            (tieAbove
+                ? -(clearance + coordinates.staffSpace * 0.15)
+                : (clearance + coordinates.staffSpace * 0.15)),
+      );
+
+      // Fix: SMuFL: Height of the tie/slur baseada in interpolação linear (Behind Bars)
+      // height = k * width + d, limitado by min/max
+      final distance = (endPoint.dx - startPoint.dx).abs();
+      final distanceInSpaces = distance / coordinates.staffSpace;
+
+      // Fórmula de interpolação (EngravingRules)
+      // k = 0.0288, d = 0.136
+      final heightSpaces = (0.0288 * distanceInSpaces + 0.136).clamp(0.28, 1.2);
+      final curvatureHeight = heightSpaces * coordinates.staffSpace;
+
+      final controlPoint = Offset(
+        (startPoint.dx + endPoint.dx) / 2,
+        ((startPoint.dy + endPoint.dy) / 2) +
+            (curvatureHeight * (tieAbove ? -1 : 1)),
+      );
+
+      // Fix: SMuFL: Thickness of the tie/slur more fina
+      // EngravingRules: slurEndpointThickness = 0.1, slurMidpointThickness = 0.22
+      // Média for stroke: 0.16 staff spaces
+      final tiePaint = Paint()
+        ..color = theme.tieColor ?? theme.noteheadColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = coordinates.staffSpace * 0.16
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round;
+
+      final path = Path();
+      path.moveTo(startPoint.dx, startPoint.dy);
+      path.quadraticBezierTo(
+        controlPoint.dx,
+        controlPoint.dy,
+        endPoint.dx,
+        endPoint.dy,
+      );
+      canvas.drawPath(path, tiePaint);
+    }
+  }
+
+  /// Identifica grupos de notes ligadas by slurs (público for SlurRenderer)
+  /// Slur boundary events on an element. Uses the numbered [Note.slurs] when
+  /// present (concurrent slurs); otherwise synthesizes a single number-0 event
+  /// from the unnumbered [Note.slur]/[Chord.slur].
+  /// Public so `SlurRenderer` can pair slur boundaries with exactly the same
+  /// rule when it looks for spans broken by a system break.
+  static List<SlurEvent> slurEventsOf(dynamic element) {
+    if (element is Note) {
+      if (element.slurs.isNotEmpty) return element.slurs;
+      if (element.slur == SlurType.start) {
+        return const [SlurEvent(number: 0, type: SlurType.start)];
+      }
+      if (element.slur == SlurType.end) {
+        return const [SlurEvent(number: 0, type: SlurType.end)];
+      }
+      return const [];
+    }
+    if (element is Chord) {
+      SlurType? s = element.slur;
+      s ??= element.notes
+          .map((n) => n.slur)
+          .firstWhere((x) => x != null, orElse: () => null);
+      if (s == SlurType.start) {
+        return const [SlurEvent(number: 0, type: SlurType.start)];
+      }
+      if (s == SlurType.end) {
+        return const [SlurEvent(number: 0, type: SlurType.end)];
+      }
+    }
+    return const [];
+  }
+
+  /// Matches slur starts to ends by number (a stack/map keyed by slur number),
+  /// so nested and overlapping slurs are paired correctly instead of greedily.
+  /// Each returned group is the inclusive run of participating elements from a
+  /// start to its matching end.
+  Map<int, List<int>> identifySlurGroups(List<PositionedElement> elements) {
+    final groups = <int, List<int>>{};
+    int groupId = 0;
+    final open = <int, int>{}; // slur number -> start element index
+
+    for (int i = 0; i < elements.length; i++) {
+      final element = elements[i].element;
+      if (!_elementCanParticipateInSlur(element)) continue;
+
+      for (final ev in slurEventsOf(element)) {
+        if (ev.type == SlurType.start) {
+          open[ev.number] = i;
+        } else if (ev.type == SlurType.end) {
+          final startIdx = open.remove(ev.number);
+          if (startIdx != null && startIdx < i) {
+            final group = <int>[];
+            for (int j = startIdx; j <= i; j++) {
+              if (_elementCanParticipateInSlur(elements[j].element)) {
+                group.add(j);
+              }
+            }
+            if (group.length >= 2) groups[groupId++] = group;
+          }
+        }
+      }
+    }
+    return groups;
+  }
+
+  /// [octaveShifts] maps a note to the 8va/8vb displacement of the bracket span
+  /// it falls in (0, and so absent, outside every span). A LIST-level renderer
+  /// needs the map rather than a single int because one beam, tie or slur can
+  /// straddle the start or the end of a bracket, and each end has to be drawn at
+  /// the position the layout engine actually registered for its own note.
+  void renderSlurs(
+    Canvas canvas,
+    List<PositionedElement> elements,
+    Clef currentClef, {
+    Map<Note, int> octaveShifts = const {},
+  }) {
+    final slurGroups = identifySlurGroups(elements);
+    for (final group in slurGroups.values) {
+      if (group.length < 2) continue;
+
+      final startElement = elements[group.first];
+      final endElement = elements[group.last];
+      if (startElement.element is! Note || endElement.element is! Note) {
+        continue;
+      }
+      final startNote = startElement.element as Note;
+      final endNote = endElement.element as Note;
+      // MELHORIA: Use StaffPositioncalculator
+      final startStaffPos = StaffPositionCalculator.calculate(
+        startNote.pitch,
+        currentClef,
+        extraOctaveShift: octaveShifts[startNote] ?? 0,
+      );
+      final endStaffPos = StaffPositionCalculator.calculate(
+        endNote.pitch,
+        currentClef,
+        extraOctaveShift: octaveShifts[endNote] ?? 0,
+      );
+
+      // Fix: LACERDA: Tie/slur de expressão segue same regra de tie
+      // Oposta to the direction das stems
+      final startStemUp = startStaffPos <= 0;
+      final slurAbove = !startStemUp;
+
+      // MELHORIA: Use StaffPositioncalculator.toPixelY
+      final startNoteY = StaffPositionCalculator.toPixelY(
+        startStaffPos,
+        coordinates.staffSpace,
+        coordinates.staffBaseline.dy,
+      );
+      final endNoteY = StaffPositionCalculator.toPixelY(
+        endStaffPos,
+        coordinates.staffSpace,
+        coordinates.staffBaseline.dy,
+      );
+
+      final noteWidth = coordinates.staffSpace * 1.18;
+
+      // Fix: Tie/slur more próxima das cabeças
+      final startPoint = Offset(
+        startElement.position.dx + noteWidth * 0.3,
+        startNoteY + (coordinates.staffSpace * 0.4 * (slurAbove ? -1 : 1)),
+      );
+      final endPoint = Offset(
+        endElement.position.dx + noteWidth * 0.7,
+        endNoteY + (coordinates.staffSpace * 0.4 * (slurAbove ? -1 : 1)),
+      );
+
+      // Fix: LACERDA: Height of the arco proporcional to the distance
+      // Quanto more longa, more alta a curva
+      final distance = (endPoint.dx - startPoint.dx).abs();
+      final arcHeight = coordinates.staffSpace * 1.2 + (distance * 0.04);
+
+      // Curva bezier cúbica for forma more natural
+      final controlPoint1 = Offset(
+        startPoint.dx + (endPoint.dx - startPoint.dx) * 0.3,
+        startPoint.dy + (arcHeight * (slurAbove ? -1 : 1)),
+      );
+      final controlPoint2 = Offset(
+        endPoint.dx - (endPoint.dx - startPoint.dx) * 0.3,
+        endPoint.dy + (arcHeight * (slurAbove ? -1 : 1)),
+      );
+
+      // Fix: Thickness default de tie/slur de expressão
+      final slurPaint = Paint()
+        ..color = theme.slurColor ?? theme.noteheadColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = coordinates.staffSpace * 0.12
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round;
+
+      final path = Path();
+      path.moveTo(startPoint.dx, startPoint.dy);
+      path.cubicTo(
+        controlPoint1.dx,
+        controlPoint1.dy,
+        controlPoint2.dx,
+        controlPoint2.dy,
+        endPoint.dx,
+        endPoint.dy,
+      );
+      canvas.drawPath(path, slurPaint);
+    }
+  }
+
+  bool _elementCanParticipateInTie(dynamic element) {
+    return element is Note || element is Chord;
+  }
+
+  bool _elementCanParticipateInSlur(dynamic element) {
+    return element is Note || element is Chord;
+  }
+
+  bool _elementHasTieState(dynamic element, TieType state) {
+    if (element is Note) {
+      return element.tie == state;
+    }
+    if (element is Chord) {
+      if (element.tie == state) {
+        return true;
+      }
+      return element.notes.any((note) => note.tie == state);
+    }
+    return false;
+  }
+
+  bool _elementsShareTiedPitch(dynamic left, dynamic right) {
+    final leftNotes = _notesForElement(left);
+    final rightNotes = _notesForElement(right);
+    for (final leftNote in leftNotes) {
+      if (leftNote.tie != TieType.start && leftNote.tie != TieType.inner) {
+        continue;
+      }
+
+      for (final rightNote in rightNotes) {
+        if (rightNote.tie != TieType.end && rightNote.tie != TieType.inner) {
+          continue;
+        }
+
+        if (_sameWrittenPitch(leftNote, rightNote)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  List<Note> _notesForElement(dynamic element) {
+    if (element is Note) {
+      return [element];
+    }
+    if (element is Chord) {
+      return element.notes;
+    }
+    return const [];
+  }
+
+  bool _sameWrittenPitch(Note left, Note right) {
+    return left.pitch.step == right.pitch.step &&
+        left.pitch.octave == right.pitch.octave &&
+        left.pitch.alter == right.pitch.alter;
+  }
+
+  // REMOVIDO: _calculateStaffPosition duplicado (41 lines)
+  // AGORA Uses: StaffPositioncalculator unificado
+}

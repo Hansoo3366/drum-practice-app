@@ -1510,22 +1510,22 @@ class AppLocalizationsKo extends AppLocalizations {
   String get nowLabel => '지금';
 
   @override
-  String get sectionIntro => '인트로';
+  String get sectionIntro => 'Intro';
 
   @override
-  String get sectionVerse => '벌스';
+  String get sectionVerse => 'Verse';
 
   @override
-  String get sectionPre => '프리코러스';
+  String get sectionPre => 'Pre-chorus';
 
   @override
-  String get sectionChorus => '코러스';
+  String get sectionChorus => 'Chorus';
 
   @override
-  String get sectionBridge => '브리지';
+  String get sectionBridge => 'Bridge';
 
   @override
-  String get sectionOutro => '아웃트로';
+  String get sectionOutro => 'Outro';
 
   @override
   String get exportAnnotatedPdf => '주석 포함 PDF 내보내기';
@@ -1815,10 +1815,10 @@ class AppLocalizationsKo extends AppLocalizations {
   String get sectionOrder => '순서';
 
   @override
-  String get sectionSolo => '솔로';
+  String get sectionSolo => 'Solo';
 
   @override
-  String get sectionInterlude => '간주';
+  String get sectionInterlude => 'Interlude';
 
   @override
   String sectionBarPickEnd(int number) {
@@ -1929,19 +1929,19 @@ class AppLocalizationsKo extends AppLocalizations {
   }
 
   @override
-  String get makeThreeStaff => '피아노 반주 추가(3단)';
+  String get makeThreeStaff => '악기별 악보 만들기';
 
   @override
-  String get threeStaffVersionName => '피아노 반주';
+  String get threeStaffVersionName => '반주';
 
   @override
-  String get threeStaffNeedsChords => '코드 기호가 없어 피아노 반주를 만들 수 없습니다';
+  String get threeStaffNeedsChords => '코드 기호가 없어 반주를 만들 수 없습니다';
 
   @override
-  String get threeStaffNeedsMelody => '한 줄짜리 멜로디 악보에만 피아노 반주를 추가할 수 있습니다';
+  String get threeStaffNeedsMelody => '한 줄짜리 멜로디 악보에만 반주를 추가할 수 있습니다';
 
   @override
-  String get pianoPartName => '피아노';
+  String get pianoPartName => 'Piano';
 
   @override
   String get pianoPattern => '오른손';
@@ -1994,4 +1994,49 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get pianoMake => '만들기';
+
+  @override
+  String get accompanimentInstruments => '악기';
+
+  @override
+  String get organPartName => 'Organ';
+
+  @override
+  String get stringsPartName => 'Strings';
+
+  @override
+  String get padPartName => 'Pad';
+
+  @override
+  String get brassPartName => 'Brass';
+
+  @override
+  String get pianoPatternAuto => '구간에 맞게';
+
+  @override
+  String get accompanimentOutput => '결과';
+
+  @override
+  String get accompanimentSeparateScores => '악기마다 따로';
+
+  @override
+  String get accompanimentOneScore => '한 악보에 모두';
+
+  @override
+  String get accompanimentDensity => '두께';
+
+  @override
+  String get accompanimentDensityLight => '얇게';
+
+  @override
+  String get accompanimentDensityNormal => '보통';
+
+  @override
+  String get accompanimentDensityFull => '두껍게';
+
+  @override
+  String get pianoSplitPoint => '오른손 최저음(분할점)';
+
+  @override
+  String get pianoSplitAuto => '자동';
 }

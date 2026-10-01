@@ -1138,8 +1138,8 @@ class ArrangeAdviceTest(unittest.TestCase):
         answer = {
             "base": {"pattern": "broken", "register": "low"},
             "sections": [
-                {"bar": 9, "pattern": "beats", "register": "middle"},
-                {"bar": 5, "pattern": "held", "register": "middle"},
+                {"bar": 9, "role": "chorus", "pattern": "beats", "register": "middle"},
+                {"bar": 5, "role": "pre", "pattern": "held", "register": "middle"},
                 {"bar": 9, "pattern": "held", "register": "low"},       # the same bar twice
                 {"bar": 40, "pattern": "beats", "register": "middle"},  # past the end
                 {"bar": 3, "pattern": "stride", "register": "middle"},  # unknown pattern
@@ -1157,8 +1157,8 @@ class ArrangeAdviceTest(unittest.TestCase):
 
         self.assertEqual(advice["base"], {"pattern": "broken", "register": "low"})
         self.assertEqual(advice["sections"], [
-            {"bar": 5, "pattern": "held", "register": "middle"},
-            {"bar": 9, "pattern": "beats", "register": "middle"},
+            {"bar": 5, "role": "other", "pattern": "held", "register": "middle"},
+            {"bar": 9, "role": "chorus", "pattern": "beats", "register": "middle"},
         ])
         self.assertEqual(advice["chords"], [{"bar": 1, "index": 1, "suggested": "D/F#", "reason": "G장조"}])
         self.assertEqual(advice["note"], "잔잔한 곡")

@@ -261,6 +261,7 @@ def _ai_apply(root: ET.Element, items: list[dict], answers: dict, model: str, ou
 
 ARRANGE_PATTERNS = ("held", "beats", "broken")
 ARRANGE_REGISTERS = ("middle", "low")
+ARRANGE_ROLES = ("intro", "verse", "prechorus", "chorus", "bridge", "interlude", "solo", "outro", "other")
 ARRANGE_MAX_BRIEF = 60000
 
 ARRANGE_INSTRUCTIONS = """You plan a simple piano accompaniment for a lead sheet: one melody line
@@ -287,7 +288,10 @@ Sections: give "bar" as the first bar of a stretch that gets its own style;
 the style holds until the next entry. Use the given section starts when there
 are any, otherwise only split where the music clearly changes. Leave
 "sections" empty when one style fits the whole song. Do not change style
-more often than every four bars.
+more often than every four bars. "role" says what the stretch is (intro,
+verse, prechorus, chorus, bridge, interlude, solo, outro, or other): the
+other instruments (organ, strings, pad, brass) play a verse thin and a chorus
+full by it, and the brass rests in verses and bridges.
 
 Chords: the symbols come from optical music recognition and may be misread.
 Suggest a correction only when a symbol is clearly implausible in the key and
@@ -316,8 +320,12 @@ ARRANGE_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object", "additionalProperties": False,
-                "required": ["bar", "pattern", "register"],
-                "properties": {"bar": {"type": "integer"}, **_ARRANGE_STYLE},
+                "required": ["bar", "role", "pattern", "register"],
+                "properties": {
+                    "bar": {"type": "integer"},
+                    "role": {"type": "string", "enum": list(ARRANGE_ROLES)},
+                    **_ARRANGE_STYLE,
+                },
             },
         },
         "chords": {
@@ -358,7 +366,8 @@ def _arrange_clean(answer: dict, bars: int) -> dict:
         if bar < 1 or bar > bars or bar in seen:
             continue
         seen.add(bar)
-        sections.append({"bar": bar, **style})
+        role = raw.get("role") if raw.get("role") in ARRANGE_ROLES else "other"
+        sections.append({"bar": bar, "role": role, **style})
     sections.sort(key=lambda item: item["bar"])
     chords = []
     for raw in answer.get("chords") or []:

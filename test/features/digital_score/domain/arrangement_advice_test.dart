@@ -65,6 +65,8 @@ void main() {
         {'bar': 3, 'pattern': 'beats', 'register': 'middle'},
         {'bar': 9, 'pattern': 'beats', 'register': 'middle'},
         {'bar': 2, 'pattern': 'stride', 'register': 'middle'},
+        {'bar': 4, 'role': 'chorus', 'pattern': 'held', 'register': 'low'},
+        {'bar': 1, 'role': 'nonsense', 'pattern': 'held', 'register': 'low'},
       ],
       'chords': [
         {'bar': 1, 'index': 1, 'suggested': 'D/F#', 'reason': 'G장조'},
@@ -86,7 +88,17 @@ void main() {
     );
     expect(advice.plan.sections, {
       2: const AccompanimentStyle(pattern: AccompanimentPattern.beats),
+      3: const AccompanimentStyle(
+        pattern: AccompanimentPattern.held,
+        register: AccompanimentRegister.low,
+      ),
+      0: const AccompanimentStyle(
+        pattern: AccompanimentPattern.held,
+        register: AccompanimentRegister.low,
+      ),
     });
+    // A role the adviser names is kept; one it does not know is not.
+    expect(advice.roles, {3: SectionRole.chorus});
     expect(
       advice.corrections.map(
         (c) => (c.measureIndex, c.chordIndex, c.current, c.suggested, c.reason),

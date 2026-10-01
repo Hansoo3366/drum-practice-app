@@ -46,15 +46,15 @@ void main() {
       onBoundaryRemoved: () => removed++,
     );
 
-    expect(find.text('코러스 · 5–8마디'), findsOneWidget);
+    expect(find.text('Chorus · 5–8마디'), findsOneWidget);
     expect(
       tester
-          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '코러스'))
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Chorus'))
           .selected,
       isTrue,
     );
     for (final chip in [
-      find.widgetWithText(ChoiceChip, '브리지'),
+      find.widgetWithText(ChoiceChip, 'Bridge'),
       find.widgetWithText(ActionChip, '직접 입력'),
       find.widgetWithText(ActionChip, '앞 구간과 합치기'),
     ]) {
@@ -89,7 +89,7 @@ void main() {
 
     expect(find.text('마디를 누르면 그 마디부터 새 구간이 됩니다'), findsOneWidget);
     final chip = tester.widget<ChoiceChip>(
-      find.widgetWithText(ChoiceChip, '인트로'),
+      find.widgetWithText(ChoiceChip, 'Intro'),
     );
     expect(chip.onSelected, isNull);
   });
@@ -169,8 +169,8 @@ void main() {
     expect(find.text('4–6마디'), findsNWidgets(2));
     expect(find.text('2번째 반복'), findsOneWidget);
     // Adding the intro adds both of its pieces.
-    await tester.ensureVisible(find.widgetWithText(ActionChip, '인트로'));
-    await tester.tap(find.widgetWithText(ActionChip, '인트로'));
+    await tester.ensureVisible(find.widgetWithText(ActionChip, 'Intro'));
+    await tester.tap(find.widgetWithText(ActionChip, 'Intro'));
     await tester.pump();
     expect(sequence.steps.skip(3).map((s) => s.sectionId), ['m0', 'm1']);
   });
@@ -192,7 +192,7 @@ void main() {
       onMakeScore: () => made++,
     );
 
-    expect(find.text('벌스 1'), findsNWidgets(2));
+    expect(find.text('Verse 1'), findsNWidgets(2));
     expect(find.text('1–4마디'), findsOneWidget);
     expect(find.text('×2'), findsOneWidget);
     expect(find.text('12마디 · 0:24 · 4마디는 연주하지 않음'), findsOneWidget);
@@ -210,8 +210,8 @@ void main() {
     expect(sequence.steps.map((s) => s.sectionId), ['m4', 'm0']);
 
     // A later verse can be added on its own.
-    await tester.ensureVisible(find.widgetWithText(ActionChip, '벌스 2'));
-    await tester.tap(find.widgetWithText(ActionChip, '벌스 2'));
+    await tester.ensureVisible(find.widgetWithText(ActionChip, 'Verse 2'));
+    await tester.tap(find.widgetWithText(ActionChip, 'Verse 2'));
     await tester.pump();
     expect(sequence.steps.last.sectionId, 'm8');
 

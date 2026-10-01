@@ -67,6 +67,12 @@ dependencies:
   flutter_appauth: ^11.0.0
   flutter_notemus: ^2.8.1
 
+# The native sequencer of flutter_notemus plays with a SoundFont in this copy;
+# see third_party/flutter_notemus/VENDORED.md.
+dependency_overrides:
+  flutter_notemus:
+    path: third_party/flutter_notemus
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -114,12 +120,18 @@ flutter:
   assets:
     - assets/fonts/LICENSE-SUIT.txt
     - assets/fonts/LICENSE-JetBrainsMono.txt
+    # TrueType copy of SUIT: the PDF writer cannot embed the OTF.
+    - assets/fonts/SUIT-Regular.ttf
     - assets/alphatab/
     - assets/alphatab/vendor/
     - assets/alphatab/vendor/font/
     - assets/alphatab/vendor/soundfont/
     - assets/scores/
     - assets/sounds/
+    # Instrument samples for score playback: the piano app only.
+    - path: assets/soundfont/
+      flavors:
+        - piano
     - assets/brands/
     - assets/icons/
 

@@ -3707,25 +3707,25 @@ abstract class AppLocalizations {
   /// Menu action that makes a new version with a piano part (right-hand chords, left-hand bass) under the melody
   ///
   /// In en, this message translates to:
-  /// **'Add a piano part'**
+  /// **'Make an instrument score'**
   String get makeThreeStaff;
 
   /// Name of the version made by adding a piano part under the melody
   ///
   /// In en, this message translates to:
-  /// **'With piano'**
+  /// **'With accompaniment'**
   String get threeStaffVersionName;
 
   /// Shown when a piano part is asked for a score without chord symbols
   ///
   /// In en, this message translates to:
-  /// **'There are no chord symbols to make a piano part from'**
+  /// **'There are no chord symbols to make an accompaniment from'**
   String get threeStaffNeedsChords;
 
   /// Shown when a piano part is asked for a score that has several staves or parts
   ///
   /// In en, this message translates to:
-  /// **'A piano part can only be added to a one-staff melody'**
+  /// **'Accompaniment parts can only be added to a one-staff melody'**
   String get threeStaffNeedsMelody;
 
   /// Name of the generated piano part in the score
@@ -3829,6 +3829,96 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Make'**
   String get pianoMake;
+
+  /// Heading for the instruments accompaniment parts are made for
+  ///
+  /// In en, this message translates to:
+  /// **'Instruments'**
+  String get accompanimentInstruments;
+
+  /// Name of the generated organ part
+  ///
+  /// In en, this message translates to:
+  /// **'Organ'**
+  String get organPartName;
+
+  /// Name of the generated strings part
+  ///
+  /// In en, this message translates to:
+  /// **'Strings'**
+  String get stringsPartName;
+
+  /// Name of the generated synth pad part
+  ///
+  /// In en, this message translates to:
+  /// **'Pad'**
+  String get padPartName;
+
+  /// Name of the generated brass part
+  ///
+  /// In en, this message translates to:
+  /// **'Brass'**
+  String get brassPartName;
+
+  /// Accompaniment pattern chosen per section (verse, chorus...) by the app
+  ///
+  /// In en, this message translates to:
+  /// **'By section'**
+  String get pianoPatternAuto;
+
+  /// Heading for the form of the generated scores
+  ///
+  /// In en, this message translates to:
+  /// **'Result'**
+  String get accompanimentOutput;
+
+  /// Each chosen instrument gets its own version with the melody on top
+  ///
+  /// In en, this message translates to:
+  /// **'One score per instrument'**
+  String get accompanimentSeparateScores;
+
+  /// All chosen instruments under the melody in one version
+  ///
+  /// In en, this message translates to:
+  /// **'All in one score'**
+  String get accompanimentOneScore;
+
+  /// Heading for how many notes the generated parts play at once
+  ///
+  /// In en, this message translates to:
+  /// **'Density'**
+  String get accompanimentDensity;
+
+  /// Thin accompaniment: at most three notes, nothing doubled
+  ///
+  /// In en, this message translates to:
+  /// **'Light'**
+  String get accompanimentDensityLight;
+
+  /// Accompaniment density as each section asks
+  ///
+  /// In en, this message translates to:
+  /// **'Normal'**
+  String get accompanimentDensityNormal;
+
+  /// Thick accompaniment: full chords with octave doubling
+  ///
+  /// In en, this message translates to:
+  /// **'Full'**
+  String get accompanimentDensityFull;
+
+  /// Heading for the split point between the piano's hands
+  ///
+  /// In en, this message translates to:
+  /// **'Right hand lowest note'**
+  String get pianoSplitPoint;
+
+  /// Split point left to the chosen register
+  ///
+  /// In en, this message translates to:
+  /// **'Auto'**
+  String get pianoSplitAuto;
 }
 
 class _AppLocalizationsDelegate
