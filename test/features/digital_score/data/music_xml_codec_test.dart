@@ -226,6 +226,26 @@ void main() {
       expect(codec.decodeXml(encoded).noteCount, 3);
     });
 
+    test('opens a bar whose backup goes before its start', () {
+      // A recogniser leaves two backups in a row; the second has nothing
+      // left to go back over.
+      const xml = '''
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
+  <part id="P1"><measure number="1">
+    <attributes><divisions>4</divisions></attributes>
+    <note><pitch><step>B</step><octave>4</octave></pitch><duration>8</duration><voice>1</voice><type>half</type></note>
+    <backup><duration>8</duration></backup>
+    <backup><duration>16</duration></backup>
+    <note><pitch><step>E</step><octave>4</octave></pitch><duration>8</duration><voice>2</voice><type>half</type></note>
+  </measure></part>
+</score-partwise>
+''';
+      final score = codec.decodeXml(xml);
+
+      expect(score.noteCount, 2);
+    });
+
     test('ignores tempo marks no player could use', () {
       const xml = '''<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="3.1"><part-list><score-part id="P1"><part-name>V</part-name></score-part></part-list>

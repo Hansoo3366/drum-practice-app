@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -232,12 +233,12 @@ class MusicXmlCodec {
         case 'attributes':
           attributes = _parseAttributes(child, attributes);
         case 'backup':
-          cursor -= _requiredPositiveInt(child, 'duration');
-          if (cursor < 0) {
-            throw const FormatException(
-              'MusicXML backup moved before the start of a measure.',
-            );
-          }
+          // A backup longer than what came before it (a recogniser leaves
+          // such bars) goes to the start of the bar; the score still opens.
+          cursor = math.max(
+            0,
+            cursor - _requiredPositiveInt(child, 'duration'),
+          );
         case 'forward':
           cursor += _requiredPositiveInt(child, 'duration');
         case 'note':

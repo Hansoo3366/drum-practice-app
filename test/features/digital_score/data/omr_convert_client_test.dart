@@ -7,6 +7,45 @@ import 'package:page_a_diddle/features/digital_score/data/omr_convert_client.dar
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_config.dart';
 
 void main() {
+  test('fetches the annotations the server separated, or nothing', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    server.listen((request) async {
+      if (request.uri.path == '/jobs/with/annotations') {
+        request.response
+          ..headers.contentType = ContentType.json
+          ..add(
+            utf8.encode(
+              jsonEncode({
+                'pages': [
+                  {'page': 1, 'annotations': 1},
+                ],
+                'items': [
+                  {'page': 1, 'type': 'ink', 'color': 'red', 'text': '도돌이 무시'},
+                ],
+              }),
+            ),
+          );
+      } else {
+        request.response.statusCode = 404;
+      }
+      await request.response.close();
+    });
+    final client = OmrConvertClient(
+      config: OmrConvertConfig(
+        baseUrl: 'http://127.0.0.1:${server.port}',
+        token: 'test-token',
+      ),
+    );
+
+    final found = await client.jobAnnotations('with');
+    expect(
+      ((jsonDecode(found!) as Map)['items'] as List).single,
+      containsPair('text', '도돌이 무시'),
+    );
+    expect(await client.jobAnnotations('without'), isNull);
+  });
+
   test('asks for accompaniment advice with the brief as JSON', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);

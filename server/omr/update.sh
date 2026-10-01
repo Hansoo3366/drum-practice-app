@@ -10,7 +10,7 @@ SERVER_SRC="$UPLOAD_DIR/omr_server.py"
 COMPARE_SRC="$UPLOAD_DIR/compare_musicxml.py"
 AI_SRC="$UPLOAD_DIR/ai_verify.py"
 # The server's modules; every one is required.
-MODULES=(omr_score omr_rules omr_book omr_marks omr_text omr_validate omr_ai)
+MODULES=(omr_score omr_rules omr_book omr_marks omr_text omr_validate omr_annotations omr_ai)
 
 if [ ! -f "$SERVER_SRC" ]; then
   echo "omr_server.py not found in upload directory: $UPLOAD_DIR" >&2

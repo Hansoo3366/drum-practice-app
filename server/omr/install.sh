@@ -8,7 +8,7 @@ sudo apt-get update
 sudo apt-get install -y python3-flask xvfb tesseract-ocr python3-pil
 sudo mkdir -p /opt/omr/jobs
 sudo cp "$HERE/omr_server.py" /opt/omr/omr_server.py
-for module in omr_score omr_rules omr_book omr_marks omr_text omr_validate omr_ai ai_verify; do
+for module in omr_score omr_rules omr_book omr_marks omr_text omr_validate omr_annotations omr_ai ai_verify; do
   sudo cp "$HERE/$module.py" "/opt/omr/$module.py"
 done
 sudo chmod 755 /opt/omr/omr_server.py

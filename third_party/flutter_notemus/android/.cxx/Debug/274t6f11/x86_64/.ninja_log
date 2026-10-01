@@ -1,5 +1,0 @@
-# ninja log v5
-0	1239	1790839454677658392	CMakeFiles/flutter_notemus_native.dir/native_audio_engine.cpp.o	84aa2807c1d4506
-1241	1309	1790839454749081905	/Users/hansookim/Desktop/Web/drum-practice-app/build/flutter_notemus/intermediates/cxx/Debug/274t6f11/obj/x86_64/libflutter_notemus_native.so	b9e6b34a95be65ba
-2	1269	1790840076118965575	CMakeFiles/flutter_notemus_native.dir/native_audio_engine.cpp.o	84aa2807c1d4506
-1270	1344	1790840076197289686	/Users/hansookim/Desktop/Web/drum-practice-app/build/flutter_notemus/intermediates/cxx/Debug/274t6f11/obj/x86_64/libflutter_notemus_native.so	b9e6b34a95be65ba

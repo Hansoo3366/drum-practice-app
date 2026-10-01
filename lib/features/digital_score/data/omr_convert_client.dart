@@ -201,6 +201,13 @@ class OmrConvertClient {
     return response == null ? null : utf8.decode(response.bodyBytes);
   }
 
+  /// Colour pen and highlighter the server took out of the upload before
+  /// reading it, with their place on the page, or null when it found none.
+  Future<String?> jobAnnotations(String jobId) async {
+    final response = await _optional('/jobs/$jobId/annotations');
+    return response == null ? null : utf8.decode(response.bodyBytes);
+  }
+
   /// Rule-based suspect measures found on the server, or null.
   Future<String?> jobValidation(String jobId) async {
     final response = await _optional('/jobs/$jobId/validation');

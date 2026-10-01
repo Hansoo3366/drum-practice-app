@@ -1,5 +1,31 @@
 # 작업 로그
 
+## 2026-10-02 08:26 KST — F-07l 색 펜·형광펜 필기 분리, 마디 앞으로 가는 backup 수정
+
+- 작업자: Claude (Opus 5.5)
+- 목표: 사용자 요청("지우고 다음 스텝 실행"). F-07k·F-08d는 OpenAI 크레딧이 필요해, 다음 순서인 F-07l(OMR 기획서 Phase 4·MODULE-03)을 진행.
+- 구현(서버):
+  - `omr_annotations.py`(신규, PIL만 사용): 종이 색조 위로 채도가 높은 픽셀을 색 필기로 본다. 형광펜은 색만 빼고 아래 인쇄를 남기고, 펜·색 글자는 흰색으로 지운다(가려진 내용은 추측하지 않음). 필기 영역을 묶어 종류(ink·highlight)·색·위치·인쇄와 닿는지를 기록하고, 글자로 읽히는 것은 Tesseract로 읽는다.
+  - 대상: 사진(JPG·PNG)과 앱이 사진으로 만든 PDF(쪽마다 사진 1장, 글꼴 없음). 그 밖의 PDF는 그대로 둔다. 색 픽셀이 0.02% 미만이면 손대지 않는다. `OMR_ANNOTATIONS=0`으로 끌 수 있다.
+  - 업로드 파일(`in/`)은 바꾸지 않는다. `out/annotations.json`, `out/annotations/page-N.annotation.png`(필기만), `page-N.clean.jpg`(필기 뺀 쪽)를 남기고 인식기는 정리본을 읽는다. `recognition.json`에 `annotations` 요약, `GET /jobs/<id>/annotations`, `/jobs/<id>/annotations/<파일>` 추가.
+  - 검증기 규칙 `A001`(중간): 인쇄와 겹친 펜 필기가 놓인 마디를 "가려졌을 수 있음"으로 표시.
+  - `install.sh`·`update.sh` 모듈 목록에 추가.
+- 구현(앱): 변환 결과를 받을 때 필기 목록을 함께 받아 `omr_annotations/<곡ID>.json`에 저장(`OmrConvertClient.jobAnnotations`, `SongFileStorage.saveOmrAnnotations/loadOmrAnnotations`). `A001` 문구 "색 필기가 겹친 마디입니다". 화면 표시는 아직 없음(F-07n 검토 화면에서 사용).
+- 실제 변환 비교(서버, "나의 약함은" 한 쪽: 파란 글자, 빨간 X·메모, 노란 형광펜):
+  - 필기 7개 분리, A001 3마디(8·15·16).
+  - 박자 안 맞는 마디: 300dpi 14 → 11, 400dpi 8 → 7. 기호 오인식(S001) 4 → 0. 음표 수는 거의 같음(171 → 171, 184 → 185).
+  - 한 쪽·한 곡 결과라 일반화할 수 없다.
+- 비교 중 찾은 버그(필기 분리와 무관, 기존 변환에도 있던 것): 가짜 온쉼표 성부를 지울 때 그 쉼표를 되감는 `<backup>`이 남아 마디 시작 앞으로 가는 backup이 생겼고, 앱 코덱이 이를 예외로 거부해 그 곡을 열 수 없었다.
+  - 원인 수정: `_drop_placeholder_rests`가 쉼표 뒤의 같은 길이 backup도 함께 지운다.
+  - 안전망: `_clamp_backups`(신규)가 후처리 끝에 마디 앞으로 가는 backup을 줄이거나 지운다(`repairs.backups_clamped`).
+  - 앱: `MusicXmlCodec`이 예외 대신 마디 시작으로 맞춘다. 이미 받아 둔 파일도 열린다.
+- 검증: 서버 테스트 95개 통과(필기 6, backup 2 추가). 배포 후 서버에 설치된 규칙으로 두 작업의 raw.mxl을 다시 처리해 마디 앞으로 가는 backup 0 확인. 앱 digital_score+core+app 371 통과·1 실패(옛 alphaTab SoundFont 테스트). analyze 오류·경고 없음.
+- 확인 못 한 것:
+  - 에뮬레이터: 빌드 2036이 저장 공간 부족으로 거부돼, 사용자 지시("제거후 재설치")로 피아노 앱을 제거하고 새로 설치했다(실행 확인, 오류 로그 없음). 앱에 있던 곡 데이터는 지워졌다. 필기가 있는 사진을 앱에서 변환해 보는 확인은 아직 안 함.
+  - 배포 후 실제 재변환: 서버 인증 정보를 읽어야 해서 하지 않았다. 대신 설치된 규칙을 기존 결과에 다시 적용해 확인.
+  - 검은 연필·검은 펜 필기는 색으로 구분되지 않아 분리 대상이 아니다. 여러 쪽 PDF는 단위 테스트로만 확인.
+- 커밋: 사용자 지시로 main에 커밋·푸시. 지난 커밋에 들어간 `third_party/flutter_notemus/android/.cxx/` 빌드 캐시 153개를 추적에서 빼고 `.gitignore`에 추가.
+
 ## 2026-10-01 17:53 KST — F-08c 마무리: 두께·분할점, 버전 파일 기준 내보내기(조판 PDF)
 
 - 작업자: Claude (Opus 5.5)

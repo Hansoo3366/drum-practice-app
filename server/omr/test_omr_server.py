@@ -43,6 +43,7 @@ import omr_marks  # noqa: E402
 import omr_rules  # noqa: E402
 import omr_score  # noqa: E402
 import omr_text  # noqa: E402
+import omr_annotations  # noqa: E402
 import omr_validate  # noqa: E402
 
 
@@ -1197,6 +1198,187 @@ class ArrangeAdviceTest(unittest.TestCase):
 
         self.assertEqual((failed[1], failed[0]["error"]), (502, "ai failed"))
         self.assertEqual(off[1], 503)
+
+
+
+
+class BackupTest(unittest.TestCase):
+    def test_a_backup_never_goes_before_the_start_of_its_measure(self):
+        root = ET.fromstring(
+            "<score-partwise><part id='P1'><measure number='1'>"
+            "<note><pitch><step>B</step><octave>4</octave></pitch><duration>6</duration></note>"
+            "<note><rest/><duration>6</duration></note>"
+            "<backup><duration>12</duration></backup><backup><duration>48</duration></backup>"
+            "<forward><duration>6</duration></forward>"
+            "<note><pitch><step>E</step><octave>4</octave></pitch><duration>12</duration></note>"
+            "<backup><duration>30</duration></backup>"
+            "<note><pitch><step>C</step><octave>4</octave></pitch><duration>6</duration></note>"
+            "</measure></part></score-partwise>"
+        )
+
+        changed = omr_rules._clamp_backups(root)
+
+        self.assertEqual(changed, 2)
+        backups = [b.find("duration").text for b in root.iter("backup")]
+        # The second backup, already at the start, is dropped; the last one
+        # goes back the 18 there are, not 30.
+        self.assertEqual(backups, ["12", "18"])
+        self.assertEqual(omr_rules._clamp_backups(root), 0)
+
+
+    def test_a_removed_placeholder_rest_takes_the_backup_over_it_along(self):
+        # Voice 1 is short, voice 2 is a stray measure rest, voice 3 the tune:
+        # without the rest, the rewind over it would go before the bar.
+        root = ET.fromstring(
+            "<score-partwise><part id='P1'><measure number='1'>"
+            "<note><pitch><step>B</step><octave>4</octave></pitch><duration>6</duration><voice>1</voice><type>eighth</type></note>"
+            "<note><rest/><duration>6</duration><voice>1</voice><type>eighth</type></note>"
+            "<backup><duration>12</duration></backup>"
+            "<note><rest measure='yes'/><duration>48</duration><voice>2</voice></note>"
+            "<backup><duration>48</duration></backup>"
+            "<forward><duration>6</duration></forward>"
+            "<note><pitch><step>E</step><octave>4</octave></pitch><duration>42</duration><voice>3</voice><type>half</type></note>"
+            "</measure></part></score-partwise>"
+        )
+
+        self.assertEqual(omr_rules._drop_placeholder_rests(root), 1)
+
+        self.assertEqual([b.find("duration").text for b in root.iter("backup")], ["12"])
+        self.assertEqual(omr_rules._clamp_backups(root), 0)
+
+
+class AnnotationTest(unittest.TestCase):
+    """Colour pen and highlighter are taken out of what the engine reads."""
+
+    @staticmethod
+    def _page(annotated=True):
+        from PIL import Image, ImageDraw
+
+        page = Image.new("RGB", (800, 600), (250, 248, 240))  # slightly warm paper
+        draw = ImageDraw.Draw(page)
+        for y in (200, 215, 230, 245, 260):
+            draw.line([(40, y), (760, y)], fill=(20, 20, 20), width=2)
+        draw.rectangle([300, 190, 312, 270], fill=(10, 10, 10))  # a printed bar
+        if annotated:
+            # Highlighter over the printed bar: yellow over paper, the bar still dark.
+            for x in range(260, 360):
+                for y in range(180, 280):
+                    red, green, blue = page.getpixel((x, y))
+                    if red > 100:
+                        page.putpixel((x, y), (255, 240, 90))
+            # A red pen stroke across the staff, and a blue one in the margin.
+            draw.line([(500, 170), (560, 290)], fill=(225, 40, 45), width=7)
+            draw.line([(600, 60), (700, 60)], fill=(30, 90, 220), width=7)
+        return page
+
+    def test_highlighter_goes_and_the_print_under_it_stays(self):
+        clean, annotation, mask, _core = omr_annotations._separate(self._page())
+
+        self.assertLess(clean.getpixel((306, 230)), 60)       # the bar under the highlighter
+        self.assertGreater(clean.getpixel((280, 222)), 235)   # highlighted paper is white
+        self.assertGreater(clean.getpixel((530, 223)), 235)   # the pen stroke is gone
+        self.assertLess(clean.getpixel((100, 215)), 80)       # a staff line elsewhere
+        self.assertEqual(mask.getpixel((100, 100)), 0)
+        self.assertEqual(annotation.getpixel((100, 100)), (255, 255, 255))
+        self.assertGreater(annotation.getpixel((650, 60))[2], 180)
+
+    def test_a_page_without_colour_is_left_alone(self):
+        self.assertIsNone(omr_annotations._separate(self._page(annotated=False)))
+
+    def test_annotations_are_listed_by_kind_colour_and_place(self):
+        clean, annotation, mask, core = omr_annotations._separate(self._page())
+
+        regions = omr_annotations._regions(mask, core, annotation, clean)
+
+        kinds = {(item["type"], item["color"]): item for item in regions}
+        self.assertEqual(set(kinds), {("highlight", "yellow"), ("ink", "red"), ("ink", "blue")})
+        # The red stroke crosses the staff; the blue one touches nothing.
+        self.assertTrue(kinds[("ink", "red")]["touches_print"])
+        self.assertFalse(kinds[("ink", "blue")]["touches_print"])
+        box = kinds[("ink", "blue")]["region"]
+        self.assertTrue(580 <= box["x"] <= 600 and box["x"] + box["width"] >= 700)
+        self.assertTrue(all(item["text"] is None for item in regions))
+
+    def test_an_image_upload_is_read_from_a_cleaned_copy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "in").mkdir()
+            (root / "out").mkdir()
+            source = root / "in" / "score.png"
+            self._page().save(source)
+            before = source.read_bytes()
+            with patch.object(omr_annotations.shutil, "which", return_value=None):
+                target, report = omr_annotations._separate_upload(source, root / "out")
+
+            self.assertEqual(target, root / "out" / "annotations" / "score.png")
+            self.assertEqual(source.read_bytes(), before)  # the upload is untouched
+            saved = json.loads((root / "out" / "annotations.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["pages"][0]["annotations"], 3)
+            self.assertEqual({item["page"] for item in saved["items"]}, {1})
+            self.assertTrue((root / "out" / "annotations" / "page-1.annotation.png").is_file())
+            self.assertEqual(report["pages"][0]["width"], 800)
+
+            plain = root / "in" / "plain.png"
+            self._page(annotated=False).save(plain)
+            self.assertEqual(omr_annotations._separate_upload(plain, root / "out"), (plain, None))
+            with patch.dict(os.environ, {"OMR_ANNOTATIONS": "0"}):
+                self.assertEqual(omr_annotations._separate_upload(source, root / "out"), (source, None))
+
+    def test_a_pdf_of_photos_is_rebuilt_and_any_other_pdf_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "out").mkdir()
+            source = root / "score.pdf"
+            pages = [self._page(), self._page(annotated=False)]
+            pages[0].save(source, "PDF", save_all=True, append_images=pages[1:], quality=95)
+            with patch.object(omr_annotations.shutil, "which", return_value=None):
+                target, report = omr_annotations._separate_upload(source, root / "out")
+
+            self.assertEqual(target, root / "out" / "annotations" / "score.pdf")
+            data = target.read_bytes()
+            self.assertEqual(omr_annotations._pdf_pages(data), 2)
+            self.assertEqual(len(omr_annotations._pdf_photos(data)), 2)
+            self.assertEqual([page["annotations"] for page in report["pages"]], [3, 0])
+
+            vector = root / "vector.pdf"
+            vector.write_bytes(source.read_bytes() + b"\n<< /Font << /F1 5 0 R >> >>\n")
+            self.assertEqual(omr_annotations._separate_upload(vector, root / "out"), (vector, None))
+
+    def test_ink_over_a_measure_marks_it_for_review(self):
+        root = ET.fromstring(
+            '<score-partwise><part id="P1">'
+            '<measure number="1"/><measure number="2"/><measure number="3"/>'
+            '</part></score-partwise>'
+        )
+        staff = {"top": 400.0, "bottom": 460.0, "interline": 15.0,
+                 "measures": [(100.0, 500.0, []), (500.0, 900.0, []), (900.0, 1300.0, [])]}
+        image = types.SimpleNamespace(width=1600)
+        book = {
+            "sheets": [("1", None, image, 15.0, [staff])],
+            "placements": [[("1", 0, 0, [staff]), ("1", 0, 1, [staff]), ("1", 0, 2, [staff])]],
+        }
+        annotations = {
+            "pages": [{"page": 1, "width": 800, "height": 600, "annotations": 3}],
+            "items": [
+                # On the page at half the sheet's size: over bar 2 of the sheet.
+                {"page": 1, "type": "ink", "touches_print": True,
+                 "region": {"x": 300, "y": 190, "width": 40, "height": 50}},
+                # Highlighter and ink clear of print hide nothing.
+                {"page": 1, "type": "highlight", "touches_print": False,
+                 "region": {"x": 60, "y": 190, "width": 100, "height": 50}},
+                {"page": 1, "type": "ink", "touches_print": False,
+                 "region": {"x": 500, "y": 190, "width": 40, "height": 50}},
+                # Far above the staff.
+                {"page": 1, "type": "ink", "touches_print": True,
+                 "region": {"x": 300, "y": 20, "width": 40, "height": 40}},
+            ],
+        }
+
+        issues = omr_validate._annotation_checks(root, book, annotations)
+
+        self.assertEqual([(issue["rule"], issue["measure"], issue["severity"]) for issue in issues],
+                         [("A001", "2", "medium")])
+        self.assertEqual(omr_validate._annotation_checks(root, book, None), [])
 
 
 if __name__ == "__main__":

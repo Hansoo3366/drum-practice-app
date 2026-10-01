@@ -125,6 +125,9 @@ class SongFileStorage {
   String omrValidationPathFor(String songId) =>
       path.join('omr_validation', '$songId.json');
 
+  String omrAnnotationsPathFor(String songId) =>
+      path.join('omr_annotations', '$songId.json');
+
   String omrCorrectionsPathFor(String songId) =>
       path.join('omr_corrections', '$songId.json');
 
@@ -207,6 +210,15 @@ class SongFileStorage {
 
   Future<String?> loadOmrValidation(String songId) async {
     return _loadSidecar(omrValidationPathFor(songId));
+  }
+
+  /// The handwriting the conversion server separated from the score.
+  Future<void> saveOmrAnnotations(String songId, String jsonContent) async {
+    await _saveSidecar(omrAnnotationsPathFor(songId), jsonContent);
+  }
+
+  Future<String?> loadOmrAnnotations(String songId) async {
+    return _loadSidecar(omrAnnotationsPathFor(songId));
   }
 
   Future<void> saveOmrSource({

@@ -125,6 +125,7 @@ class OmrConvertService {
     final raw = await _client.jobRawResult(jobId);
     final corrections = await _client.jobCorrections(jobId);
     final validation = await _client.jobValidation(jobId);
+    final annotations = await _client.jobAnnotations(jobId);
     final ai = await _client.jobAiResult(jobId);
     final aiReview = await _client.jobAiReview(jobId);
     // The engine's own export stays the original; the server's corrections
@@ -169,6 +170,11 @@ class OmrConvertService {
     await _storage.saveOmrJobId(songId, jobId);
     if (validation != null) {
       await _storage.saveOmrValidation(songId, validation);
+    }
+    // What the server took out of the upload (pen, highlighter) stays with
+    // the song: the original keeps it, the score no longer has it.
+    if (annotations != null) {
+      await _storage.saveOmrAnnotations(songId, annotations);
     }
     if (original?.bytes != null) {
       await _storage.saveOmrSource(

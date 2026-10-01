@@ -1,7 +1,0 @@
-[
-{
-  "directory": "/Users/hansookim/Desktop/Web/drum-practice-app/third_party/flutter_notemus/android/.cxx/Debug/274t6f11/x86",
-  "command": "/Users/hansookim/Library/Android/sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=i686-none-linux-android21 --sysroot=/Users/hansookim/Library/Android/sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -Dflutter_notemus_native_EXPORTS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -mstackrealign -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -fPIC -O3 -ffast-math -o CMakeFiles/flutter_notemus_native.dir/native_audio_engine.cpp.o -c /Users/hansookim/Desktop/Web/drum-practice-app/third_party/flutter_notemus/android/src/main/cpp/native_audio_engine.cpp",
-  "file": "/Users/hansookim/Desktop/Web/drum-practice-app/third_party/flutter_notemus/android/src/main/cpp/native_audio_engine.cpp"
-}
-]

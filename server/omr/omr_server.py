@@ -22,12 +22,13 @@ from xml.etree import ElementTree as ET
 from flask import Flask, jsonify, request, send_file
 
 from omr_score import PIPELINE, _find_score, _read_score, _write_mxl
-from omr_rules import _add_lyric_dashes, _chords_from_words, _drop_bad_tempos, _drop_lyric_dash_articulations, _drop_placeholder_rests, _drop_second_chords, _drop_tie_dots, _merge_split_parts, _split_korean_lyrics, _tie_held_dashes, _title_from_credits
+from omr_rules import _clamp_backups, _add_lyric_dashes, _chords_from_words, _drop_bad_tempos, _drop_lyric_dash_articulations, _drop_placeholder_rests, _drop_second_chords, _drop_tie_dots, _merge_split_parts, _split_korean_lyrics, _tie_held_dashes, _title_from_credits
 from omr_book import _load_book
 from omr_marks import _add_segno_coda, _navigation_marks, _repeat_starts, _segno_coda_marks, _upload_photos
 from omr_text import _attach_stray_accidentals, _drop_chord_junk, _ocr_chord_lines, _ocr_lyrics, _reread_chords
 from omr_validate import _corrections, _validate
 from omr_ai import ARRANGE_MAX_BRIEF, _ai_enabled, _ai_review, _arrange_advice
+from omr_annotations import _separate_upload
 
 TOKEN = os.environ.get("OMR_TOKEN", "piano-omr-dev")
 JOBS_DIR = Path(os.environ.get("OMR_JOBS", "/opt/omr/jobs"))
@@ -265,6 +266,23 @@ def job_validation(job_id: str):
     return _job_file(job_id, "validation.json", "application/json")
 
 
+@app.get("/jobs/<job_id>/annotations")
+def job_annotations(job_id: str):
+    """Colour annotations taken out of the upload, with their page boxes (OMR spec §20)."""
+    return _job_file(job_id, "annotations.json", "application/json")
+
+
+@app.get("/jobs/<job_id>/annotations/<name>")
+def job_annotation_image(job_id: str, name: str):
+    """A page's annotations alone (`page-N.annotation.png`) or the page without them."""
+    match = re.fullmatch(r"page-\d+\.(annotation\.png|clean\.jpg)", name)
+    if match is None:
+        return jsonify(error="not found"), 404
+    return _job_file(
+        job_id, f"annotations/{name}", "image/png" if name.endswith(".png") else "image/jpeg",
+    )
+
+
 @app.get("/jobs/<job_id>/ai")
 def job_ai(job_id: str):
     """The AI version: chord and lyric suggestions applied to the result."""
@@ -315,6 +333,13 @@ def _pdf_dpis() -> list[int]:
 def _run_job_serial(job_id: str, source: Path, outgoing: Path, profile: str) -> None:
     _update(job_id, status="running", progress=5, step="start")
     try:
+        # Colour pen and highlighter are taken out of what the engine reads;
+        # the upload itself stays as it is (OMR spec MODULE-03).
+        annotations = None
+        try:
+            source, annotations = _separate_upload(source, outgoing)
+        except Exception as exc:  # noqa: BLE001 - a failed clean-up never fails a job
+            annotations = {"error": str(exc)[-500:]}
         dpis = _pdf_dpis() if source.suffix.lower() == ".pdf" else [None]
         deadline = time.monotonic() + TIMEOUT_SEC
         candidates = []
@@ -372,6 +397,12 @@ def _run_job_serial(job_id: str, source: Path, outgoing: Path, profile: str) -> 
             "selected": selected["label"] if selected else None,
             "selection_reason": reason, "candidates": candidates,
             "accuracy_verified": False,
+            "annotations": (
+                None if annotations is None
+                else annotations if "error" in annotations
+                else {"pages": sum(1 for page in annotations["pages"] if page["annotations"]),
+                      "items": len(annotations["items"])}
+            ),
             "ocr_languages": os.environ.get("OMR_OCR_LANGUAGES", "").strip() or "Audiveris default",
         }
         (outgoing / "recognition.json").write_text(
@@ -789,6 +820,7 @@ def _postprocess(path: Path, profile: str) -> tuple[Path, dict]:
     report["title"] = _title_from_credits(root)
     # Last: the repairs above address parts by their position in the book.
     report["parts_merged"] = _merge_split_parts(root)
+    report["backups_clamped"] = _clamp_backups(root)
     # Every repair edits the tree, so an unchanged tree means nothing was fixed.
     if ET.tostring(root) == original:
         return path, report

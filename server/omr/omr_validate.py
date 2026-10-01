@@ -184,6 +184,7 @@ def _validate(path: Path, folder: Path) -> dict:
     crops = folder / "suspects"
     if book is not None:
         issues += _image_checks(root, book)
+        issues += _annotation_checks(root, book, _annotations(folder))
         crops.mkdir(exist_ok=True)
         _crop_suspects(book, issues, crops)
     for measure in root.iter("measure"):
@@ -223,6 +224,63 @@ def _image_checks(root: ET.Element, book: dict) -> list[dict]:
                     "rule": "S001", "severity": _SEVERITY["S001"], "part": 0,
                     "measureIndex": index, "measure": first[index].get("number"),
                     "detail": "the system's measures do not match the page; chords and lyrics were not read",
+                })
+    return issues
+
+
+def _annotations(folder: Path) -> dict | None:
+    """What was taken out of the upload before recognition, from the job folder."""
+    try:
+        return json.loads((folder.parent / "annotations.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _annotation_checks(root: ET.Element, book: dict, annotations: dict | None) -> list[dict]:
+    """A001: ink that touched print lay over the measure. What it covered was
+    taken out with it and is not guessed (OMR spec MODULE-03)."""
+    if not annotations:
+        return []
+    widths = {str(number): image.width for number, _s, image, _i, _st in book["sheets"]}
+    pages = {str(page["page"]): page for page in annotations.get("pages", [])}
+    boxes: dict[str, list[tuple[float, float, float, float]]] = {}
+    for item in annotations.get("items", []):
+        page = str(item.get("page"))
+        if item.get("type") != "ink" or not item.get("touches_print"):
+            continue
+        if page not in widths or not pages.get(page, {}).get("width"):
+            continue
+        # The sheet is the page as the engine rendered it: another size.
+        scale = widths[page] / pages[page]["width"]
+        region = item["region"]
+        boxes.setdefault(page, []).append((
+            region["x"] * scale, region["y"] * scale,
+            (region["x"] + region["width"]) * scale, (region["y"] + region["height"]) * scale,
+        ))
+    if not boxes:
+        return []
+    issues = []
+    parts = root.findall("part")
+    for part_index, (part, entries) in enumerate(zip(parts, book["placements"])):
+        for index, (measure, entry) in enumerate(zip(part.findall("measure"), entries)):
+            if entry is None:
+                continue
+            number, _system, stack, staves = entry
+            covered = False
+            for left, top, right, bottom in boxes.get(str(number), []):
+                for staff in staves:
+                    if stack >= len(staff["measures"]):
+                        continue
+                    bar_left, bar_right, _heads = staff["measures"][stack]
+                    pad = staff["interline"] * 1.5
+                    if (left < bar_right and right > bar_left
+                            and top < staff["bottom"] + pad and bottom > staff["top"] - pad):
+                        covered = True
+            if covered:
+                issues.append({
+                    "rule": "A001", "severity": _SEVERITY["A001"], "part": part_index,
+                    "measureIndex": index, "measure": measure.get("number"),
+                    "detail": "a colour annotation lay over the measure; what it covered was not read",
                 })
     return issues
 

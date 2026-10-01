@@ -47,3 +47,6 @@ app.*.map.json
 # Locally fetched, pinned native dependency sources are reproducible through
 # native/lomse_bridge/build_android.ps1 and must not be committed.
 /native/.cache/
+
+# NDK build cache of the vendored plugin
+third_party/**/.cxx/

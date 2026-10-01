@@ -241,9 +241,16 @@ def _drop_placeholder_rests(root: ET.Element) -> int:
                 items = list(measure)
                 at = items.index(note)
                 before = items[at - 1] if at else None
+                after = items[at + 1] if at + 1 < len(items) else None
+                # The rewind of this voice goes with it: the one that brought
+                # the cursor back to write it, or else the one that takes the
+                # cursor back over it for the next voice.
                 if before is not None and before.tag == "backup" \
                         and before.findtext("duration") == note.findtext("duration"):
                     measure.remove(before)
+                elif after is not None and after.tag == "backup" \
+                        and after.findtext("duration") == note.findtext("duration"):
+                    measure.remove(after)
                 measure.remove(note)
                 removed += 1
             # A rewind with nothing after it is left over from the removed voice.
@@ -648,8 +655,39 @@ def _merge_split_parts(root: ET.Element) -> int:
 _SEVERITY = {
     "V001": "high", "V002": "medium", "V003": "medium", "V004": "medium",
     "V006": "low", "V007": "high", "V008": "medium", "V009": "medium", "S001": "high", "L001": "low",
+    "A001": "medium",
 }
 _STEP_SEMITONE = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+
+
+def _clamp_backups(root: ET.Element) -> int:
+    """A `<backup>` cannot go before the start of its measure: shorten it to
+    where the measure starts, or drop it when it is already there. Readers
+    reject a measure that does (two backups in a row, after a voice was removed)."""
+    changed = 0
+    for measure in root.iter("measure"):
+        cursor = 0
+        for element in list(measure):
+            duration = element.find("duration")
+            try:
+                length = int(float(duration.text)) if duration is not None else 0
+            except (TypeError, ValueError):
+                length = 0
+            if element.tag == "note":
+                if element.find("chord") is None and element.find("grace") is None:
+                    cursor += length
+            elif element.tag == "forward":
+                cursor += length
+            elif element.tag == "backup":
+                if length > cursor:
+                    changed += 1
+                    if cursor <= 0:
+                        measure.remove(element)
+                        continue
+                    duration.text = str(cursor)
+                    length = cursor
+                cursor -= length
+    return changed
 _MAX_SUSPECT_IMAGES = 200
 # Words that are instructions, not leftovers of misread chords or lyrics.
 _CLEAN_WORDS = re.compile(
