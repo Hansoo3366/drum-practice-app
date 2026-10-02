@@ -11,6 +11,7 @@ import 'package:page_a_diddle/features/digital_score/domain/omr_quality.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_review.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/omr_original_crop.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/omr_review_screen.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_proofread_screen.dart';
 
@@ -124,6 +125,9 @@ class _Crops implements OmrConvertService {
   }
 
   @override
+  Future<List<List<OmrBarPlace?>>?> barPlaces(String songId) async => null;
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -210,9 +214,7 @@ void main() {
     // The bar itself is marked in the crop, which shows its neighbours too.
     expect(
       find.byWidgetPredicate(
-        (widget) =>
-            widget is CustomPaint &&
-            '${widget.painter.runtimeType}' == '_NeighbourDimmer',
+        (widget) => widget is OmrOriginalCrop && widget.focus == (0.3, 0.7),
       ),
       findsOneWidget,
     );

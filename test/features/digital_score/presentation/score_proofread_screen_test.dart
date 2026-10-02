@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,11 +8,16 @@ import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/core/storage/song_file_storage.dart';
 import 'package:page_a_diddle/features/digital_score/data/digital_score_editor_service.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
+import 'package:page_a_diddle/features/digital_score/data/omr_convert_service.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
+import 'package:page_a_diddle/features/digital_score/domain/omr_review.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/three_staff_arrangement.dart';
+import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/omr_original_crop.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_proofread_screen.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
 
 const _xml = '''<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="4.0"><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
@@ -83,20 +89,50 @@ class _MemoryStorage extends SongFileStorage {
   }
 }
 
+/// The originals of a converted song, as the conversion service has them.
+class _Originals implements OmrConvertService {
+  _Originals([this.places]);
+
+  final List<List<OmrBarPlace?>>? places;
+  final asked = <String>[];
+
+  @override
+  Future<List<List<OmrBarPlace?>>?> barPlaces(String songId) async => places;
+
+  @override
+  Future<Uint8List?> systemImage(String songId, String name) async {
+    asked.add(name);
+    return _png;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A one-pixel PNG.
+final _png = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+);
+
 Future<List<bool?>> _open(
   WidgetTester tester,
   _MemoryStorage storage, {
   String musicXml = _xml,
   PlaybackSequence? sequence,
+  _Originals? originals,
+  Size size = const Size(900, 1600),
 }) async {
-  tester.view.physicalSize = const Size(900, 1600);
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   final results = <bool?>[];
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [songFileStorageProvider.overrideWithValue(storage)],
+      overrides: [
+        songFileStorageProvider.overrideWithValue(storage),
+        omrConvertServiceProvider.overrideWithValue(originals ?? _Originals()),
+      ],
       child: MaterialApp(
         locale: const Locale('ko'),
         supportedLocales: const [Locale('ko')],
@@ -390,6 +426,121 @@ void main() {
     final saved = utf8.decode(storage.versions.values.single);
     expect(saved, contains('<words>Verse</words>'));
     expect(saved, isNot(contains('Uerse')));
+    await _close(tester);
+  });
+
+  testWidgets('shows each bar as it is on the original', (tester) async {
+    final originals = _Originals([
+      [
+        (image: 'p1-s1.jpg', focus: (0.1, 0.5)),
+        (image: 'p1-s2.jpg', focus: (0.0, 0.4)),
+      ],
+    ]);
+    await _open(tester, _MemoryStorage(), originals: originals);
+
+    OmrOriginalCrop crop() =>
+        tester.widget<OmrOriginalCrop>(find.byType(OmrOriginalCrop));
+    expect(crop().focus, (0.1, 0.5));
+    expect(originals.asked, ['p1-s1.jpg']);
+
+    await _tapTool(tester, '다음 마디');
+    expect(crop().focus, (0.0, 0.4));
+    expect(originals.asked, ['p1-s1.jpg', 'p1-s2.jpg']);
+
+    // A bar added now is not on the original; the bars after it still are.
+    await _tapTool(tester, '이전 마디');
+    await _tapTool(tester, '다음 마디 추가');
+    expect(find.byType(OmrOriginalCrop), findsNothing);
+    expect(find.text('원본에 없는 마디입니다.'), findsOneWidget);
+    await _tapTool(tester, '다음 마디');
+    expect(crop().focus, (0.0, 0.4));
+
+    // The strip can be put away.
+    await tester.tap(find.byTooltip('원본 보기'));
+    await _settle(tester);
+    expect(find.byType(OmrOriginalCrop), findsNothing);
+    expect(tester.takeException(), isNull);
+    await _close(tester);
+  });
+
+  testWidgets('a bar finds its original after bars were removed earlier', (
+    tester,
+  ) async {
+    // The first bar of the conversion is gone in this version.
+    final edited = const XmlMeasureEditor()
+        .deleteMeasure(
+          _xml,
+          const XmlNoteRef(partIndex: 0, measureIndex: 0, noteIndex: 0),
+        )
+        .xml;
+    await _open(
+      tester,
+      _MemoryStorage(),
+      musicXml: edited,
+      originals: _Originals([
+        [
+          (image: 'p1-s1.jpg', focus: (0.1, 0.5)),
+          (image: 'p1-s2.jpg', focus: (0.0, 0.4)),
+        ],
+      ]),
+    );
+
+    expect(tester.widget<OmrOriginalCrop>(find.byType(OmrOriginalCrop)).focus, (
+      0.0,
+      0.4,
+    ));
+    await _close(tester);
+  });
+
+  testWidgets('on a phone the original stands above the engraving', (
+    tester,
+  ) async {
+    await _open(
+      tester,
+      _MemoryStorage(),
+      size: const Size(400, 800),
+      originals: _Originals([
+        [(image: 'p1-s1.jpg', focus: (0.1, 0.5)), null],
+      ]),
+    );
+
+    final crop = tester.getRect(find.byType(OmrOriginalCrop));
+    final engraving = tester.getRect(find.byType(VerovioScoreView));
+    expect(crop.bottom, lessThanOrEqualTo(engraving.top));
+    expect(crop.width, greaterThan(300));
+    // Beside it where there is room.
+    expect(tester.takeException(), isNull);
+    await _close(tester);
+  });
+
+  testWidgets('on a tablet the original stands beside the engraving', (
+    tester,
+  ) async {
+    await _open(
+      tester,
+      _MemoryStorage(),
+      originals: _Originals([
+        [(image: 'p1-s1.jpg', focus: (0.1, 0.5)), null],
+      ]),
+    );
+
+    final crop = tester.getRect(find.byType(OmrOriginalCrop));
+    final engraving = tester.getRect(find.byType(VerovioScoreView));
+    expect(crop.right, lessThanOrEqualTo(engraving.left));
+    // The second bar was not placed on the page by the conversion.
+    await _tapTool(tester, '다음 마디');
+    expect(find.text('원본에 없는 마디입니다.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await _close(tester);
+  });
+
+  testWidgets('a score that was not converted has no original strip', (
+    tester,
+  ) async {
+    await _open(tester, _MemoryStorage());
+
+    expect(find.byType(OmrOriginalCrop), findsNothing);
+    expect(find.byTooltip('원본 보기'), findsNothing);
     await _close(tester);
   });
 

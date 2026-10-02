@@ -139,7 +139,68 @@ class OmrConvertService {
     }
   }
 
-  static const _suspectDownloads = 6;
+  static const _downloads = 6;
+
+  /// Fetches [names] a few at a time: a long song has dozens of images. One
+  /// that cannot be fetched or kept must not fail the import; the screens
+  /// that show it fetch it again.
+  static Future<void> _inBatches(
+    Iterable<String> names,
+    Future<void> Function(String name) fetch,
+  ) async {
+    final all = names.toList();
+    for (var at = 0; at < all.length; at += _downloads) {
+      await Future.wait([
+        for (final name in all.skip(at).take(_downloads))
+          () async {
+            try {
+              await fetch(name);
+            } on Object {
+              // Best effort.
+            }
+          }(),
+      ]);
+    }
+  }
+
+  /// Where the measures of a converted song are on its original, or null
+  /// when that is not known: the stored layout, or fetched from the server
+  /// while it still has the job (songs converted earlier).
+  Future<List<List<OmrBarPlace?>>?> barPlaces(String songId) async {
+    try {
+      var layout = await _storage.loadOmrLayout(songId);
+      if (layout == null) {
+        final jobId = await _storage.loadOmrJobId(songId);
+        if (jobId == null) return null;
+        layout = await _client.jobLayout(jobId);
+        if (layout == null) return null;
+        await _storage.saveOmrLayout(songId, layout);
+      }
+      final places = omrLayout(layout);
+      return places.isEmpty ? null : places;
+    } on Object {
+      return null;
+    }
+  }
+
+  /// A staff line of the original: the stored image, or fetched from the
+  /// server while it still has the job.
+  Future<Uint8List?> systemImage(String songId, String name) async {
+    try {
+      if (await _storage.loadOmrSystemImage(songId, name) case final stored?) {
+        return Uint8List.fromList(stored);
+      }
+      final jobId = await _storage.loadOmrJobId(songId);
+      if (jobId == null) return null;
+      final image = await _client.jobSystemImage(jobId, name);
+      if (image != null) {
+        await _storage.saveOmrSystemImage(songId, name, image);
+      }
+      return image;
+    } on Object {
+      return null;
+    }
+  }
 
   Future<String> importResult({
     required String jobId,
@@ -197,24 +258,20 @@ class OmrConvertService {
     if (validation != null) {
       await _storage.saveOmrValidation(songId, validation);
       // The crops go with the song: the server forgets a job after a while.
-      final names = omrSuspectImageNames(validation).toList();
-      // A few at a time: a long song has dozens of them.
-      for (var at = 0; at < names.length; at += _suspectDownloads) {
-        await Future.wait([
-          for (final name in names.skip(at).take(_suspectDownloads))
-            () async {
-              try {
-                if (await _client.jobSuspectImage(jobId, name)
-                    case final image?) {
-                  await _storage.saveOmrSuspectImage(songId, name, image);
-                }
-              } on Object {
-                // A crop that cannot be kept must not fail the import; the
-                // review screen fetches it again when it is opened.
-              }
-            }(),
-        ]);
-      }
+      await _inBatches(omrSuspectImageNames(validation), (name) async {
+        if (await _client.jobSuspectImage(jobId, name) case final image?) {
+          await _storage.saveOmrSuspectImage(songId, name, image);
+        }
+      });
+    }
+    // The original of every measure, for proofreading against it later.
+    if (await _client.jobLayout(jobId) case final layout?) {
+      await _storage.saveOmrLayout(songId, layout);
+      await _inBatches(omrSystemImageNames(layout), (name) async {
+        if (await _client.jobSystemImage(jobId, name) case final image?) {
+          await _storage.saveOmrSystemImage(songId, name, image);
+        }
+      });
     }
     // What the server took out of the upload (pen, highlighter) stays with
     // the song: the original keeps it, the score no longer has it.

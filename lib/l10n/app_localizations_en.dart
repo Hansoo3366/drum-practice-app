@@ -1597,6 +1597,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get barTexts => 'Text in this bar';
 
   @override
+  String get showOriginal => 'Show original';
+
+  @override
+  String get originalBar => 'Original of this bar';
+
+  @override
+  String get noOriginalBar => 'This bar is not on the original.';
+
+  @override
   String get barTextsHint =>
       'Text read from the page that is not a chord, a lyric or a note. Correct or remove what was misread.';
 

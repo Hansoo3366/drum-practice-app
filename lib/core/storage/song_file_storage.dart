@@ -141,13 +141,50 @@ class SongFileStorage {
     return path.join('omr_suspects', songId, file);
   }
 
-  /// Removes what a conversion left with a song: crops, review marks and
-  /// the list of separated annotations.
+  /// Where a staff-line image [name] of a song's original is kept.
+  String omrSystemImagePathFor(String songId, String name) {
+    final file = path.basename(name);
+    if (!RegExp(r'^[\w-][\w.-]*\.jpg$').hasMatch(file)) {
+      throw FormatException('Not a staff-line image name: $name');
+    }
+    return path.join('omr_systems', songId, file);
+  }
+
+  String omrLayoutPathFor(String songId) =>
+      path.join('omr_layout', '$songId.json');
+
+  /// Where each measure is on the original, as the conversion found it.
+  Future<void> saveOmrLayout(String songId, String jsonContent) async {
+    await _saveSidecar(omrLayoutPathFor(songId), jsonContent);
+  }
+
+  Future<String?> loadOmrLayout(String songId) async {
+    return _loadSidecar(omrLayoutPathFor(songId));
+  }
+
+  /// One staff line of the original page, as the server cut it.
+  Future<void> saveOmrSystemImage(
+    String songId,
+    String name,
+    List<int> bytes,
+  ) async {
+    await replaceFile(omrSystemImagePathFor(songId, name), bytes);
+  }
+
+  Future<List<int>?> loadOmrSystemImage(String songId, String name) async {
+    final file = await resolve(omrSystemImagePathFor(songId, name));
+    if (!await file.exists() || await file.length() == 0) return null;
+    return file.readAsBytes();
+  }
+
+  /// Removes what a conversion left with a song: crops, staff lines of the
+  /// original, review marks and the list of separated annotations.
   Future<void> deleteOmrReviewFiles(String songId) async {
-    final crops = (await resolve(
-      path.join('omr_suspects', songId, 'x'),
-    )).parent;
-    if (await crops.exists()) await crops.delete(recursive: true);
+    for (final folder in ['omr_suspects', 'omr_systems']) {
+      final images = (await resolve(path.join(folder, songId, 'x'))).parent;
+      if (await images.exists()) await images.delete(recursive: true);
+    }
+    await delete(omrLayoutPathFor(songId));
     await delete(omrReviewStatePathFor(songId));
     await delete(omrAnnotationsPathFor(songId));
     await delete(omrValidationPathFor(songId));

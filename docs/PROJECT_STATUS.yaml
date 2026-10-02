@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-02T11:50:00+09:00"
+last_updated: "2026-10-02T13:33:00+09:00"
 current_phase:
   id: "M8-11"
   name: "모바일 1마디 교정 에디터 (raw MusicXML)"
@@ -337,7 +337,7 @@ completed:
     result: "XmlMeasureEditor.insertMeasureAfter·duplicateMeasure·deleteMeasure: 모든 파트에서 마디를 추가·복제·삭제하고 조표·박자표·세로줄을 이웃으로 넘기며 끊긴 붙임줄을 정리한다. 교정 화면 버튼과 되돌리기, 저장 때 구간·연주 순서 이동, 파일 안 마디 출처 기록(barOrigins)."
 in_progress:
   - roadmap_id: "M8-11"
-    action: "모바일 1마디 교정 에디터의 남은 범위(M8-11f 물리 기기 확인, M8-11g 교정 화면의 PDF·AI 대조 연결)를 진행한다. M8-11e(마디 추가·복제·삭제·이동)는 완료. F-07은 코드 심벌 인식과 정답률 검증이 남은 상태로 [~]를 유지한다."
+    action: "모바일 1마디 교정 에디터의 남은 범위(M8-11f 물리 기기 확인, M8-11g의 AI 제안 연결)를 진행한다. M8-11g의 원본 마디 대조는 완료. M8-11e(마디 추가·복제·삭제·이동)는 완료. F-07은 코드 심벌 인식과 정답률 검증이 남은 상태로 [~]를 유지한다."
 
 next_actions:
   - order: 0
@@ -1189,6 +1189,10 @@ decisions:
     date: "2026-09-29"
     status: "active"
     decision: "사용자 결정(\"qwen 도 제외, 조를 잘 못읽네\")으로 Qwen 3.8 Flash도 비교 대상에서 뺀다. 남은 후보는 GPT-5.6 Terra와 Gemini 3.8 Flash다. 두 모델이 같은 코드로 고친 마디는 나의 약함은 67마디 중 18개다."
+  - id: "D-204"
+    date: "2026-10-02"
+    status: "active"
+    decision: "모든 마디의 원본은 줄(system) 단위 이미지와 마디별 좌우 위치(layout.json)로 보관한다: 마디마다 자르는 것보다 가볍고(한 쪽 약 230KB) 어느 마디든 보여 줄 수 있다. 변환 결과를 받을 때 곡과 함께 저장해 서버 작업이 만료돼도 본다. 교정 화면은 넓으면 원본을 조판 옆에, 좁으면 위에 둔다."
   - id: "D-203"
     date: "2026-10-02"
     status: "active"
@@ -1274,6 +1278,9 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-09-28T10:26:44+09:00"
   checks:
+    - name: "proofread_original_20261002"
+      result: "passed_with_known_gaps"
+      detail: "서버 104·앱 445 통과(1 실패는 옛 alphaTab). 에뮬레이터 빌드 2046에서 재변환한 곡의 교정 화면에 마디별 원본 표시(26마디 모두 위치 있음), 추가한 마디는 원본 없음 표시, 오류 로그 0. 미확인: 세로 폰 배치의 기기 확인, 여러 쪽·여러 파트 실물, AI 제안 연결(크레딧)."
     - name: "defect_review_and_fuzz_20261002"
       result: "passed_with_known_gaps"
       detail: "앱 438 통과·1 실패(옛 alphaTab), 서버 102 통과. 실제 악보 53개 무작위 마디 편집 1,567회(추가·복제·삭제·이동): 음악·시작 조건·출처 기록·붙임줄·이음줄·파트 마디 수 불변식 위반 0, Verovio 조판 53개 마디 수 일치. 필기 분리 샘플 33장 실패 0·극단 입력 14종 예외 없음. 에뮬레이터 빌드 2043·2044에서 남색 도돌이 샘플 변환(도돌이 3·괄호 4쌍 유지), 재생 강조, 구간 따라가기, 악기별 악보, PDF 내보내기 확인, 오류 로그 0. 미확인: 필기 분리 변경 전후 변환 정확도 비교(한 곡만), 귀로 듣는 확인, 재생 MIDI 준비의 남은 중복 파싱."

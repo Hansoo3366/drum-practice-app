@@ -13,6 +13,7 @@ import 'package:page_a_diddle/features/digital_score/domain/omr_quality.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_review.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/omr_original_crop.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_score_view.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_proofread_screen.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
@@ -492,58 +493,10 @@ class _Original extends StatelessWidget {
         }
         final bytes = snapshot.data;
         if (bytes == null) return missing;
-        return InteractiveViewer(
-          maxScale: 5,
-          // The image takes its own shape inside the pane, so the dimming
-          // laid over it lines up with the bars.
-          child: Center(
-            child: Stack(
-              children: [
-                Image.memory(
-                  bytes,
-                  fit: BoxFit.contain,
-                  semanticLabel: '원본 악보 조각',
-                  errorBuilder: (_, _, _) => missing,
-                ),
-                if (focus case final focus?)
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: CustomPaint(painter: _NeighbourDimmer(focus)),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        );
+        return OmrOriginalCrop(bytes: bytes, focus: focus, missing: missing);
       },
     );
   }
-}
-
-/// Fades the bars beside the one under review and marks its edges.
-class _NeighbourDimmer extends CustomPainter {
-  const _NeighbourDimmer(this.focus);
-
-  final (double, double) focus;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final left = focus.$1 * size.width;
-    final right = focus.$2 * size.width;
-    final veil = Paint()..color = AppColors.canvas.withValues(alpha: 0.62);
-    canvas
-      ..drawRect(Rect.fromLTRB(0, 0, left, size.height), veil)
-      ..drawRect(Rect.fromLTRB(right, 0, size.width, size.height), veil);
-    final edge = Paint()
-      ..color = AppColors.accent
-      ..strokeWidth = 1.5;
-    canvas
-      ..drawLine(Offset(left, 0), Offset(left, size.height), edge)
-      ..drawLine(Offset(right, 0), Offset(right, size.height), edge);
-  }
-
-  @override
-  bool shouldRepaint(_NeighbourDimmer old) => old.focus != focus;
 }
 
 class _Findings extends StatelessWidget {

@@ -303,6 +303,20 @@ def job_suspect_image(job_id: str, name: str):
     return _job_file(job_id, f"suspects/{name}", "image/png")
 
 
+@app.get("/jobs/<job_id>/layout")
+def job_layout(job_id: str):
+    """Where every measure is on the original: its staff-line image and place in it."""
+    return _job_file(job_id, "layout.json", "application/json")
+
+
+@app.get("/jobs/<job_id>/systems/<name>")
+def job_system_image(job_id: str, name: str):
+    """One staff line of the original page."""
+    if not re.fullmatch(r"p\d+-s\d+(?:-part\d+)?\.jpg", name):
+        return jsonify(error="not found"), 404
+    return _job_file(job_id, f"systems/{name}", "image/jpeg")
+
+
 def _job_file(job_id: str, name: str, mimetype: str):
     if not _authorized():
         return jsonify(error="unauthorized"), 401
@@ -422,6 +436,9 @@ def _run_job_serial(job_id: str, source: Path, outgoing: Path, profile: str) -> 
             shutil.copy2(selected_file.parent / "validation.json", outgoing / "validation.json")
         if (selected_file.parent / "suspects").is_dir():
             shutil.copytree(selected_file.parent / "suspects", outgoing / "suspects", dirs_exist_ok=True)
+        if (selected_file.parent / "layout.json").is_file():
+            shutil.copy2(selected_file.parent / "layout.json", outgoing / "layout.json")
+            shutil.copytree(selected_file.parent / "systems", outgoing / "systems", dirs_exist_ok=True)
         shutil.copy2(selected_file.parent / "audiveris.log", outgoing / "audiveris.log")
         ai = "off"
         if profile == "chords_lyrics" and _ai_enabled():

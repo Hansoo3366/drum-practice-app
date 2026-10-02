@@ -28,6 +28,12 @@ void main() {
       requests.add(request.uri.path);
       if (request.uri.path == '/jobs/job-1/suspects/p1-s1-m4.png') {
         request.response.add([1, 2, 3]);
+      } else if (request.uri.path == '/jobs/job-1/layout') {
+        request.response.write(
+          '{"parts":[[{"image":"p1-s1.jpg","focus":[0.1,0.5]},null]]}',
+        );
+      } else if (request.uri.path == '/jobs/job-1/systems/p1-s1.jpg') {
+        request.response.add([7, 8]);
       } else {
         request.response.statusCode = 404;
       }
@@ -91,6 +97,26 @@ void main() {
       );
       expect(await service().suspectImage('song', name), isNull, reason: name);
     }
+  });
+
+  test('the originals of a song converted earlier are fetched once', () async {
+    expect(await service().barPlaces('song'), isNull);
+
+    await storage.saveOmrJobId('song', 'job-1');
+    final places = await service().barPlaces('song');
+    expect(places!.single, [(image: 'p1-s1.jpg', focus: (0.1, 0.5)), null]);
+    expect(await service().systemImage('song', 'p1-s1.jpg'), [7, 8]);
+    expect(await service().systemImage('song', 'p9-s9.jpg'), isNull);
+    expect(await service().systemImage('song', '../x.png'), isNull);
+
+    requests.clear();
+    expect((await service().barPlaces('song'))!.single, hasLength(2));
+    expect(await service().systemImage('song', 'p1-s1.jpg'), [7, 8]);
+    expect(requests, isEmpty);
+
+    await storage.deleteOmrReviewFiles('song');
+    expect(await storage.loadOmrLayout('song'), isNull);
+    expect(await storage.loadOmrSystemImage('song', 'p1-s1.jpg'), isNull);
   });
 
   test('what a conversion left with a song goes with the song', () async {

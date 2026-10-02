@@ -1466,6 +1466,45 @@ class AnnotationTest(unittest.TestCase):
         self.assertEqual(issues[2]["image"], issues[0]["image"])
         self.assertEqual(issues[2]["focus"], issues[0]["focus"])
 
+    def test_every_measure_knows_its_place_on_its_staff_line(self):
+        from PIL import Image
+
+        def staff(system, top):
+            return {"top": top, "bottom": top + 60.0, "left": 100.0, "right": 1300.0, "system": system,
+                    "measures": [(100.0, 500.0, []), (500.0, 1300.0, [])]}
+
+        first, second = staff(0, 400.0), staff(1, 900.0)
+        book = {
+            "sheets": [("1", None, Image.new("L", (3400, 1400), 255), 10.0, [first, second])],
+            # Four measures on two lines; a fifth was not matched to the page.
+            "placements": [[("1", 0, 0, [first]), ("1", 0, 1, [first]),
+                            ("1", 1, 0, [second]), ("1", 1, 1, [second]), None]],
+            "unmatched": [],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            omr_validate._crop_systems(book, Path(folder))
+            layout = json.loads((Path(folder) / "layout.json").read_text())["parts"][0]
+            line = Image.open(Path(folder) / "systems" / "p1-s1.jpg")
+            self.assertEqual(sorted(p.name for p in (Path(folder) / "systems").iterdir()),
+                             ["p1-s1.jpg", "p1-s2.jpg"])
+        # The line from 90 to 1310 (one interline of margin), 1220 wide.
+        self.assertEqual(line.size, (1220, 180))
+        self.assertEqual([m and m["image"] for m in layout],
+                         ["p1-s1.jpg", "p1-s1.jpg", "p1-s2.jpg", "p1-s2.jpg", None])
+        self.assertEqual(layout[0]["focus"], [round(10 / 1220, 4), round(410 / 1220, 4)])
+        self.assertEqual(layout[1]["focus"], [round(410 / 1220, 4), round(1210 / 1220, 4)])
+
+    def test_a_wide_staff_line_is_scaled_down(self):
+        from PIL import Image
+
+        staff = {"top": 400.0, "bottom": 460.0, "left": 100.0, "right": 3300.0, "system": 0,
+                 "measures": [(100.0, 3300.0, [])]}
+        book = {"sheets": [("1", None, Image.new("L", (3400, 1400), 255), 10.0, [staff])],
+                "placements": [[("1", 0, 0, [staff])]], "unmatched": []}
+        with tempfile.TemporaryDirectory() as folder:
+            omr_validate._crop_systems(book, Path(folder))
+            self.assertEqual(Image.open(Path(folder) / "systems" / "p1-s1.jpg").width, 1600)
+
     def test_ink_over_a_measure_marks_it_for_review(self):
         root = ET.fromstring(
             '<score-partwise><part id="P1">'

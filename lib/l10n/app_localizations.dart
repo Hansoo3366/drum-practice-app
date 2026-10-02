@@ -3062,6 +3062,24 @@ abstract class AppLocalizations {
   /// **'Text in this bar'**
   String get barTexts;
 
+  /// No description provided for @showOriginal.
+  ///
+  /// In en, this message translates to:
+  /// **'Show original'**
+  String get showOriginal;
+
+  /// No description provided for @originalBar.
+  ///
+  /// In en, this message translates to:
+  /// **'Original of this bar'**
+  String get originalBar;
+
+  /// No description provided for @noOriginalBar.
+  ///
+  /// In en, this message translates to:
+  /// **'This bar is not on the original.'**
+  String get noOriginalBar;
+
   /// No description provided for @barTextsHint.
   ///
   /// In en, this message translates to:

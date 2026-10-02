@@ -224,6 +224,22 @@ class OmrConvertClient {
     return response.bodyBytes;
   }
 
+  /// Where every measure is on the original (its staff-line image and place
+  /// in it), or null.
+  Future<String?> jobLayout(String jobId) async {
+    final response = await _optional('/jobs/$jobId/layout');
+    return response == null ? null : utf8.decode(response.bodyBytes);
+  }
+
+  /// One staff line of the original page, named in the layout, or null.
+  Future<Uint8List?> jobSystemImage(String jobId, String name) async {
+    final response = await _optional(
+      '/jobs/$jobId/systems/${Uri.encodeComponent(name)}',
+    );
+    if (response == null || response.bodyBytes.isEmpty) return null;
+    return response.bodyBytes;
+  }
+
   /// The server's AI version (chord and lyric suggestions applied), or null
   /// when the server made none.
   Future<Uint8List?> jobAiResult(String jobId) async {

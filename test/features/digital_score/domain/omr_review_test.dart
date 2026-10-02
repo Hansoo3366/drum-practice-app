@@ -159,6 +159,50 @@ void main() {
     expect(omrAnnotations(null), isEmpty);
   });
 
+  test('reads where each measure is on the original', () {
+    final layout = jsonEncode({
+      'parts': [
+        [
+          {
+            'image': 'p1-s1.jpg',
+            'focus': [0.01, 0.34],
+          },
+          {
+            'image': 'p1-s1.jpg',
+            'focus': [0.34, 0.99],
+          },
+          null,
+          {
+            'image': 'p1-s2.jpg',
+            'focus': [0.5, 0.2],
+          },
+          {
+            'image': '',
+            'focus': [0, 1],
+          },
+        ],
+        [
+          {
+            'image': 'p1-s1-part2.jpg',
+            'focus': [0, 1],
+          },
+        ],
+      ],
+    });
+
+    final places = omrLayout(layout);
+
+    expect(places, hasLength(2));
+    expect(places[0][0], (image: 'p1-s1.jpg', focus: (0.01, 0.34)));
+    expect(places[0][1]!.focus, (0.34, 0.99));
+    // Not placed, or a place that makes no sense.
+    expect(places[0].skip(2), [null, null, null]);
+    expect(places[1].single, (image: 'p1-s1-part2.jpg', focus: (0.0, 1.0)));
+    expect(omrSystemImageNames(layout), {'p1-s1.jpg', 'p1-s1-part2.jpg'});
+    expect(omrLayout(null), isEmpty);
+    expect(omrLayout('{"parts": 3}'), isEmpty);
+  });
+
   test('keeps which measures were accepted', () {
     final json = omrReviewStateJson({'0:7', '0:3'});
 

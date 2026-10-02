@@ -187,6 +187,10 @@ def _validate(path: Path, folder: Path) -> dict:
         issues += _annotation_checks(root, book, _annotations(folder))
         crops.mkdir(exist_ok=True)
         _crop_suspects(book, issues, crops)
+        try:
+            _crop_systems(book, folder)
+        except Exception:  # noqa: BLE001 - the originals are an extra; the report must not fail for them
+            (folder / "layout.json").unlink(missing_ok=True)
     for measure in root.iter("measure"):
         measure.attrib.pop("__empty__", None)
     order = {"high": 0, "medium": 1, "low": 2}
@@ -331,6 +335,66 @@ def _crop_suspects(book: dict, issues: list[dict], folder: Path) -> None:
         issue["image"], focus = made[key]
         if focus is not None:
             issue["focus"] = focus
+
+
+# A staff line of the page is kept this wide at most: enough to read, and a
+# song of three pages stays near a megabyte.
+_SYSTEM_WIDTH = 1600
+
+
+def _crop_systems(book: dict, folder: Path) -> None:
+    """The original of every measure: each staff line of the page as one image
+    (`systems/pN-sM[-partK].jpg`), and in `layout.json` for every measure of
+    every part its image and where in it the measure is (fractions of the
+    width). A measure that was not matched to the page has none."""
+    from PIL import Image
+
+    out = folder / "systems"
+    out.mkdir(exist_ok=True)
+    images = {number: (image, interline) for number, _s, image, interline, _st in book["sheets"]}
+    made: dict[tuple, tuple[str, float, float]] = {}
+    parts = []
+    for part_index, entries in enumerate(book["placements"]):
+        measures = []
+        for entry in entries:
+            if entry is None or entry[0] not in images:
+                measures.append(None)
+                continue
+            sheet, stack, staves = entry[0], entry[2], entry[3]
+            bars = staves[0]["measures"]
+            if not bars or stack is None or stack >= len(bars):
+                measures.append(None)
+                continue
+            key = (sheet, id(staves[0]))
+            if key not in made:
+                image, interline = images[sheet]
+                left = max(0, int(min(s["left"] for s in staves) - interline))
+                right = min(image.width, int(max(s["right"] for s in staves) + interline))
+                top = max(0, int(min(s["top"] for s in staves) - interline * 5))
+                bottom = min(image.height, int(max(s["bottom"] for s in staves) + interline * 7))
+                if right <= left or bottom <= top:
+                    measures.append(None)
+                    continue
+                name = f"p{sheet}-s{staves[0]['system'] + 1}" + (f"-part{part_index + 1}" if part_index else "") + ".jpg"
+                strip = image.crop((left, top, right, bottom)).convert("L")
+                if strip.width > _SYSTEM_WIDTH:
+                    strip = strip.resize(
+                        (_SYSTEM_WIDTH, max(1, round(strip.height * _SYSTEM_WIDTH / strip.width))), Image.LANCZOS,
+                    )
+                strip.save(out / name, quality=72, optimize=True)
+                made[key] = (name, left, right)
+            name, left, right = made[key]
+            measures.append({
+                "image": name,
+                "focus": [
+                    round(min(1.0, max(0.0, (edge - left) / (right - left))), 4)
+                    for edge in bars[stack][:2]
+                ],
+            })
+        parts.append(measures)
+    (folder / "layout.json").write_text(
+        json.dumps({"parts": parts}, ensure_ascii=False), encoding="utf-8",
+    )
 
 
 def _harmony_label(harmony: ET.Element) -> str:

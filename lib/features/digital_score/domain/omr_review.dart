@@ -278,6 +278,43 @@ List<OmrReviewBar> omrReviewBars({
   return bars;
 }
 
+/// Where a measure is on the original: the image of its staff line, and its
+/// left and right edge in it as fractions of the width.
+typedef OmrBarPlace = ({String image, (double, double) focus});
+
+/// The place of every measure of every part, as the conversion found them
+/// (`layout.json`): `[part][measure]`, null for a measure it could not place.
+List<List<OmrBarPlace?>> omrLayout(String? layoutJson) {
+  final parts = _object(layoutJson)?['parts'];
+  if (parts is! List) return const [];
+  return [
+    for (final part in parts)
+      [
+        if (part is List)
+          for (final measure in part)
+            switch (measure) {
+              {
+                'image': final String image,
+                'focus': [final num left, final num right],
+              }
+                  when image.isNotEmpty &&
+                      left >= 0 &&
+                      right <= 1 &&
+                      left < right =>
+                (image: image, focus: (left.toDouble(), right.toDouble())),
+              _ => null,
+            },
+      ],
+  ];
+}
+
+/// The staff-line images a layout refers to.
+Set<String> omrSystemImageNames(String? layoutJson) => {
+  for (final part in omrLayout(layoutJson))
+    for (final place in part)
+      if (place != null) place.image,
+};
+
 /// A colour annotation the server took out of the upload before reading it.
 class OmrAnnotation {
   const OmrAnnotation({

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,13 +7,16 @@ import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
 import 'package:page_a_diddle/features/digital_score/data/digital_score_editor_service.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
+import 'package:page_a_diddle/features/digital_score/data/omr_convert_service.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
+import 'package:page_a_diddle/features/digital_score/domain/omr_review.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_editor.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/three_staff_arrangement.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/note_duration_icon.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/omr_original_crop.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_score_view.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
 
@@ -105,11 +109,46 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
           noteIndex: _noteIndex!,
         );
 
+  /// Where the measures of the conversion are on the original page, when
+  /// the song was converted and the server placed them.
+  List<List<OmrBarPlace?>>? _places;
+
+  /// For each bar of the opened score, its index in the conversion (-1 for
+  /// a bar added since); null when the score still has the bars it had.
+  late final List<int>? _openedOrigins = barOrigins(widget.musicXml);
+  final _originals = <String, Future<Uint8List?>>{};
+  var _showOriginal = true;
+
+  /// The current bar on the original, or null: an added bar has none.
+  OmrBarPlace? get _place {
+    final places = _places;
+    if (places == null || widget.partIndex >= places.length) return null;
+    final id = _bars[_cursor][_measureIndex];
+    if (id >= _openedBars.length) return null;
+    final origins = _openedOrigins;
+    final origin = origins == null ? id : origins[id];
+    final part = places[widget.partIndex];
+    return origin < 0 || origin >= part.length ? null : part[origin];
+  }
+
+  Future<Uint8List?> _original(String name) => _originals.putIfAbsent(
+    name,
+    () => ref.read(omrConvertServiceProvider).systemImage(widget.songId, name),
+  );
+
   @override
   void initState() {
     super.initState();
     _measureIndex = _measureIndex.clamp(0, _measureCount - 1);
     _refresh(select: 0);
+    unawaited(_loadPlaces());
+  }
+
+  Future<void> _loadPlaces() async {
+    final places = await ref
+        .read(omrConvertServiceProvider)
+        .barPlaces(widget.songId);
+    if (mounted && places != null) setState(() => _places = places);
   }
 
   @override
@@ -411,6 +450,28 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     }
   }
 
+  Widget _engraving(AppLocalizations l10n, int? selectedEvent) {
+    return LayoutBuilder(
+      builder: (context, constraints) => VerovioScoreView(
+        score: _previewScore,
+        engravingXml: _preview,
+        engravingPageSize: _pageSizeFor(constraints.maxWidth),
+        semanticsLabel: l10n.proofreadBar(_measureIndex + 1, _measureCount),
+        playback: _playback,
+        inputMode: 'select',
+        oneFingerPan: true,
+        onEventTapped: _onEventTapped,
+        selectedNoteAddress: selectedEvent == null
+            ? null
+            : ScoreEventAddress(
+                partIndex: 0,
+                measureIndex: 0,
+                eventIndex: selectedEvent,
+              ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
@@ -430,6 +491,14 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         appBar: AppBar(
           title: Text(l10n.proofread),
           actions: [
+            if (_places != null)
+              IconButton(
+                tooltip: l10n.showOriginal,
+                isSelected: _showOriginal,
+                onPressed: () => setState(() => _showOriginal = !_showOriginal),
+                icon: const Icon(Icons.image_outlined),
+                selectedIcon: const Icon(Icons.image_rounded),
+              ),
             IconButton(
               tooltip: l10n.undo,
               onPressed: _cursor > 0 ? _undo : null,
@@ -455,26 +524,37 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             children: [
               Expanded(
                 child: LayoutBuilder(
-                  builder: (context, constraints) => VerovioScoreView(
-                    score: _previewScore,
-                    engravingXml: _preview,
-                    engravingPageSize: _pageSizeFor(constraints.maxWidth),
-                    semanticsLabel: l10n.proofreadBar(
-                      _measureIndex + 1,
-                      _measureCount,
-                    ),
-                    playback: _playback,
-                    inputMode: 'select',
-                    oneFingerPan: true,
-                    onEventTapped: _onEventTapped,
-                    selectedNoteAddress: selectedEvent == null
-                        ? null
-                        : ScoreEventAddress(
-                            partIndex: 0,
-                            measureIndex: 0,
-                            eventIndex: selectedEvent,
+                  builder: (context, area) {
+                    // Beside the engraving where there is width for both,
+                    // above it on a phone held upright.
+                    final beside = area.maxWidth >= 700;
+                    return Flex(
+                      direction: beside ? Axis.horizontal : Axis.vertical,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (_showOriginal && _places != null)
+                          SizedBox(
+                            width: beside ? area.maxWidth * 0.36 : null,
+                            height: beside
+                                ? null
+                                : (area.maxHeight * 0.3).clamp(90.0, 190.0),
+                            child: _OriginalStrip(
+                              place: _place,
+                              image: _place == null
+                                  ? null
+                                  : _original(_place!.image),
+                              beside: beside,
+                            ),
                           ),
-                  ),
+                        // Keyed: showing or hiding the original must not
+                        // make the engraving start over.
+                        Expanded(
+                          key: const ValueKey('engraving'),
+                          child: _engraving(l10n, selectedEvent),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
               const Divider(height: 1, color: AppColors.border),
@@ -721,6 +801,63 @@ const _fractionOf = {
   'eighth': '1/8',
   '16th': '1/16',
 };
+
+/// The bar being proofread as it is on the original page, above its
+/// engraving: the staff line it is on, cut to the bar and a little of its
+/// neighbours.
+class _OriginalStrip extends StatelessWidget {
+  const _OriginalStrip({
+    required this.place,
+    required this.image,
+    required this.beside,
+  });
+
+  final OmrBarPlace? place;
+  final Future<Uint8List?>? image;
+
+  /// Whether it stands beside the engraving (else above it).
+  final bool beside;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final none = Center(
+      child: Text(
+        l10n.noOriginalBar,
+        style: const TextStyle(color: AppColors.mutedInk),
+      ),
+    );
+    const line = BorderSide(color: AppColors.border);
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surfaceSoft,
+        border: beside ? const Border(right: line) : const Border(bottom: line),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: place == null || image == null
+          ? none
+          : FutureBuilder<Uint8List?>(
+              // A new bar is a new picture, not a change to the last one.
+              key: ValueKey('${place!.image}/${place!.focus}'),
+              future: image,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const SizedBox.shrink();
+                }
+                final bytes = snapshot.data;
+                if (bytes == null) return none;
+                return OmrOriginalCrop(
+                  bytes: bytes,
+                  focus: place!.focus,
+                  around: 0.25,
+                  semanticLabel: l10n.originalBar,
+                  missing: none,
+                );
+              },
+            ),
+    );
+  }
+}
 
 class _Toolbar extends StatelessWidget {
   const _Toolbar({required this.children});
