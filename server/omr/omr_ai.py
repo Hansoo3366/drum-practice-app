@@ -1,4 +1,10 @@
-"""AI review (OMR spec Phase 5): every placed measure against its crop."""
+"""AI review (OMR spec Phase 5): every placed measure against the original.
+
+One question per staff line (system): the line's image, with the measure
+numbers written in red above the bars, and what OMR read in each measure.
+Asking per measure sent the same picture three times (previous, current,
+next) and paid for an answer envelope per measure; a line is three to five
+measures for one picture and one answer."""
 
 from __future__ import annotations
 
@@ -19,6 +25,9 @@ from omr_validate import _measure_view, _validate_score
 
 AI_MODEL = os.environ.get("OMR_AI_MODEL", "gemini-3.8-flash@low")
 AI_WORKERS = int(os.environ.get("OMR_AI_WORKERS", "6"))
+# A staff line is sent at most this wide: enough to read notes and Korean
+# lyrics, and the picture's token cost is bounded.
+AI_LINE_WIDTH = 1600
 _NOTE_TYPES = {"whole": "w", "half": "h", "quarter": "q", "eighth": "8", "16th": "16", "32nd": "32"}
 
 
@@ -64,36 +73,40 @@ def _key_fifths(measures: list[ET.Element]) -> list[int]:
     return keys
 
 
-def _ai_item(out: Path, item_id: str, index: int, entry, images: dict, measures: list[ET.Element],
-             fifths: int, photo_crop=None, **fields) -> dict:
-    """Save the crop for one measure (previous, current, next; current framed in
-    red) and return its dataset item. photo_crop(sheet, box, size) may return a
-    crop of the same region from another image, e.g. the uploaded photo."""
-    from PIL import ImageDraw
+def _ai_line(out: Path, item_id: str, group: list[tuple[int, int]], entry, images: dict,
+             measures: list[ET.Element], fifths: int, flagged: dict[int, list[str]]) -> dict:
+    """Save the picture of one staff line, its measure numbers written in red
+    above the bars, and return the dataset item for its measures."""
+    from PIL import Image, ImageDraw
 
-    sheet, _system, stack, staves = entry
+    sheet, _system, _stack, staves = entry
     image, interline = images[sheet]
     bars = staves[0]["measures"]
-    first, last = max(0, stack - 1), min(len(bars) - 1, stack + 1)
-    left, right = bars[first][0] - interline, bars[last][1] + interline
-    top = min(s["top"] for s in staves) - interline * 5
+    left = max(0, int(min(s["left"] for s in staves) - interline))
+    right = min(image.width, int(max(s["right"] for s in staves) + interline))
+    top = max(0, int(min(s["top"] for s in staves) - interline * 5))
     # 7 interlines cut off the second verse under some systems.
-    bottom = max(s["bottom"] for s in staves) + interline * 10
-    box = (max(0, int(left)), max(0, int(top)), min(image.width, int(right)), min(image.height, int(bottom)))
-    crop = image.crop(box).convert("RGB")
-    if photo_crop is not None:
-        crop = photo_crop(sheet, box, crop.size) or crop
-    a, b = bars[stack][0] - box[0], bars[stack][1] - box[0]
-    ImageDraw.Draw(crop).rectangle((a + 2, 2, b - 2, crop.height - 3), outline=(220, 30, 30), width=3)
+    bottom = min(image.height, int(max(s["bottom"] for s in staves) + interline * 10))
+    crop = image.crop((left, top, right, bottom)).convert("RGB")
+    scale = min(1.0, AI_LINE_WIDTH / max(1, crop.width))
+    if scale < 1:
+        crop = crop.resize((AI_LINE_WIDTH, max(1, round(crop.height * scale))), Image.LANCZOS)
+    draw = ImageDraw.Draw(crop)
+    for index, stack in group:
+        x = (bars[stack][0] - left) * scale
+        draw.line((x, 0, x, crop.height), fill=(220, 30, 30), width=2)
+        draw.text((x + 4, 2), str(measures[index].get("number")), fill=(220, 30, 30))
     crop.save(out / "crops" / f"{item_id}.png")
-    shown = [measures[j] for j in range(index - (stack - first), index + (last - stack) + 1)]
-    return {"id": item_id, **fields, "measureIndex": index, "target": measures[index].get("number"),
+    numbers = [measures[index].get("number") for index, _stack in group]
+    return {"id": item_id, "song": "job", "measureIndex": [index for index, _ in group], "targets": numbers,
             "image": f"crops/{item_id}.png", "fifths": fifths,
-            "measures": [_ai_summary(m) for m in shown], "current": _ai_summary(measures[index])}
+            "measures": [_ai_summary(measures[index]) for index, _ in group],
+            "issues": {str(measures[index].get("number")): flagged.get(index, []) for index, _ in group}}
 
 
 def _ai_dataset(root: ET.Element, book: dict, out: Path) -> list[dict]:
-    """A crop and the recognized content for every measure of the first part placed on a page."""
+    """A picture and the recognized content of every staff line of the first
+    part that was placed on a page."""
     (out / "crops").mkdir(parents=True, exist_ok=True)
     measures = root.find("part").findall("measure")
     entries = book["placements"][0]
@@ -103,11 +116,19 @@ def _ai_dataset(root: ET.Element, book: dict, out: Path) -> list[dict]:
         if issue["part"] == 0:
             flagged.setdefault(issue["measureIndex"], []).append(f"{issue['rule']}: {issue['detail']}")
     keys = _key_fifths(measures)
+    # Consecutive measures on the same staff line.
+    lines: list[tuple[tuple, list[tuple[int, int]]]] = []
+    for index, entry in enumerate(entries):
+        if entry is None or index >= len(measures) or entry[0] not in images:
+            continue
+        key = (entry[0], id(entry[3][0]))
+        if lines and lines[-1][0] == key:
+            lines[-1][1].append((index, entry[2]))
+        else:
+            lines.append((key, [(index, entry[2])]))
     items = [
-        _ai_item(out, f"m{index}", index, entry, images, measures, keys[index], song="job",
-                 kind="suspect" if index in flagged else "control", issues=flagged.get(index, []))
-        for index, entry in enumerate(entries)
-        if entry is not None and index < len(measures)
+        _ai_line(out, f"s{n}", group, entries[group[0][0]], images, measures, keys[group[0][0]], flagged)
+        for n, (_key, group) in enumerate(lines)
     ]
     (out / "dataset.json").write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
     return items
@@ -116,9 +137,14 @@ def _ai_dataset(root: ET.Element, book: dict, out: Path) -> list[dict]:
 def _ai_prompt(item: dict) -> str:
     import ai_verify
 
-    context = {"time": None, "fifths": item["fifths"], "issue": "; ".join(item["issues"]) or "none"}
+    issues = "; ".join(f"measure {number}: {' | '.join(found)}" for number, found in item["issues"].items() if found)
+    context = {"time": None, "fifths": item["fifths"], "issue": issues or "none"}
     text = ai_verify.describe_measures(item["measures"], context)
-    return text + f"\nThe measure framed in red is measure {item['target']}. Check that measure only."
+    return text + (
+        f"\nThe picture is one staff line with measures {', '.join(map(str, item['targets']))}; "
+        "their numbers are written in red above the bar they start. Check every one of these "
+        "measures and give each correction its measure number."
+    )
 
 
 def _ai_ask(out: Path, items: list[dict], model: str) -> dict:
@@ -141,13 +167,17 @@ def _ai_ask(out: Path, items: list[dict], model: str) -> dict:
 
 
 def _hangul(text: str) -> list[str]:
-    return [ch for ch in str(text or "") if "가" <= ch <= "힣"]
+    """The syllables of a lyric suggestion, one per sung note: Hangul, and a
+    dash ("-" or "—") for a note that holds the syllable before it."""
+    return [("—" if ch in "-—–" else ch) for ch in str(text or "") if "가" <= ch <= "힣" or ch in "-—–"]
 
 
 def _chord_list(value) -> list[str]:
+    """Chord symbols out of a model's answer, however it wrote the list. A
+    chord in brackets, "(D7)", is an optional chord on the page: it counts."""
     if isinstance(value, list):
         value = " ".join(str(v) for v in value)
-    for mark in "[]'\",":
+    for mark in "[]'\",()":
         value = str(value).replace(mark, " ")
     return value.split()
 
@@ -167,10 +197,28 @@ def _apply_ai_measure(measure: ET.Element, corrections: list[dict], fifths: int)
             for harmony in measure.findall("harmony"):
                 measure.remove(harmony)
             anchors = heads or measure.findall("note")
-            for i, chord in reversed(list(enumerate(chords))):
+            # In order, each before its note. Several chords on one note (a
+            # whole note under "G C/G D/G") are spread over that note with
+            # an offset, so they stand apart in the order written.
+            placed: dict[int, list[ET.Element]] = {}
+            for i, chord in enumerate(chords):
                 element = _harmony_element(chord, template if template is not None else ET.Element("harmony"))
-                target = anchors[min(len(anchors) - 1, round(i * len(anchors) / len(chords)))] if anchors else None
+                at = min(len(anchors) - 1, round(i * len(anchors) / len(chords))) if anchors else -1
+                target = anchors[at] if anchors else None
                 measure.insert(list(measure).index(target) if target is not None else len(measure), element)
+                placed.setdefault(at, []).append(element)
+            for at, elements in placed.items():
+                if at < 0 or len(elements) < 2:
+                    continue
+                try:
+                    length = int(float(anchors[at].findtext("duration") or 0))
+                except ValueError:
+                    length = 0
+                for n, element in enumerate(elements[1:], start=1):
+                    for old in element.findall("offset"):
+                        element.remove(old)
+                    offset = ET.SubElement(element, "offset")
+                    offset.text = str(round(length * n / len(elements)))
             after = _measure_view(measure)["chords"]
             if after != before:
                 applied.append({"field": "chords", "before": before, "after": after,
@@ -178,27 +226,37 @@ def _apply_ai_measure(measure: ET.Element, corrections: list[dict], fifths: int)
         elif fix.get("field") == "lyrics":
             syllables = _hangul(fix.get("suggested"))
             verse = str(fix.get("verse") or "1").strip() or "1"
-            if not syllables:
+            if not syllables or syllables[0] == "—":
+                # Nothing, or a dash where nothing is held yet.
                 continue
             before = _measure_view(measure)["lyrics"].get(verse, "")
-            sung = [n for n in measure.findall("note") if _sung_note(n) and not _tied_on(n)]
-            targets, removed = [], []
-            for note in sung:
-                own = [l for l in note.findall("lyric") if (l.get("number") or "1") == verse]
-                if any((l.findtext("text") or "") == "—" for l in own):
-                    continue  # a held-syllable dash stays in place
-                for lyric in own:
-                    note.remove(lyric)
-                removed.append((note, own))
-                targets.append(note)
-            if len(syllables) != len(targets):
-                # Notes were lost or added: the syllables have no clean home,
-                # so the suggestion is listed for review only.
-                for note, lyrics in removed:
-                    for lyric in lyrics:
-                        _insert_lyric(note, lyric)
-                continue
+            sung = [n for n in measure.findall("note") if _sung_note(n)]
+
+            def own(note):
+                return [l for l in note.findall("lyric") if (l.get("number") or "1") == verse]
+
+            def held(note):
+                return _tied_on(note) or any((l.findtext("text") or "") == "—" for l in own(note))
+
+            # The answer names every note, held ones with a dash; or, as the
+            # older answers did, only the notes that get a new syllable.
+            if len(syllables) == len(sung):
+                targets = sung
+                # A dash only goes where nothing is sung yet: on a note that
+                # had no syllable, or held one already. Over a syllable it
+                # would silence it; such an answer is listed for review only.
+                if any(sy == "—" and own(n) and not held(n) for n, sy in zip(sung, syllables)):
+                    continue
+            else:
+                targets = [n for n in sung if not held(n)]
+                syllables = [sy for sy in syllables if sy != "—"]
+                if len(syllables) != len(targets):
+                    # Notes were lost or added: the syllables have no clean
+                    # home, so the suggestion is listed for review only.
+                    continue
             for note, syllable in zip(targets, syllables):
+                for lyric in own(note):
+                    note.remove(lyric)
                 lyric = ET.Element("lyric", number=verse)
                 ET.SubElement(lyric, "syllabic").text = "single"
                 ET.SubElement(lyric, "text").text = syllable
@@ -208,6 +266,19 @@ def _apply_ai_measure(measure: ET.Element, corrections: list[dict], fifths: int)
                 applied.append({"field": "lyrics", "verse": verse, "before": before, "after": after,
                                 "confidence": fix.get("confidence")})
     return applied
+
+
+def _same_as_recognized(measure: ET.Element, fix: dict) -> bool:
+    """A suggestion that says what the measure already has (the model wrote
+    the lyrics without the spaces, or the chords as one string) is none."""
+    view = _measure_view(measure)
+    if fix.get("field") == "lyrics":
+        verse = str(fix.get("verse") or "1").strip() or "1"
+        current = [sy for sy in _hangul(view["lyrics"].get(verse, "")) if sy != "—"]
+        return current == [sy for sy in _hangul(fix.get("suggested")) if sy != "—"]
+    if fix.get("field") == "chords":
+        return _chord_list(fix.get("suggested")) == list(view["chords"])
+    return False
 
 
 def _ai_review(result: Path, folder: Path, outgoing: Path, model: str | None = None) -> dict:
@@ -231,21 +302,29 @@ def _ai_apply(root: ET.Element, items: list[dict], answers: dict, model: str, ou
     started = started if started is not None else time.monotonic()
     measures = root.find("part").findall("measure")
     suggestions, applied = [], []
+    covered = failed = 0
+    tokens_in = tokens_out = 0
     for item in items:
         answer = answers.get(item["id"]) or {}
-        if "error" in answer:
+        covered += len(item["targets"])
+        if "error" in answer or "answer" not in answer:
+            failed += len(item["targets"])
             continue
-        target = str(item["target"])
-        mine = [c for c in answer["answer"].get("corrections", []) if str(c.get("measure")) == target]
-        unsure = [u for u in answer["answer"].get("uncertain", []) if str(u.get("measure")) == target]
-        if mine or unsure:
-            suggestions.append({"measureIndex": item["measureIndex"], "measure": target,
-                                "corrections": mine, "uncertain": unsure})
-        for change in _apply_ai_measure(measures[item["measureIndex"]], mine, item["fifths"]):
-            applied.append({"measureIndex": item["measureIndex"], "measure": target, **change})
+        tokens_in += answer.get("input_tokens") or 0
+        tokens_out += answer.get("output_tokens") or 0
+        for index, target in zip(item["measureIndex"], item["targets"]):
+            target = str(target)
+            mine = [c for c in answer["answer"].get("corrections", [])
+                    if str(c.get("measure")) == target and not _same_as_recognized(measures[index], c)]
+            unsure = [u for u in answer["answer"].get("uncertain", []) if str(u.get("measure")) == target]
+            if mine or unsure:
+                suggestions.append({"measureIndex": index, "measure": target,
+                                    "corrections": mine, "uncertain": unsure})
+            for change in _apply_ai_measure(measures[index], mine, item["fifths"]):
+                applied.append({"measureIndex": index, "measure": target, **change})
     report = {
-        "model": model, "measures": len(items),
-        "errors": sum(1 for a in answers.values() if "error" in a),
+        "model": model, "measures": covered, "lines": len(items),
+        "errors": failed, "input_tokens": tokens_in, "output_tokens": tokens_out,
         "seconds": round(time.monotonic() - started, 1),
         "applied": applied, "suggestions": suggestions,
         "note": ("Chord suggestions, and lyric suggestions whose syllables match the sung notes, are "
@@ -254,7 +333,7 @@ def _ai_apply(root: ET.Element, items: list[dict], answers: dict, model: str, ou
     if applied:
         _write_mxl(root, outgoing / "ai.mxl")
     (outgoing / "ai_review.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
-    return {k: report[k] for k in ("model", "measures", "errors", "seconds")} | {"applied": len(applied)}
+    return {k: report[k] for k in ("model", "measures", "lines", "errors", "input_tokens", "output_tokens", "seconds")} | {"applied": len(applied)}
 
 
 # --- Piano accompaniment advice: a style per section, chords to look at again ---

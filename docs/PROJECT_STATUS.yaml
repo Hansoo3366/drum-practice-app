@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-02T13:33:00+09:00"
+last_updated: "2026-10-02T14:58:00+09:00"
 current_phase:
   id: "M8-11"
   name: "모바일 1마디 교정 에디터 (raw MusicXML)"
@@ -348,7 +348,7 @@ next_actions:
     action: "서버 변환에 AI 검수(Terra)를 붙이고 앱이 AI 보정 버전을 받도록 했다. OpenAI 크레딧이 0이라(429 credit_balance_exhausted) 앱 AI 보정 버전이 아직 없다: 크레딧 충전 뒤 에뮬레이터에서 세 곡을 다시 변환해 AI 보정 버전을 확인한다. 이전: 달세뇨 처리 3단계 완료(F-07o·p·q). 남은 일: 실제 앱에서 달세뇨 샘플 변환→재생 순서 확인(기기), PDF 업로드는 원본 색 OCR·기호 검출이 흑백만 가능, 손글씨 분리 F-07l. 이전: 새 변환본(현재 서버, 300dpi) 전체 175마디를 Gemini 생각 낮음·Terra로 대조해 비교 페이지 기본 보기로 올렸다(https://claude.ai/artifact/XFN14VWNUSsd586PsesQLj). 정상 105마디 중 Gemini 71·Terra 61마디에 코드·가사 제안, 두 모델 코드 일치 47마디. 이미지 개선(회색조 조각, Lanczos 2배 확대)은 효과 없어 채택 안 함을 제안. 사용자 확인으로 정답을 모아 정확도를 재고 전체 대조·적용 정책을 정한다. 이전: 전체 마디 대조 실험(나의 약함은 188마디, Gemini 생각 낮음): 규칙 검사가 정상으로 본 121마디 중 65마디에 코드·가사 수정 제안(코드 39, 가사 35), 44마디에 음표 제안. 의심 마디만 AI에 보내면 박자가 맞는 오류(쉼표로 채워진 2마디 등)와 가사·코드 OCR 오류를 놓친다. 전체 대조로 바꿀지, 제안 정확도(사람 확인 정답)를 먼저 잴지 사용자와 정한다. 곡 전체 4개 동시 약 4분. 이전: 4모델 곡 전체 비교(나의 약함은 의심 마디 67개, https://claude.ai/artifact/XFN14VWNUSsd586PsesQLj): 평균 응답 Terra 12.1초·Gemini 기본 28.8초·Gemini reasoning_effort low 4.8초·none 4.9초(Luna D-182, Qwen D-183 제외; low·none은 기본과 코드·가사가 다른 마디 5개뿐), 두 모델이 같은 코드로 고친 마디 18개. Terra 음표 수정은 표본 4마디 대조에서 음높이를 한 칸씩 자주 틀려 자동 적용 부적합(적용 정책 사용자 결정 대기). 이 곡의 예비 정답은 8마디뿐이라 정확도 순위는 못 매겼다. 사람이 확인한 정답을 늘려 4모델 재채점, Gemini 생각 수준 낮춰 재측정, Terra 음표 수정 107건 검증이 남았다. 이전 1차 비교(유효 72항목): Terra 틀린 39 중 24 고침·맞던 91 중 2 망침, Luna 20 고침·1 망침, 두 모델 일치 시만 적용하면 16 고침·0 망침. 적용 정책(두 모델 일치만 자동, 나머지는 검토 목록 등)을 사용자와 정하고, 크롭을 다음 오선 위까지 넓혀 2절 가사가 잘리지 않게 한 뒤 사람이 확인한 정답으로 재측정한다."
   - order: 2
     roadmap_id: "F-07m"
-    action: "OpenAI 크레딧 충전 뒤: 실제 AI 응답으로 변환 검토 화면의 AI 제안 표시를 확인하고, 신뢰도 기준 자동 적용·검토 권장 분리(F-07m)와 모델 비교(F-07k)를 진행한다. 검토 화면 보완: 원본 조각에서 해당 마디 표시."
+    action: "Gemini로 AI 검수가 도는 상태에서 F-07m: 확신도 기준으로 자동 적용과 검토 권장을 나누고, 사람이 확인한 정답으로 정확도를 잰다. 편곡 AI 조언(F-08d)이 Gemini로 동작하는지 확인한다."
   - order: 3
     roadmap_id: "F-07"
     action: "코드 줄 남은 문제: 온쉼표 마디 다중 코드(harmony offset으로 마디 안 위치 지정, Verovio tstamp 반영 확인됨), 띄어 쓴 ♭ 글꼴 회귀(Bb2→Bb, C/Bb→C/B, Db/F→D/F)."
@@ -1189,6 +1189,10 @@ decisions:
     date: "2026-09-29"
     status: "active"
     decision: "사용자 결정(\"qwen 도 제외, 조를 잘 못읽네\")으로 Qwen 3.8 Flash도 비교 대상에서 뺀다. 남은 후보는 GPT-5.6 Terra와 Gemini 3.8 Flash다. 두 모델이 같은 코드로 고친 마디는 나의 약함은 67마디 중 18개다."
+  - id: "D-205"
+    date: "2026-10-02"
+    status: "active"
+    decision: "서버 AI 검수는 Gemini 3.8 Flash(생각 수준 low)를 기본으로 쓴다(D-184 대체; 사용자 결정, Gemini 크레딧 충전). 이유: 비교한 모델 중 품질이 검증된 유일한 대안이고 Terra 비용의 대부분이 생각 토큰이다. 호출은 마디가 아니라 줄 단위로 한다(사진 한 장에 마디 번호 표시). Haiku 4.5는 Gemini가 특정 유형에서 반복해 틀릴 때 같은 자료로 재서 바꾸는 대체재다. 모델 비용 수치는 작업 로그 2026-10-02 참조."
   - id: "D-204"
     date: "2026-10-02"
     status: "active"
@@ -1278,6 +1282,9 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-09-28T10:26:44+09:00"
   checks:
+    - name: "gemini_line_review_20261002"
+      result: "passed_with_known_gaps"
+      detail: "서버 113·앱 428 통과(1 실패는 옛 alphaTab). 실제 Gemini 응답: navy_repeats 26마디 토큰 10.3k/1.6k·$0.014, 푯대 39마디 16k/3.6k·$0.025, 오류 0. 적용된 코드·가사 수정을 원본 이미지와 대조해 navy 12/12, 푯대 가사 6/6 일치. 에뮬레이터 빌드 2048에서 변환→AI 보정 버전 생성→변환 검토의 AI 제안 표시 확인. 미확인: 사람이 확인한 정답 기준 정확도, 확신도 기준 적용 분리(F-07m), 편곡 조언(F-08d)의 Gemini 동작."
     - name: "proofread_original_20261002"
       result: "passed_with_known_gaps"
       detail: "서버 104·앱 445 통과(1 실패는 옛 alphaTab). 에뮬레이터 빌드 2046에서 재변환한 곡의 교정 화면에 마디별 원본 표시(26마디 모두 위치 있음), 추가한 마디는 원본 없음 표시, 오류 로그 0. 미확인: 세로 폰 배치의 기기 확인, 여러 쪽·여러 파트 실물, AI 제안 연결(크레딧)."

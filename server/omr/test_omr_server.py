@@ -892,6 +892,74 @@ class SegnoCodaTest(unittest.TestCase):
         self.assertEqual(second.find("direction/sound").attrib, {"coda": "coda"})
 
 
+class AiLineTest(unittest.TestCase):
+    """The AI review asks one staff line at a time."""
+
+    @staticmethod
+    def _score(numbers):
+        return ET.fromstring(_lead_sheet([_pitch("C") * 4 for _ in numbers]))
+
+    def test_measures_are_grouped_by_staff_line(self):
+        from PIL import Image
+
+        root = self._score(range(5))
+        first = {"top": 400.0, "bottom": 460.0, "left": 100.0, "right": 1300.0, "system": 0,
+                 "measures": [(100.0, 500.0, []), (500.0, 900.0, []), (900.0, 1300.0, [])]}
+        second = {"top": 900.0, "bottom": 960.0, "left": 100.0, "right": 1300.0, "system": 1,
+                  "measures": [(100.0, 700.0, []), (700.0, 1300.0, [])]}
+        book = {
+            "sheets": [("1", None, Image.new("L", (1400, 1400), 255), 10.0, [first, second])],
+            # Measure 3 (index 2) was not placed; the others sit on two lines.
+            "placements": [[("1", 0, 0, [first]), ("1", 0, 1, [first]), None,
+                            ("1", 1, 0, [second]), ("1", 1, 1, [second])]],
+            "unmatched": [],
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            items = omr_ai._ai_dataset(root, book, Path(folder))
+            self.assertEqual([i["targets"] for i in items], [["1", "2"], ["4", "5"]])
+            self.assertEqual([i["measureIndex"] for i in items], [[0, 1], [3, 4]])
+            picture = Image.open(Path(folder) / items[0]["image"])
+            self.assertEqual(picture.width, 1220)
+        prompt = omr_ai._ai_prompt(items[1])
+        self.assertIn("measures 4, 5", prompt)
+        self.assertIn("- measure 4:", prompt)
+        self.assertIn("- measure 5:", prompt)
+
+    def test_a_wide_line_is_scaled_to_the_token_budget(self):
+        from PIL import Image
+
+        root = self._score(range(1))
+        staff = {"top": 400.0, "bottom": 460.0, "left": 100.0, "right": 3300.0, "system": 0,
+                 "measures": [(100.0, 3300.0, [])]}
+        book = {"sheets": [("1", None, Image.new("L", (3400, 1400), 255), 10.0, [staff])],
+                "placements": [[("1", 0, 0, [staff])]], "unmatched": []}
+        with tempfile.TemporaryDirectory() as folder:
+            items = omr_ai._ai_dataset(root, book, Path(folder))
+            self.assertEqual(Image.open(Path(folder) / items[0]["image"]).width, omr_ai.AI_LINE_WIDTH)
+
+    def test_answers_for_a_line_are_sorted_into_its_measures(self):
+        root = self._score(range(3))
+        items = [{"id": "s0", "measureIndex": [0, 1], "targets": ["1", "2"], "fifths": 0},
+                 {"id": "s1", "measureIndex": [2], "targets": ["3"], "fifths": 0}]
+        answers = {
+            "s0": {"answer": {"hasError": True, "corrections": [
+                       {"measure": "2", "field": "chords", "suggested": "Am", "confidence": 0.9},
+                       {"measure": "1", "field": "pitch", "note": 1, "suggested": "D4", "confidence": 0.5},
+                   ], "uncertain": [{"measure": "1", "reason": "smudged"}]},
+                   "input_tokens": 900, "output_tokens": 120},
+            "s1": {"error": "gemini 429: quota"},
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            summary = omr_ai._ai_apply(root, items, answers, "test-model", Path(folder))
+            report = json.loads((Path(folder) / "ai_review.json").read_text())
+            self.assertTrue((Path(folder) / "ai.mxl").is_file())
+        self.assertEqual((summary["measures"], summary["lines"], summary["errors"]), (3, 2, 1))
+        self.assertEqual((summary["input_tokens"], summary["output_tokens"]), (900, 120))
+        self.assertEqual([(s["measure"], len(s["corrections"]), len(s["uncertain"])) for s in report["suggestions"]],
+                         [("1", 1, 1), ("2", 1, 0)])
+        self.assertEqual([(a["measure"], a["field"]) for a in report["applied"]], [("2", "chords")])
+
+
 class AiApplyTest(unittest.TestCase):
     def test_chords_and_lyrics_are_applied_and_dashes_stay(self):
         measure = ET.fromstring("""<measure number="3">
@@ -921,6 +989,114 @@ class AiApplyTest(unittest.TestCase):
         self.assertEqual(applied, [])
         texts = [[l.findtext("text") for l in n.findall("lyric")] for n in measure.findall("note")]
         self.assertEqual(texts, [["나"], ["—"], ["는"], []])
+
+
+    def test_a_held_syllable_is_written_as_a_dash(self):
+        def measure():
+            return ET.fromstring("""<measure number="29">
+              <note><pitch><step>D</step><octave>5</octave></pitch><duration>1</duration>
+                <lyric number="1"><text>버</text></lyric></note>
+              <note><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration>
+                <lyric number="1"><text>리</text></lyric></note>
+              <note><pitch><step>B</step><octave>4</octave></pitch><duration>1</duration>
+                <lyric number="1"><text>고</text></lyric></note>
+              <note><pitch><step>B</step><octave>4</octave></pitch><duration>1</duration></note>
+              <note><pitch><step>A</step><octave>4</octave></pitch><duration>1</duration>
+                <lyric number="1"><text>앞</text></lyric></note>
+            </measure>""")
+
+        def texts(m):
+            return [[l.findtext("text") for l in n.findall("lyric")] for n in m.findall("note")]
+
+        held = measure()
+        applied = omr_ai._apply_ai_measure(
+            held, [{"field": "lyrics", "verse": "1", "suggested": "잊어버리고-앞", "confidence": 0.98}], 3)
+        # Six syllables for five notes: not applied as it is...
+        self.assertEqual(applied, [])
+        applied = omr_ai._apply_ai_measure(
+            held, [{"field": "lyrics", "verse": "1", "suggested": "버리고-앞", "confidence": 0.98}], 3)
+        # ...five for five: the held note gets a dash, not a second 고.
+        self.assertEqual([a["field"] for a in applied], ["lyrics"])
+        self.assertEqual(texts(held), [["버"], ["리"], ["고"], ["—"], ["앞"]])
+        # A measure's words cannot begin with a dash.
+        fresh = measure()
+        self.assertEqual(omr_ai._apply_ai_measure(
+            fresh, [{"field": "lyrics", "verse": "1", "suggested": "-버리고앞", "confidence": 0.9}], 3), [])
+        self.assertEqual(texts(fresh), [["버"], ["리"], ["고"], [], ["앞"]])
+
+    def test_an_answer_naming_held_notes_with_dashes_fits_a_tied_note(self):
+        measure = ET.fromstring("""<measure number="3">
+          <note><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration>
+            <lyric number="1"><text>사</text></lyric></note>
+          <note><pitch><step>D</step><octave>5</octave></pitch><duration>1</duration>
+            <lyric number="1"><text>할</text></lyric></note>
+          <note><pitch><step>E</step><octave>5</octave></pitch><duration>1</duration><tie type="start"/>
+            <lyric number="1"><text>니</text></lyric></note>
+          <note><pitch><step>E</step><octave>5</octave></pitch><duration>1</duration><tie type="stop"/></note>
+          <note><pitch><step>F</step><octave>5</octave></pitch><duration>1</duration>
+            <lyric number="1"><text>온</text></lyric></note>
+        </measure>""")
+        applied = omr_ai._apply_ai_measure(
+            measure, [{"field": "lyrics", "verse": "1", "suggested": "사합니-온", "confidence": 0.99}], 1)
+        self.assertEqual(applied[0]["after"], "사 합 니 — 온")
+        texts = [[l.findtext("text") for l in n.findall("lyric")] for n in measure.findall("note")]
+        self.assertEqual(texts, [["사"], ["합"], ["니"], ["—"], ["온"]])
+
+    def test_a_dash_never_replaces_a_sung_syllable(self):
+        measure = ET.fromstring("""<measure number="16">
+          <note><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration>
+            <lyric number="1"><text>합</text></lyric></note>
+          <note><pitch><step>D</step><octave>5</octave></pitch><duration>1</duration>
+            <lyric number="1"><text>니</text></lyric></note>
+          <note><pitch><step>E</step><octave>5</octave></pitch><duration>1</duration>
+            <lyric number="1"><text>다</text></lyric></note>
+        </measure>""")
+        applied = omr_ai._apply_ai_measure(
+            measure, [{"field": "lyrics", "verse": "1", "suggested": "합니-", "confidence": 0.9}], 1)
+        self.assertEqual(applied, [])
+        texts = [[l.findtext("text") for l in n.findall("lyric")] for n in measure.findall("note")]
+        self.assertEqual(texts, [["합"], ["니"], ["다"]])
+
+    def test_a_suggestion_equal_to_the_recognition_is_dropped(self):
+        measure = ET.fromstring("""<measure number="1">
+          <harmony><root><root-step>G</root-step></root><kind text="">major</kind></harmony>
+          <note><pitch><step>B</step><octave>4</octave></pitch><duration>2</duration>
+            <lyric number="1"><text>예</text></lyric></note>
+          <note><pitch><step>B</step><octave>4</octave></pitch><duration>2</duration>
+            <lyric number="1"><text>수</text></lyric></note>
+        </measure>""")
+        self.assertTrue(omr_ai._same_as_recognized(
+            measure, {"field": "lyrics", "verse": "1", "current": "예 수", "suggested": "예수"}))
+        self.assertTrue(omr_ai._same_as_recognized(measure, {"field": "chords", "suggested": "['G']"}))
+        self.assertFalse(omr_ai._same_as_recognized(measure, {"field": "lyrics", "verse": "1", "suggested": "예수님"}))
+        self.assertFalse(omr_ai._same_as_recognized(measure, {"field": "chords", "suggested": "G, D"}))
+        self.assertFalse(omr_ai._same_as_recognized(measure, {"field": "pitch", "note": 1, "suggested": "A4"}))
+
+    def test_several_chords_on_one_note_keep_their_order(self):
+        measure = ET.fromstring("""<measure number="8">
+          <harmony><root><root-step>G</root-step></root><kind>major</kind></harmony>
+          <note><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
+        </measure>""")
+        applied = omr_ai._apply_ai_measure(
+            measure, [{"field": "chords", "suggested": "G, C/G, D/G", "confidence": 0.95}], 1)
+        self.assertEqual(applied[0]["after"], ["G", "C/G", "D/G"])
+        self.assertEqual(omr_validate._measure_view(measure)["chords"], ["G", "C/G", "D/G"])
+        # Spread over the whole note: at its start, a third and two thirds in.
+        self.assertEqual([h.findtext("offset") for h in measure.findall("harmony")], [None, "1", "3"])
+
+    def test_a_bracketed_chord_is_a_chord(self):
+        self.assertEqual(omr_ai._chord_list('["Am7", "(D7)"]'), ["Am7", "D7"])
+        measure = ET.fromstring("""<measure number="12">
+          <harmony><root><root-step>A</root-step></root><kind text="m7">minor-seventh</kind></harmony>
+          <note><pitch><step>C</step><octave>5</octave></pitch><duration>2</duration><type>half</type></note>
+          <harmony><root><root-step>D</root-step></root><kind text="7">dominant</kind></harmony>
+          <note><pitch><step>D</step><octave>5</octave></pitch><duration>2</duration><type>half</type></note>
+        </measure>""")
+        # The page shows "Am7 (D7)": the same chords as recognized, so nothing changes.
+        applied = omr_ai._apply_ai_measure(
+            measure, [{"field": "chords", "suggested": '["Am7", "(D7)"]', "confidence": 0.95}], 1)
+        self.assertEqual(applied, [])
+        self.assertEqual(omr_validate._measure_view(measure)["chords"], ["Am7", "D7"])
 
 
 class PdfPhotoTest(unittest.TestCase):

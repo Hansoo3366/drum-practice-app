@@ -25,9 +25,9 @@ CHAT_PROVIDERS = {
 }
 
 INSTRUCTIONS = """You check the result of optical music recognition (OMR) of a lead sheet
-against a photo crop of the printed original. The crop shows the previous,
-current and next measure (or a whole system). You get what OMR recognized for
-those measures as text.
+against a picture of the printed original: one staff line, with the number
+of each measure written in red above the bar it starts. You get what OMR
+recognized for those measures as text.
 
 Rules:
 - Only report differences you can clearly see in the image. Never guess
@@ -37,6 +37,9 @@ Rules:
   list of chords of a measure in order when the recognized list is wrong.
 - Lyrics: Korean lyrics, one syllable per sung note, written without spaces.
   Report the full syllable string of one verse of one measure when wrong.
+  A syllable sung over several notes (a melisma, printed with a line after
+  it) is written once, then one "-" for each further note it is held on:
+  "잊어버리고-앞에". Never repeat the syllable instead.
 - Notes: report only clear pitch or duration errors, by note position (1-based
   within the measure).
 - confidence is your probability (0-1) that the suggested value is exactly
@@ -106,9 +109,13 @@ def verify(image: Path, text: str, model: str, api_key: str | None = None,
     key = api_key or os.environ.get("OPENAI_API_KEY", "")
     if not key:
         raise RuntimeError("OPENAI_API_KEY is not set")
+    # "gpt-5.6-terra@low" asks for less reasoning: most of this model's cost
+    # is its thinking. Answers stay keyed by the full name.
+    model, _, effort = model.partition("@")
     picture = base64.b64encode(image.read_bytes()).decode("ascii")
     body = {
         "model": model,
+        **({"reasoning": {"effort": effort}} if effort else {}),
         "instructions": INSTRUCTIONS,
         "input": [{
             "role": "user",

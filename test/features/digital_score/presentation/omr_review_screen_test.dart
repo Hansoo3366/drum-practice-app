@@ -124,8 +124,17 @@ class _Crops implements OmrConvertService {
     return _png;
   }
 
+  List<List<OmrBarPlace?>>? places;
+  final lines = <String>[];
+
   @override
-  Future<List<List<OmrBarPlace?>>?> barPlaces(String songId) async => null;
+  Future<List<List<OmrBarPlace?>>?> barPlaces(String songId) async => places;
+
+  @override
+  Future<Uint8List?> systemImage(String songId, String name) async {
+    lines.add(name);
+    return _png;
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -312,6 +321,28 @@ void main() {
     await _settle(tester);
     expect(find.text('마디 1'), findsOneWidget);
     expect(find.text('이 버전에는 없는 마디입니다.'), findsOneWidget);
+
+    await _close(tester);
+  });
+
+  testWidgets('a bar without a crop is shown on its staff line', (
+    tester,
+  ) async {
+    final crops = _Crops()
+      ..places = [
+        [null, null, (image: 'p1-s1.jpg', focus: (0.6, 0.9))],
+      ];
+    await _open(tester, _MemoryStorage(), crops);
+
+    // The first bar has the server's crop; the second only its line.
+    await tester.tap(find.byTooltip('다음 마디'));
+    await _settle(tester);
+    expect(find.text('마디 3'), findsOneWidget);
+    final crop = tester.widget<OmrOriginalCrop>(find.byType(OmrOriginalCrop));
+    expect(crop.focus, (0.6, 0.9));
+    expect(crop.around, 1.0);
+    expect(crops.lines, ['p1-s1.jpg']);
+    expect(find.text('원본 조각이 없습니다.'), findsNothing);
 
     await _close(tester);
   });

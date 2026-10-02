@@ -51,6 +51,7 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
 
   final _playback = PianoScorePlaybackController();
   final _images = <String, Future<Uint8List?>>{};
+  final _originals = <String, Future<Uint8List?>>{};
   late String _xml = widget.musicXml;
   late ScoreVersionCatalog _catalog = widget.catalog;
   late final Set<String> _checked = {...widget.checked};
@@ -58,6 +59,10 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
   var _saved = false;
 
   List<int>? _origins;
+
+  /// Where the conversion placed every measure on the original, when known:
+  /// a bar without a crop of its own is shown on its staff line.
+  List<List<OmrBarPlace?>>? _places;
   final _texts = <int, List<Set<String>>>{};
 
   String? _preview;
@@ -84,6 +89,35 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
     super.initState();
     _readVersion();
     _engrave();
+    unawaited(_loadPlaces());
+  }
+
+  Future<void> _loadPlaces() async {
+    final places = await ref
+        .read(omrConvertServiceProvider)
+        .barPlaces(widget.songId);
+    if (mounted && places != null) setState(() => _places = places);
+  }
+
+  /// The original of [bar]: the server's crop around it, or its staff line.
+  ({Future<Uint8List?> image, (double, double)? focus, double? around})?
+  _originalOf(OmrReviewBar bar) {
+    if (bar.image case final name?) {
+      return (image: _image(name), focus: bar.focus, around: null);
+    }
+    final part = _places?.elementAtOrNull(bar.partIndex);
+    final place = part?.elementAtOrNull(bar.measureIndex);
+    if (place == null) return null;
+    return (
+      image: _originals.putIfAbsent(
+        place.image,
+        () => ref
+            .read(omrConvertServiceProvider)
+            .systemImage(widget.songId, place.image),
+      ),
+      focus: place.focus,
+      around: 1.0,
+    );
   }
 
   @override
@@ -327,10 +361,9 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
                         child: _Pane(
                           title: '원본',
                           child: _Original(
-                            image: bar.image == null
-                                ? null
-                                : _image(bar.image!),
-                            focus: bar.focus,
+                            image: _originalOf(bar)?.image,
+                            focus: _originalOf(bar)?.focus,
+                            around: _originalOf(bar)?.around,
                           ),
                         ),
                       ),
@@ -461,12 +494,16 @@ class _Pane extends StatelessWidget {
 }
 
 class _Original extends StatelessWidget {
-  const _Original({required this.image, this.focus});
+  const _Original({required this.image, this.focus, this.around});
 
   final Future<Uint8List?>? image;
 
   /// Where the measure is in the crop; its neighbours are dimmed.
   final (double, double)? focus;
+
+  /// How much of the picture beside the measure to show (see
+  /// [OmrOriginalCrop.around]); all of it when null.
+  final double? around;
 
   @override
   Widget build(BuildContext context) {
@@ -493,7 +530,12 @@ class _Original extends StatelessWidget {
         }
         final bytes = snapshot.data;
         if (bytes == null) return missing;
-        return OmrOriginalCrop(bytes: bytes, focus: focus, missing: missing);
+        return OmrOriginalCrop(
+          bytes: bytes,
+          focus: focus,
+          around: around,
+          missing: missing,
+        );
       },
     );
   }

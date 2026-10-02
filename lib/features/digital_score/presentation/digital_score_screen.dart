@@ -2080,23 +2080,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                                 title: Text(context.l10n.omrReview),
                               ),
                             ),
-                          if (value.omrJobId != null &&
-                              !_versionCatalog.versions.any(
-                                (version) =>
-                                    version.origin == aiVersionOrigin ||
-                                    version.name == aiCorrectedVersionName,
-                              ))
-                            PopupMenuItem(
-                              value: _ScoreMenuAction.fetchAi,
-                              enabled: !_fetchingAi,
-                              child: ListTile(
-                                contentPadding: EdgeInsets.zero,
-                                leading: const Icon(
-                                  Icons.auto_fix_high_outlined,
-                                ),
-                                title: Text(context.l10n.fetchAiVersion),
-                              ),
-                            ),
                           if (_activeVersionId != scoreVersionOriginalId)
                             PopupMenuItem(
                               value: _ScoreMenuAction.deleteVersion,
@@ -2110,6 +2093,23 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                             ),
                           const PopupMenuDivider(),
                         ],
+                        // The AI version is fetched from here on every screen
+                        // size: the toolbar has no button for it.
+                        if (value.omrJobId != null &&
+                            !_versionCatalog.versions.any(
+                              (version) =>
+                                  version.origin == aiVersionOrigin ||
+                                  version.name == aiCorrectedVersionName,
+                            ))
+                          PopupMenuItem(
+                            value: _ScoreMenuAction.fetchAi,
+                            enabled: !_fetchingAi,
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.auto_fix_high_outlined),
+                              title: Text(context.l10n.fetchAiVersion),
+                            ),
+                          ),
                         PopupMenuItem(
                           value: _ScoreMenuAction.transpose,
                           child: ListTile(
