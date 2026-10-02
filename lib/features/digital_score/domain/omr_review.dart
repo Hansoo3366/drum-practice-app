@@ -81,6 +81,7 @@ class OmrReviewSuggestion {
     required this.suggested,
     required this.confidence,
     required this.applied,
+    this.status,
     this.verse,
     this.note,
   });
@@ -95,6 +96,19 @@ class OmrReviewSuggestion {
 
   /// Whether the "AI 보정" version already has it; the rest is advice only.
   final bool applied;
+
+  /// Why it was or was not written, as the server says: applied,
+  /// low_confidence, notes or no_fit. Null in reports from before this.
+  final String? status;
+
+  /// What the user should know about the suggestion.
+  String get advice => switch (status) {
+    'applied' => 'AI 보정 버전에 반영됨',
+    'low_confidence' => '확신이 낮아 반영하지 않음 · 검토 권장',
+    'notes' => '음표 수정은 반영하지 않음 · 검토 권장',
+    'no_fit' => '악보에 맞지 않아 반영하지 않음 · 검토 권장',
+    _ => applied ? 'AI 보정 버전에 반영됨' : '제안만',
+  };
   final String? verse;
   final int? note;
 
@@ -162,6 +176,16 @@ Iterable<Map<String, Object?>> _maps(Object? list) sync* {
   for (final item in list) {
     if (item is Map) yield Map<String, Object?>.from(item);
   }
+}
+
+/// A value of a suggestion as text: a chord list the model wrote as
+/// `["Am7", "D7"]` reads "Am7 D7".
+String _plain(Object? value, String field) {
+  var text = value is List ? value.join(' ') : value?.toString() ?? '';
+  if (field == 'chords') {
+    text = text.replaceAll(RegExp('[\\[\\]\'",]'), ' ');
+  }
+  return text.replaceAll(RegExp(r'\s+'), ' ').trim();
 }
 
 /// The crops a validation report refers to.
@@ -238,14 +262,18 @@ List<OmrReviewBar> omrReviewBars({
           .add(
             OmrReviewSuggestion(
               field: field,
-              current: fix['current']?.toString() ?? '',
-              suggested: fix['suggested']?.toString() ?? '',
+              current: _plain(fix['current'], field),
+              suggested: _plain(fix['suggested'], field),
               confidence: (fix['confidence'] as num?)?.toDouble(),
               verse: field == 'lyrics' ? (verse ?? '1') : null,
               note: (fix['note'] as num?)?.toInt(),
+              status: fix['status']?.toString(),
               applied:
-                  applied.contains('$key:$field:${verse ?? ''}') ||
-                  (field == 'lyrics' && applied.contains('$key:$field:1')),
+                  fix['status'] == 'applied' ||
+                  (fix['status'] == null &&
+                      (applied.contains('$key:$field:${verse ?? ''}') ||
+                          (field == 'lyrics' &&
+                              applied.contains('$key:$field:1')))),
             ),
           );
     }

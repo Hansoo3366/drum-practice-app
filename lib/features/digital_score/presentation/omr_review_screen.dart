@@ -587,7 +587,7 @@ class _Findings extends StatelessWidget {
               note: [
                 if (suggestion.confidence case final confidence?)
                   '확신 ${(confidence * 100).round()}%',
-                suggestion.applied ? 'AI 보정 버전에 반영됨' : '제안만',
+                suggestion.advice,
               ].join(' · '),
             ),
           for (final reason in bar.uncertain)

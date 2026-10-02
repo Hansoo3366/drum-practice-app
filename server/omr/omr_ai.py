@@ -25,6 +25,10 @@ from omr_validate import _measure_view, _validate_score
 
 AI_MODEL = os.environ.get("OMR_AI_MODEL", "gemini-3.8-flash@low")
 AI_WORKERS = int(os.environ.get("OMR_AI_WORKERS", "6"))
+# A chord or lyric suggestion is written into the AI version from this
+# confidence on; below it the suggestion is only listed for review (OMR spec
+# Phase 5). Note suggestions are never written: models misplace pitches.
+AI_APPLY_CONFIDENCE = float(os.environ.get("OMR_AI_APPLY_CONFIDENCE", "0.9"))
 # A staff line is sent at most this wide: enough to read notes and Korean
 # lyrics, and the picture's token cost is bounded.
 AI_LINE_WIDTH = 1600
@@ -268,6 +272,19 @@ def _apply_ai_measure(measure: ET.Element, corrections: list[dict], fifths: int)
     return applied
 
 
+def _status(fix: dict) -> str:
+    """Why a suggestion is, or is not, written into the AI version: "eligible"
+    (a chord or lyric the model is sure enough of), "low_confidence", or
+    "notes" (a pitch or duration, shown to the user only)."""
+    if fix.get("field") not in ("chords", "lyrics"):
+        return "notes"
+    try:
+        confidence = float(fix.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return "eligible" if confidence >= AI_APPLY_CONFIDENCE else "low_confidence"
+
+
 def _same_as_recognized(measure: ET.Element, fix: dict) -> bool:
     """A suggestion that says what the measure already has (the model wrote
     the lyrics without the spaces, or the chords as one string) is none."""
@@ -317,13 +334,23 @@ def _ai_apply(root: ET.Element, items: list[dict], answers: dict, model: str, ou
             mine = [c for c in answer["answer"].get("corrections", [])
                     if str(c.get("measure")) == target and not _same_as_recognized(measures[index], c)]
             unsure = [u for u in answer["answer"].get("uncertain", []) if str(u.get("measure")) == target]
+            eligible = [c for c in mine if _status(c) == "eligible"]
+            changes = _apply_ai_measure(measures[index], eligible, item["fifths"])
+            for change in changes:
+                applied.append({"measureIndex": index, "measure": target, **change})
+            for fix in mine:
+                status = _status(fix)
+                if status == "eligible":
+                    verse = str(fix.get("verse") or "1").strip() or "1"
+                    done = any(c["field"] == fix.get("field") and (c["field"] != "lyrics" or c.get("verse") == verse)
+                               for c in changes)
+                    status = "applied" if done else "no_fit"
+                fix["status"] = status
             if mine or unsure:
                 suggestions.append({"measureIndex": index, "measure": target,
                                     "corrections": mine, "uncertain": unsure})
-            for change in _apply_ai_measure(measures[index], mine, item["fifths"]):
-                applied.append({"measureIndex": index, "measure": target, **change})
     report = {
-        "model": model, "measures": covered, "lines": len(items),
+        "model": model, "measures": covered, "lines": len(items), "applyConfidence": AI_APPLY_CONFIDENCE,
         "errors": failed, "input_tokens": tokens_in, "output_tokens": tokens_out,
         "seconds": round(time.monotonic() - started, 1),
         "applied": applied, "suggestions": suggestions,

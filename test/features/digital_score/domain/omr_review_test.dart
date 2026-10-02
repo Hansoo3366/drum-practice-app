@@ -67,8 +67,8 @@ final _ai = jsonEncode({
           'field': 'chords',
           'verse': null,
           'note': null,
-          'current': 'G',
-          'suggested': 'G/B',
+          'current': "['G']",
+          'suggested': '["G/B", "D7"]',
           'confidence': 0.92,
         },
         {
@@ -79,6 +79,17 @@ final _ai = jsonEncode({
           'current': 'A4',
           'suggested': 'B4',
           'confidence': 0.6,
+          'status': 'notes',
+        },
+        {
+          'measure': '4',
+          'field': 'lyrics',
+          'verse': '1',
+          'note': null,
+          'current': '예 수',
+          'suggested': '예수님',
+          'confidence': 0.7,
+          'status': 'low_confidence',
         },
       ],
       'uncertain': <Object?>[],
@@ -118,13 +129,19 @@ void main() {
     final bars = omrReviewBars(validationJson: _validation, aiReviewJson: _ai);
 
     expect(bars.map((bar) => bar.measure), ['4', '8', '12']);
-    final [chords, pitch] = bars[0].suggestions;
+    final [chords, pitch, lyrics] = bars[0].suggestions;
     expect(chords.label, '코드');
-    expect((chords.current, chords.suggested), ('G', 'G/B'));
+    // Chord lists read as chords, not as the model's JSON.
+    expect((chords.current, chords.suggested), ('G', 'G/B D7'));
     expect(chords.confidence, 0.92);
     expect(chords.applied, isTrue);
+    // An older report without statuses: applied when the applied list says so.
+    expect(chords.advice, 'AI 보정 버전에 반영됨');
     expect(pitch.label, '2번째 음 높이');
     expect(pitch.applied, isFalse);
+    expect(pitch.advice, '음표 수정은 반영하지 않음 · 검토 권장');
+    expect(lyrics.applied, isFalse);
+    expect(lyrics.advice, '확신이 낮아 반영하지 않음 · 검토 권장');
     // A bar only the AI doubts is listed too.
     expect(bars[2].issues, isEmpty);
     expect(bars[2].uncertain, ['필기에 가려 가사가 보이지 않습니다']);

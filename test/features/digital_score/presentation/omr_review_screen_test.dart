@@ -57,6 +57,7 @@ const _bars = [
         suggested: 'G/B',
         confidence: 0.92,
         applied: true,
+        status: 'applied',
       ),
     ],
     uncertain: [],

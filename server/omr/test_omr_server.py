@@ -945,6 +945,10 @@ class AiLineTest(unittest.TestCase):
             "s0": {"answer": {"hasError": True, "corrections": [
                        {"measure": "2", "field": "chords", "suggested": "Am", "confidence": 0.9},
                        {"measure": "1", "field": "pitch", "note": 1, "suggested": "D4", "confidence": 0.5},
+                       # Sure enough to list, not to write.
+                       {"measure": "1", "field": "chords", "suggested": "F", "confidence": 0.6},
+                       # Sure, but the syllables do not fit the four notes.
+                       {"measure": "1", "field": "lyrics", "verse": "1", "suggested": "예수사랑합니다", "confidence": 0.99},
                    ], "uncertain": [{"measure": "1", "reason": "smudged"}]},
                    "input_tokens": 900, "output_tokens": 120},
             "s1": {"error": "gemini 429: quota"},
@@ -956,8 +960,14 @@ class AiLineTest(unittest.TestCase):
         self.assertEqual((summary["measures"], summary["lines"], summary["errors"]), (3, 2, 1))
         self.assertEqual((summary["input_tokens"], summary["output_tokens"]), (900, 120))
         self.assertEqual([(s["measure"], len(s["corrections"]), len(s["uncertain"])) for s in report["suggestions"]],
-                         [("1", 1, 1), ("2", 1, 0)])
+                         [("1", 3, 1), ("2", 1, 0)])
         self.assertEqual([(a["measure"], a["field"]) for a in report["applied"]], [("2", "chords")])
+        self.assertEqual([c["status"] for c in report["suggestions"][0]["corrections"]],
+                         ["notes", "low_confidence", "no_fit"])
+        self.assertEqual(report["suggestions"][1]["corrections"][0]["status"], "applied")
+        self.assertEqual(report["applyConfidence"], 0.9)
+        # The low-confidence chord was not written: measure 1 has no chord.
+        self.assertEqual(omr_validate._measure_view(root.find("part").findall("measure")[0])["chords"], [])
 
 
 class AiApplyTest(unittest.TestCase):
