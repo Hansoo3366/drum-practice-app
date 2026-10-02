@@ -82,5 +82,31 @@ void main() {
 
     expect(File('${root.path}/escape.png').existsSync(), isFalse);
     expect(await storage.loadOmrSuspectImage('song', 'escape.png'), [9]);
+    // A name that is no file name at all is refused, and has no crop.
+    for (final name in ['..', '.', '', 'a.jpg', '.png']) {
+      expect(
+        () => storage.omrSuspectImagePathFor('song', name),
+        throwsFormatException,
+        reason: name,
+      );
+      expect(await service().suspectImage('song', name), isNull, reason: name);
+    }
+  });
+
+  test('what a conversion left with a song goes with the song', () async {
+    await storage.saveOmrSuspectImage('song', 'p1-s1-m1.png', [1]);
+    await storage.saveOmrSuspectImage('other', 'p1-s1-m1.png', [2]);
+    await storage.saveOmrReviewState('song', '{"checked":["0:1"]}');
+    await storage.saveOmrAnnotations('song', '{"items":[]}');
+    await storage.saveOmrValidation('song', '{"issues":[]}');
+
+    await storage.deleteOmrReviewFiles('song');
+    await storage.deleteOmrReviewFiles('never-converted');
+
+    expect(await storage.loadOmrSuspectImage('song', 'p1-s1-m1.png'), isNull);
+    expect(await storage.loadOmrReviewState('song'), isNull);
+    expect(await storage.loadOmrAnnotations('song'), isNull);
+    expect(await storage.loadOmrValidation('song'), isNull);
+    expect(await storage.loadOmrSuspectImage('other', 'p1-s1-m1.png'), [2]);
   });
 }

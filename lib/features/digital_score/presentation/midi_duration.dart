@@ -168,8 +168,10 @@ class PlaybackMidi {
 /// General MIDI program (from 0) of every staff of [musicXml] in score
 /// order: that of its part's `<midi-program>`, the piano without one or for
 /// a sung part.
-List<int> staffPrograms(String musicXml) {
-  final root = XmlDocument.parse(musicXml).rootElement;
+List<int> staffPrograms(String musicXml) =>
+    _staffPrograms(XmlDocument.parse(musicXml).rootElement);
+
+List<int> _staffPrograms(XmlElement root) {
   final byPart = <String?, int>{};
   for (final part in root.findAllElements('score-part')) {
     final written = int.tryParse(
@@ -200,9 +202,11 @@ List<int> staffPrograms(String musicXml) {
 /// score order: the parts under it accompany, and instruments that hold
 /// their notes at full strength (organ, strings, pads) cover more than a
 /// piano that fades.
-List<double> staffLevels(String musicXml) {
-  final root = XmlDocument.parse(musicXml).rootElement;
-  final programs = staffPrograms(musicXml);
+List<double> staffLevels(String musicXml) =>
+    _staffLevels(XmlDocument.parse(musicXml).rootElement);
+
+List<double> _staffLevels(XmlElement root) {
+  final programs = _staffPrograms(root);
   final levels = <double>[];
   var first = true;
   for (final part in root.findElements('part')) {
@@ -328,10 +332,12 @@ PlaybackMidi buildPlaybackMidi({
     options: nm.MidiGenerationOptions(defaultBpm: bpm, includeMetronome: false),
     codec: codec,
   );
+  // Instruments and levels from one reading of the score.
+  final root = XmlDocument.parse(playing).rootElement;
   return PlaybackMidi(
     midi,
-    channelPrograms(midi, playing),
-    channelLevels(midi, playing),
+    _byChannel(midi, _staffPrograms(root)),
+    _byChannel(midi, _staffLevels(root)),
   );
 }
 

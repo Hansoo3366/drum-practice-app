@@ -1586,7 +1586,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get barTextsHint =>
-      'Text read from the page that is not a chord, a lyric or a note. Remove what was misread.';
+      'Text read from the page that is not a chord, a lyric or a note. Correct or remove what was misread.';
 
   @override
   String get addNote => 'Add note';

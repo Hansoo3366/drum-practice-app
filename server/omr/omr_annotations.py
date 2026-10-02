@@ -22,16 +22,23 @@ _CHROMA_MIN = 40
 _CHROMA_OVER_PAPER = 30
 # Darker than this is print, whatever its tint: JPEG tints black edges.
 _DARK = 80
-# Lighter than this (in grey), a coloured pixel is see-through highlighter:
-# print shows through it. Ink is darker.
-_BRIGHT = 170
-# The mean grey of a whole annotation from which it counts as highlighter.
-_HIGHLIGHT = 185
+# An annotation is vivid: its brightest channel is at least this share of the
+# paper's. Colour that is darker is printed (repeat signs, brackets and
+# section names in navy) and stays in the page. Over 33 sample pages printed
+# colour is at 0.44-0.58 of the paper and annotations are at 0.74 or more.
+_VIVID = 0.66
+# An annotation whose mean grey is at least this share of the paper's is
+# highlighter (0.77 and up on the samples); pen and coloured type are darker
+# (0.60 and down).
+_HIGHLIGHT = 0.68
 # A page is left alone under this share of coloured pixels.
 _MIN_SHARE = 0.0002
 # A region smaller than this many pixels of the reduced mask is noise.
 _MIN_REGION_CELLS = 3
 _REGION_GRID = 640
+# Fewer coloured pixels than this is the tinted edge of something printed in
+# colour, not an annotation (the smallest real one on the samples has 500).
+_MIN_REGION_PIXELS = 60
 
 
 def _enabled() -> bool:
@@ -58,36 +65,44 @@ def _median(histogram: list[int]) -> int:
     return 0
 
 
+def _paper(photo):
+    """The page on white as RGB. A transparent PNG has no paper of its own."""
+    from PIL import Image
+
+    if photo.mode in ("RGBA", "LA") or (photo.mode == "P" and "transparency" in photo.info):
+        photo = photo.convert("RGBA")
+        page = Image.new("RGBA", photo.size, "white")
+        page.alpha_composite(photo)
+        return page.convert("RGB")
+    return photo.convert("RGB")
+
+
 def _separate(photo):
     """The page without its colour annotations, the annotations alone on white,
     their mask, and the mask without the soft edges (the colour itself); None
     when the page has none worth taking out.
 
-    Print under highlighter is kept: only the colour goes. Ink is removed, and
-    what it covered is not guessed."""
+    Only vivid colour goes, and it goes to white: pen, coloured type and the
+    tint of a highlighter. Whatever is dark stays as it is, in or beside an
+    annotation: print under highlighter, print a pen stroke runs over, and
+    print that is itself coloured."""
     from PIL import Image, ImageChops, ImageFilter
 
-    photo = photo.convert("RGB")
+    photo = _paper(photo)
     brightest, _darkest, chroma = _channels(photo)
     threshold = max(_CHROMA_MIN, _median(chroma.histogram()) + _CHROMA_OVER_PAPER)
     coloured = chroma.point(lambda value: 255 if value > threshold else 0)
-    not_dark = brightest.point(lambda value: 255 if value > _DARK else 0)
-    core = ImageChops.darker(coloured, not_dark).filter(ImageFilter.MedianFilter(3))
+    vivid_from = max(_DARK, _VIVID * _median(brightest.histogram()))
+    vivid = brightest.point(lambda value: 255 if value >= vivid_from else 0)
+    core = ImageChops.darker(coloured, vivid).filter(ImageFilter.MedianFilter(3))
     # Single coloured pixels are noise; the soft edge of a stroke belongs to it.
     mask = core.filter(ImageFilter.MaxFilter(7))
     share = mask.histogram()[255] / (mask.width * mask.height)
     if share < _MIN_SHARE:
         return None
 
-    # Under highlighter the page keeps its brightness (print stays dark, the
-    # highlighted paper turns white); ink goes to white.
     grey = photo.convert("L")
-    see_through = ImageChops.darker(
-        coloured, grey.point(lambda value: 255 if value >= _BRIGHT else 0)
-    ).filter(ImageFilter.MedianFilter(5)).filter(ImageFilter.MaxFilter(9))
-    white = Image.new("L", photo.size, 255)
-    replacement = Image.composite(brightest, white, see_through)
-    clean = Image.composite(replacement, grey, mask)
+    clean = Image.composite(Image.new("L", photo.size, 255), grey, ImageChops.darker(mask, vivid))
     annotation = Image.composite(photo, Image.new("RGB", photo.size, "white"), mask)
     return clean, annotation, mask, core
 
@@ -113,6 +128,9 @@ def _colour_name(red: float, green: float, blue: float) -> str:
 def _regions(mask, core, annotation, clean) -> list[dict]:
     """Connected annotations as page boxes with their kind and colour."""
     from PIL import ImageFilter, ImageStat
+
+    # The paper, in the grey of the cleaned page (most of it is paper).
+    paper = max(1, _median(clean.histogram()))
 
     factor = max(1, max(mask.size) // _REGION_GRID)
     small = mask.reduce(factor) if factor > 1 else mask
@@ -155,12 +173,12 @@ def _regions(mask, core, annotation, clean) -> list[dict]:
         if covered == 0:
             continue
         colour = core.crop(box)
-        if colour.histogram()[255] == 0:
+        if colour.histogram()[255] < _MIN_REGION_PIXELS:
             continue
         mean = ImageStat.Stat(annotation.crop(box), colour).mean
         # Highlighter is light; ink is darker strokes.
         lightness = 0.299 * mean[0] + 0.587 * mean[1] + 0.114 * mean[2]
-        kind = "highlight" if lightness >= _HIGHLIGHT else "ink"
+        kind = "highlight" if lightness >= _HIGHLIGHT * paper else "ink"
         # Ink that touches print may hide some of it; what was there is not known.
         touches = False
         if kind == "ink":
@@ -255,11 +273,14 @@ def _upload_pages(source: Path) -> list | None:
         photos = _pdf_photos(data)
         if not photos or len(photos) != _pdf_pages(data) or b"/Font" in data:
             return None
+        # A turned page would be written back upright: such a PDF is left alone.
+        if re.search(rb"/Rotate\s+(?:90|180|270)\b", data):
+            return None
         pages = []
         for photo in photos:
             page = Image.open(io.BytesIO(photo))
             page.load()
-            pages.append(page)
+            pages.append(ImageOps.exif_transpose(page))
         return pages
     except (OSError, ValueError):
         return None

@@ -131,8 +131,27 @@ class SongFileStorage {
   String omrCorrectionsPathFor(String songId) =>
       path.join('omr_corrections', '$songId.json');
 
-  String omrSuspectImagePathFor(String songId, String name) =>
-      path.join('omr_suspects', songId, path.basename(name));
+  /// Where the crop [name] of a song is kept. A name is a plain file name:
+  /// it comes from a server report.
+  String omrSuspectImagePathFor(String songId, String name) {
+    final file = path.basename(name);
+    if (!RegExp(r'^[\w-][\w.-]*\.png$').hasMatch(file)) {
+      throw FormatException('Not a crop name: $name');
+    }
+    return path.join('omr_suspects', songId, file);
+  }
+
+  /// Removes what a conversion left with a song: crops, review marks and
+  /// the list of separated annotations.
+  Future<void> deleteOmrReviewFiles(String songId) async {
+    final crops = (await resolve(
+      path.join('omr_suspects', songId, 'x'),
+    )).parent;
+    if (await crops.exists()) await crops.delete(recursive: true);
+    await delete(omrReviewStatePathFor(songId));
+    await delete(omrAnnotationsPathFor(songId));
+    await delete(omrValidationPathFor(songId));
+  }
 
   String omrReviewStatePathFor(String songId) =>
       path.join('omr_review', '$songId.json');

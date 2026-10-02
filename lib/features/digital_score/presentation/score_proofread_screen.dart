@@ -52,6 +52,10 @@ class ScoreProofreadScreen extends ConsumerStatefulWidget {
 class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   static const _historyLimit = 100;
 
+  /// Characters of score kept for undo (about 16 MB of memory): 100 steps of
+  /// a short song, some 15 of a 500 KB score.
+  static const _historyCharacters = 8 * 1000 * 1000;
+
   /// A Verovio page narrower than A4 engraves the bar larger. Phones get the
   /// narrowest page so notes stay big enough to tap.
   static Size _pageSizeFor(double viewportWidth) =>
@@ -86,6 +90,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   late String _preview;
   late MusicScore _previewScore;
   XmlNoteSummary? _summary;
+  late XmlBarInspection _bar;
   var _hasTexts = false;
   var _saving = false;
 
@@ -115,24 +120,34 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   /// Re-engraves the current bar and keeps [select] (or the current note)
   /// selected when it still exists.
-  void _refresh({int? select}) {
-    final isolated = isolateMeasureXml(_xml, widget.partIndex, _measureIndex);
-    _previewScore = _codec.decodeXml(isolated);
-    _preview = tagIsolatedNotes(isolated, _previewMeasure);
+  void _refresh({int? select}) => _show(_inspect(_xml), select: select);
+
+  /// Reads the current bar of [xml]: one pass over the score. Throws a
+  /// [FormatException] when the bar cannot be read.
+  ({XmlBarInspection bar, MusicScore score}) _inspect(String xml) {
+    final bar = _editor.inspect(xml, widget.partIndex, _measureIndex);
+    return (bar: bar, score: _codec.decodeXml(bar.isolatedXml));
+  }
+
+  void _show(({XmlBarInspection bar, MusicScore score}) read, {int? select}) {
+    _bar = read.bar;
+    _previewScore = read.score;
+    _preview = tagIsolatedNotes(read.bar.isolatedXml, _previewMeasure);
     final count = _previewMeasure.notes.length;
     final index = select ?? _noteIndex;
     _noteIndex = count == 0 || index == null ? null : index.clamp(0, count - 1);
-    _summary = _ref == null ? null : _editor.describe(_xml, _ref!);
-    _hasTexts = _editor
-        .measureTexts(_xml, widget.partIndex, _measureIndex)
-        .isNotEmpty;
+    final note = _noteIndex;
+    _summary = note == null || note >= read.bar.notes.length
+        ? null
+        : read.bar.notes[note];
+    _hasTexts = read.bar.texts.isNotEmpty;
   }
 
   /// Applies [edit] at the selected note. An edit that adds or removes bars
   /// says with [bars] what the list of bar ids becomes.
   void _apply(
     XmlEditResult Function(String xml, XmlNoteRef ref) edit, {
-    List<int> Function(List<int> bars)? bars,
+    List<int> Function(List<int> bars, int at)? bars,
   }) {
     // A bar edit needs no note: a bar read without any can still be removed.
     final ref =
@@ -147,7 +162,18 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     if (ref == null) return;
     try {
       final result = edit(_xml, ref);
-      _codec.decodeXml(result.xml);
+      final before = _measureIndex;
+      _measureIndex = result.selection.measureIndex;
+      final ({XmlBarInspection bar, MusicScore score}) read;
+      try {
+        // The edited bar must still read. A bar edit moves every bar after
+        // it, so the whole score is read once more; saving reads it again.
+        if (bars != null) _codec.decodeXml(result.xml);
+        read = _inspect(result.xml);
+      } on FormatException {
+        _measureIndex = before;
+        rethrow;
+      }
       final current = _bars[_cursor];
       setState(() {
         _history
@@ -155,7 +181,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
           ..add(result.xml);
         _bars
           ..removeRange(_cursor + 1, _bars.length)
-          ..add(bars == null ? current : bars(current));
+          ..add(bars == null ? current : bars(current, ref.measureIndex));
         _edits
           ..removeRange(_cursor, _edits.length)
           ..add((
@@ -165,15 +191,19 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             after: result.selection.noteIndex,
           ));
         _cursor = _history.length - 1;
-        if (_history.length > _historyLimit + 1) {
+        // Every state is the whole score: a long score keeps fewer of them.
+        var kept = _history.fold(0, (sum, state) => sum + state.length);
+        while (_history.length > 2 &&
+            (_history.length > _historyLimit + 1 ||
+                kept > _historyCharacters)) {
+          kept -= _history.first.length;
           _history.removeAt(0);
           _bars.removeAt(0);
           _edits.removeAt(0);
           _cursor--;
           _savedCursor--;
         }
-        _measureIndex = result.selection.measureIndex;
-        _refresh(select: result.selection.noteIndex);
+        _show(read, select: result.selection.noteIndex);
       });
     } on FormatException catch (error) {
       _showMessage(error.message);
@@ -211,7 +241,11 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   void _selectNote(int index) {
     final count = _previewMeasure.notes.length;
     if (index < 0 || index >= count) return;
-    setState(() => _refresh(select: index));
+    // The bar is already read: picking another note needs no new pass.
+    setState(() {
+      _noteIndex = index;
+      _summary = index < _bar.notes.length ? _bar.notes[index] : null;
+    });
   }
 
   void _onEventTapped(ScoreEventAddress address) {
@@ -220,6 +254,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   }
 
   void _showMessage(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
@@ -249,28 +284,42 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   void _insertBar() => _apply(
     _editor.insertMeasureAfter,
-    bars: (bars) => [...bars]..insert(_measureIndex + 1, _nextBarId++),
+    bars: (bars, at) => [...bars]..insert(at + 1, _nextBarId++),
   );
 
   void _duplicateBar() => _apply(
     _editor.duplicateMeasure,
-    bars: (bars) => [...bars]..insert(_measureIndex + 1, _nextBarId++),
+    bars: (bars, at) => [...bars]..insert(at + 1, _nextBarId++),
   );
 
   void _deleteBar() => _apply(
     _editor.deleteMeasure,
-    bars: (bars) => [...bars]..removeAt(_measureIndex),
+    bars: (bars, at) => [...bars]..removeAt(at),
+  );
+
+  void _moveBar(int places) => _apply(
+    (xml, ref) => _editor.moveMeasure(xml, ref, places),
+    bars: (bars, at) {
+      final moved = [...bars];
+      final bar = moved.removeAt(at);
+      return moved..insert(at + places, bar);
+    },
   );
 
   Future<void> _editTexts() async {
-    final texts = _editor.measureTexts(_xml, widget.partIndex, _measureIndex);
+    final texts = _bar.texts;
     if (texts.isEmpty) return;
-    final index = await showDialog<int>(
+    final change = await showDialog<({int index, String? text})>(
       context: context,
       builder: (_) => _BarTextsDialog(texts: texts),
     );
-    if (index == null || !mounted) return;
-    _apply((xml, ref) => _editor.removeText(xml, ref, index));
+    if (change == null || !mounted) return;
+    final text = change.text;
+    _apply(
+      (xml, ref) => text == null
+          ? _editor.removeText(xml, ref, change.index)
+          : _editor.setText(xml, ref, change.index, text),
+    );
   }
 
   Future<bool> _save() async {
@@ -298,18 +347,14 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       final sameBars =
           bars.length == _openedBars.length &&
           [for (var i = 0; i < bars.length; i++) bars[i] == i].every((b) => b);
-      final saved = await service.addXmlVersion(
+      await service.addXmlVersion(
         songId: widget.songId,
         // Generated parts follow the edited melody and chords.
         musicXml: regenerateAccompaniment(_xml),
         catalog: widget.catalog,
         name: name,
-      );
-      // The new version keeps the sections and the playback order; where
-      // bars were added or removed, the sections move with their bars.
-      await service.saveSequence(
-        songId: widget.songId,
-        versionId: saved.activeId,
+        // The new version keeps the sections and the playback order; where
+        // bars were added, removed or moved, the sections go with their bars.
         sequence: sameBars
             ? sequence
             : remapSectionMarks(
@@ -476,6 +521,20 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                         tooltip: l10n.deleteMeasure,
                         onPressed: _measureCount > 1 ? _deleteBar : null,
                         child: const Icon(Icons.delete_outline_rounded),
+                      ),
+                      _ToolButton(
+                        tooltip: l10n.moveMeasureEarlier,
+                        onPressed: _measureIndex > 0
+                            ? () => _moveBar(-1)
+                            : null,
+                        child: const Icon(Icons.keyboard_double_arrow_left),
+                      ),
+                      _ToolButton(
+                        tooltip: l10n.moveMeasureLater,
+                        onPressed: _measureIndex < _measureCount - 1
+                            ? () => _moveBar(1)
+                            : null,
+                        child: const Icon(Icons.keyboard_double_arrow_right),
                       ),
                       const _ToolGap(),
                       _ToolButton(
@@ -781,11 +840,35 @@ class _ToolButton extends StatelessWidget {
   }
 }
 
-/// Lists the texts of the bar; pops with the index of the one to remove.
-class _BarTextsDialog extends StatelessWidget {
+/// Lists the texts of the bar. Pops with the index of a text and what it
+/// should read, or null as the text to remove it.
+class _BarTextsDialog extends StatefulWidget {
   const _BarTextsDialog({required this.texts});
 
   final List<String> texts;
+
+  @override
+  State<_BarTextsDialog> createState() => _BarTextsDialogState();
+}
+
+class _BarTextsDialogState extends State<_BarTextsDialog> {
+  late final _controllers = [
+    for (final text in widget.texts) TextEditingController(text: text),
+  ];
+
+  @override
+  void dispose() {
+    for (final controller in _controllers) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  void _rewrite(int index) {
+    final text = _controllers[index].text.trim();
+    if (text == widget.texts[index]) return;
+    Navigator.of(context).pop((index: index, text: text.isEmpty ? null : text));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -801,14 +884,32 @@ class _BarTextsDialog extends StatelessWidget {
               l10n.barTextsHint,
               style: const TextStyle(color: AppColors.mutedInk),
             ),
-            for (final (index, text) in texts.indexed)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(text),
-                trailing: IconButton(
-                  tooltip: l10n.remove,
-                  onPressed: () => Navigator.of(context).pop(index),
-                  icon: const Icon(Icons.delete_outline_rounded),
+            for (final (index, controller) in _controllers.indexed)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: controller,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => _rewrite(index),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: l10n.save,
+                      onPressed: () => _rewrite(index),
+                      icon: const Icon(Icons.check_rounded),
+                    ),
+                    IconButton(
+                      tooltip: l10n.remove,
+                      onPressed: () =>
+                          Navigator.of(context).pop((index: index, text: null)),
+                      icon: const Icon(Icons.delete_outline_rounded),
+                    ),
+                  ],
                 ),
               ),
           ],

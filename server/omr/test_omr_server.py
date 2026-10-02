@@ -624,13 +624,20 @@ class ChordJunkTest(unittest.TestCase):
 
     def test_chord_endings_and_slash_chords_read_as_words_go(self):
         # "F#m7" leaves its "m7" behind as "rn?" or "m?"; "D/E" is read "DIE".
-        measure = "".join(_words(t) for t in (
+        slash_chord = ('<harmony><root><root-step>D</root-step></root><kind>major</kind>'
+                       '<bass><bass-step>E</bass-step></bass></harmony>')
+        measure = slash_chord + "".join(_words(t) for t in (
             "rn?", "m?", "m7", "sus4", "DIE", "Al1G", "m", "Uerse'", "D.S. al Fine", "men", "more", "dim",
+            # No G/B or B/G here: these are words.
+            "BIG", "GIG",
+            # Counts and numbers.
+            "2x", "3 x", "1.", "2nd", "8va",
         ))
         root = ET.fromstring(_lead_sheet([measure]))
         self.assertEqual(omr_text._drop_chord_junk(root.findall("part")), 7)
         self.assertEqual(
-            [w.text for w in root.iter("words")], ["Uerse'", "D.S. al Fine", "men", "more", "dim"],
+            [w.text for w in root.iter("words")],
+            ["Uerse'", "D.S. al Fine", "men", "more", "dim", "BIG", "GIG", "2x", "3 x", "1.", "2nd", "8va"],
         )
 
     def test_jump_instructions_are_not_leftover_text(self):
@@ -1291,6 +1298,77 @@ class AnnotationTest(unittest.TestCase):
             draw.line([(600, 60), (700, 60)], fill=(30, 90, 220), width=7)
         return page
 
+    def test_printed_colour_stays_and_vivid_colour_goes(self):
+        from PIL import ImageDraw
+
+        page = self._page(annotated=False)
+        draw = ImageDraw.Draw(page)
+        # A repeat barline and an ending bracket printed in navy.
+        draw.rectangle([400, 195, 408, 265], fill=(58, 90, 134))
+        draw.line([(420, 150), (700, 150)], fill=(83, 109, 146), width=3)
+        # A vivid pen note beside them.
+        draw.line([(100, 100), (220, 100)], fill=(243, 27, 27), width=8)
+
+        clean, _annotation, mask, core = omr_annotations._separate(page)
+        regions = omr_annotations._regions(mask, core, _annotation, clean)
+
+        self.assertLess(clean.getpixel((404, 222)), 120)      # the navy barline is still there
+        self.assertLess(clean.getpixel((560, 150)), 150)      # and the bracket
+        self.assertGreater(clean.getpixel((160, 100)), 235)   # the pen is gone
+        self.assertEqual([(r["type"], r["color"]) for r in regions], [("ink", "red")])
+
+    def test_any_highlighter_keeps_the_print_under_it(self):
+        from PIL import Image, ImageDraw
+
+        # Pink, orange and light blue highlighter; and yellow on a dim photo.
+        for paper, tint in (((250, 248, 240), (255, 130, 180)), ((250, 248, 240), (245, 190, 110)),
+                            ((250, 248, 240), (150, 205, 250)), ((185, 182, 175), (190, 186, 80))):
+            page = Image.new("RGB", (800, 600), paper)
+            draw = ImageDraw.Draw(page)
+            for y in (200, 215, 230, 245, 260):
+                draw.line([(40, y), (760, y)], fill=(20, 20, 20), width=2)
+            draw.rectangle([300, 190, 312, 270], fill=(10, 10, 10))
+            for x in range(260, 360):
+                for y in range(180, 280):
+                    if page.getpixel((x, y))[0] > 100:
+                        page.putpixel((x, y), tint)
+
+            clean, annotation, mask, core = omr_annotations._separate(page)
+            regions = omr_annotations._regions(mask, core, annotation, clean)
+
+            self.assertLess(clean.getpixel((306, 230)), 60, tint)     # the bar
+            self.assertLess(clean.getpixel((280, 215)), 80, tint)     # a staff line under it
+            self.assertGreater(clean.getpixel((280, 222)), 235, tint)  # the tint is gone
+            self.assertEqual([r["type"] for r in regions], ["highlight"], tint)
+
+    def test_a_transparent_page_is_read_on_white(self):
+        from PIL import Image, ImageDraw
+
+        page = Image.new("RGBA", (600, 400), (255, 255, 255, 0))
+        draw = ImageDraw.Draw(page)
+        draw.line([(40, 200), (560, 200)], fill=(0, 0, 0, 255), width=3)
+        draw.line([(100, 80), (300, 80)], fill=(255, 0, 0, 255), width=8)
+
+        clean, _annotation, _mask, _core = omr_annotations._separate(page)
+
+        self.assertGreater(clean.getpixel((300, 300)), 235)  # the paper is white, not black
+        self.assertLess(clean.getpixel((300, 200)), 60)      # the printed line
+        self.assertGreater(clean.getpixel((200, 80)), 235)   # the red stroke is gone
+
+    def test_a_turned_pdf_page_is_left_alone(self):
+        photo = io.BytesIO()
+        self._page().save(photo, "JPEG", quality=92)
+        with tempfile.TemporaryDirectory() as folder:
+            upload = Path(folder) / "score.pdf"
+            upload.write_bytes(
+                b"%PDF-1.4\n1 0 obj << /Type /Page /Rotate 90 >> endobj\n"
+                b"2 0 obj << /Filter /DCTDecode /Length " + str(len(photo.getvalue())).encode()
+                + b" >>\nstream\n" + photo.getvalue() + b"\nendstream endobj\n"
+            )
+            self.assertIsNone(omr_annotations._upload_pages(upload))
+            upload.write_bytes(upload.read_bytes().replace(b" /Rotate 90", b""))
+            self.assertEqual(len(omr_annotations._upload_pages(upload)), 1)
+
     def test_highlighter_goes_and_the_print_under_it_stays(self):
         clean, annotation, mask, _core = omr_annotations._separate(self._page())
 
@@ -1363,6 +1441,30 @@ class AnnotationTest(unittest.TestCase):
             vector = root / "vector.pdf"
             vector.write_bytes(source.read_bytes() + b"\n<< /Font << /F1 5 0 R >> >>\n")
             self.assertEqual(omr_annotations._separate_upload(vector, root / "out"), (vector, None))
+
+    def test_a_crop_says_where_its_own_measure_is(self):
+        from PIL import Image
+
+        staff = {"top": 400.0, "bottom": 460.0, "left": 100.0, "right": 1300.0, "system": 0,
+                 "measures": [(100.0, 500.0, []), (500.0, 900.0, []), (900.0, 1300.0, [])]}
+        book = {
+            "sheets": [("1", None, Image.new("L", (1600, 800), 255), 10.0, [staff])],
+            "placements": [[("1", 0, 0, [staff]), ("1", 0, 1, [staff]), ("1", 0, 2, [staff])]],
+            "unmatched": [],
+        }
+        issues = [{"part": 0, "measureIndex": 1}, {"part": 0, "measureIndex": 0},
+                  {"part": 0, "measureIndex": 1}]
+        with tempfile.TemporaryDirectory() as folder:
+            omr_validate._crop_suspects(book, issues, Path(folder))
+            middle = Image.open(Path(folder) / issues[0]["image"])
+            # Bars 1-3 with a margin of one interline: 90..1310, 1220 wide.
+            self.assertEqual(middle.width, 1220)
+        self.assertEqual(issues[0]["focus"], [round(410 / 1220, 4), round(810 / 1220, 4)])
+        # The first bar has no bar before it: its crop starts with it.
+        self.assertEqual(issues[1]["focus"], [round(10 / 820, 4), 0.5])
+        # Two issues of one measure share the crop and its focus.
+        self.assertEqual(issues[2]["image"], issues[0]["image"])
+        self.assertEqual(issues[2]["focus"], issues[0]["focus"])
 
     def test_ink_over_a_measure_marks_it_for_review(self):
         root = ET.fromstring(

@@ -56,6 +56,9 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
   late int _index = _firstOpen();
   var _saved = false;
 
+  List<int>? _origins;
+  final _texts = <int, List<Set<String>>>{};
+
   String? _preview;
   MusicScore? _previewScore;
 
@@ -64,7 +67,7 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
   /// Where [bar], counted as the conversion left it, is in the version on
   /// screen: bars may have been added or removed since. Null when it is gone.
   int? _barIndex(OmrReviewBar bar) {
-    final origins = barOrigins(_xml);
+    final origins = _origins;
     if (origins == null) return bar.measureIndex;
     final index = origins.indexOf(bar.measureIndex);
     return index < 0 ? null : index;
@@ -78,6 +81,7 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
   @override
   void initState() {
     super.initState();
+    _readVersion();
     _engrave();
   }
 
@@ -108,19 +112,10 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
   /// server's report is from the conversion: a leftover text that has been
   /// removed since is no longer a reason.
   List<OmrReviewIssue> _openIssues(OmrReviewBar bar) {
-    Set<String>? texts;
-    try {
-      texts = {
-        for (final text in _editor.measureTexts(
-          _xml,
-          bar.partIndex,
-          _barIndex(bar) ?? -1,
-        ))
-          text.replaceAll(RegExp(r'\s+'), ''),
-      };
-    } on Object {
-      return bar.issues;
-    }
+    final index = _barIndex(bar);
+    final part = _textsOf(bar.partIndex);
+    if (index == null || index >= part.length) return bar.issues;
+    final texts = part[index];
     return [
       for (final issue in bar.issues)
         if (issue.leftover case final leftover?
@@ -130,6 +125,26 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
           issue,
     ];
   }
+
+  /// Reads from the version on screen what the review needs of every bar.
+  /// Once per version: the score is large, and this is asked from `build`.
+  void _readVersion() {
+    _origins = barOrigins(_xml);
+    _texts.clear();
+  }
+
+  /// The texts of every bar of a part, without their spaces.
+  List<Set<String>> _textsOf(int partIndex) =>
+      _texts.putIfAbsent(partIndex, () {
+        try {
+          return [
+            for (final texts in _editor.allMeasureTexts(_xml, partIndex))
+              {for (final text in texts) text.replaceAll(RegExp(r'\s+'), '')},
+          ];
+        } on FormatException {
+          return const [];
+        }
+      });
 
   bool _settled(OmrReviewBar bar) =>
       _openIssues(bar).isEmpty &&
@@ -192,6 +207,7 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
       _saved = true;
       _catalog = catalog;
       if (xml != null) _xml = xml;
+      _readVersion();
       _engrave();
       // Fixed bars need no second look.
       for (final bar in widget.bars) {
@@ -313,6 +329,7 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
                             image: bar.image == null
                                 ? null
                                 : _image(bar.image!),
+                            focus: bar.focus,
                           ),
                         ),
                       ),
@@ -443,9 +460,12 @@ class _Pane extends StatelessWidget {
 }
 
 class _Original extends StatelessWidget {
-  const _Original({required this.image});
+  const _Original({required this.image, this.focus});
 
   final Future<Uint8List?>? image;
+
+  /// Where the measure is in the crop; its neighbours are dimmed.
+  final (double, double)? focus;
 
   @override
   Widget build(BuildContext context) {
@@ -474,16 +494,56 @@ class _Original extends StatelessWidget {
         if (bytes == null) return missing;
         return InteractiveViewer(
           maxScale: 5,
-          child: Image.memory(
-            bytes,
-            fit: BoxFit.contain,
-            semanticLabel: '원본 악보 조각',
-            errorBuilder: (_, _, _) => missing,
+          // The image takes its own shape inside the pane, so the dimming
+          // laid over it lines up with the bars.
+          child: Center(
+            child: Stack(
+              children: [
+                Image.memory(
+                  bytes,
+                  fit: BoxFit.contain,
+                  semanticLabel: '원본 악보 조각',
+                  errorBuilder: (_, _, _) => missing,
+                ),
+                if (focus case final focus?)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(painter: _NeighbourDimmer(focus)),
+                    ),
+                  ),
+              ],
+            ),
           ),
         );
       },
     );
   }
+}
+
+/// Fades the bars beside the one under review and marks its edges.
+class _NeighbourDimmer extends CustomPainter {
+  const _NeighbourDimmer(this.focus);
+
+  final (double, double) focus;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final left = focus.$1 * size.width;
+    final right = focus.$2 * size.width;
+    final veil = Paint()..color = AppColors.canvas.withValues(alpha: 0.62);
+    canvas
+      ..drawRect(Rect.fromLTRB(0, 0, left, size.height), veil)
+      ..drawRect(Rect.fromLTRB(right, 0, size.width, size.height), veil);
+    final edge = Paint()
+      ..color = AppColors.accent
+      ..strokeWidth = 1.5;
+    canvas
+      ..drawLine(Offset(left, 0), Offset(left, size.height), edge)
+      ..drawLine(Offset(right, 0), Offset(right, size.height), edge);
+  }
+
+  @override
+  bool shouldRepaint(_NeighbourDimmer old) => old.focus != focus;
 }
 
 class _Findings extends StatelessWidget {

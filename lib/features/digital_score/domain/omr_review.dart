@@ -117,6 +117,7 @@ class OmrReviewBar {
     required this.suggestions,
     required this.uncertain,
     this.image,
+    this.focus,
   });
 
   final int partIndex;
@@ -132,6 +133,10 @@ class OmrReviewBar {
 
   /// Name of the server's crop of the original around this measure.
   final String? image;
+
+  /// Where the measure itself is in the crop, which shows its neighbours
+  /// too: left and right edge as fractions of the crop's width.
+  final (double, double)? focus;
 
   String get key => '$partIndex:$measureIndex';
 
@@ -174,6 +179,7 @@ List<OmrReviewBar> omrReviewBars({
 }) {
   final issues = <String, List<OmrReviewIssue>>{};
   final images = <String, String>{};
+  final focuses = <String, (double, double)>{};
   final numbers = <String, String>{};
   final places = <String, (int, int)>{};
 
@@ -204,6 +210,12 @@ List<OmrReviewBar> omrReviewBars({
     if (!list.any((other) => other.text == found.text)) list.add(found);
     if (issue['image'] case final String name when name.isNotEmpty) {
       images.putIfAbsent(key, () => name);
+      if (issue['focus'] case [
+        final num left,
+        final num right,
+      ] when left >= 0 && right <= 1 && left < right) {
+        focuses.putIfAbsent(key, () => (left.toDouble(), right.toDouble()));
+      }
     }
   }
 
@@ -256,6 +268,7 @@ List<OmrReviewBar> omrReviewBars({
           suggestions: suggestions[key] ?? const [],
           uncertain: uncertain[key] ?? const [],
           image: images[key],
+          focus: focuses[key],
         ),
   ];
   bars.sort((a, b) {

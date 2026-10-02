@@ -1584,7 +1584,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get barTexts => '이 마디의 글자';
 
   @override
-  String get barTextsHint => '코드·가사·음표가 아닌, 악보에서 읽힌 글자입니다. 잘못 읽힌 것은 지우세요.';
+  String get barTextsHint => '코드·가사·음표가 아닌, 악보에서 읽힌 글자입니다. 잘못 읽힌 것은 고치거나 지우세요.';
 
   @override
   String get addNote => '음표 추가';

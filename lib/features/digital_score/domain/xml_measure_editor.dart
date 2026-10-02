@@ -63,6 +63,12 @@ int? eventIndexForXmlNote(MusicMeasure measure, int noteIndex) {
 /// in so the bar reads as it does in context. Never saved.
 String isolateMeasureXml(String xml, int partIndex, int measureIndex) {
   final doc = _ScoreDoc(xml);
+  _isolate(doc, partIndex, measureIndex);
+  return doc.toXml();
+}
+
+/// Reduces [doc] to one measure of one part (see [isolateMeasureXml]).
+void _isolate(_ScoreDoc doc, int partIndex, int measureIndex) {
   final root = doc.document.rootElement;
   final parts = root.findElements('part').toList();
   final measures = doc._measures(partIndex);
@@ -103,7 +109,25 @@ String isolateMeasureXml(String xml, int partIndex, int measureIndex) {
                 (node.name.local == 'score-part' &&
                     node.getAttribute('id') != part.getAttribute('id'))),
       );
-  return doc.toXml();
+}
+
+/// One bar as the proofreading screen needs it, read from the score in a
+/// single pass: parsing a large score is the slow part of every edit.
+class XmlBarInspection {
+  const XmlBarInspection({
+    required this.isolatedXml,
+    required this.notes,
+    required this.texts,
+  });
+
+  /// See [isolateMeasureXml].
+  final String isolatedXml;
+
+  /// What [XmlMeasureEditor.describe] says of each `<note>` of the bar.
+  final List<XmlNoteSummary> notes;
+
+  /// See [XmlMeasureEditor.measureTexts].
+  final List<String> texts;
 }
 
 /// Stamps the note ids the MusicXML codec uses (`p0-m0-e<event>`) on an
@@ -250,6 +274,9 @@ String expandMusicXml(String xml, List<int> measureMap) {
   for (var partIndex = 0; partIndex < parts.length; partIndex++) {
     final part = parts[partIndex];
     final measures = doc._measures(partIndex);
+    // The clef, key and time in force before each bar, read once: looking
+    // them up from the first bar for every played bar is quadratic.
+    final contexts = doc._contextsOf(measures);
     final expanded = <XmlElement>[];
     for (var position = 0; position < measureMap.length; position++) {
       final source = measureMap[position];
@@ -281,10 +308,8 @@ String expandMusicXml(String xml, List<int> measureMap) {
         );
       }
       // Context where playing arrives, and the one the bar starts with.
-      final arriving = previous == null
-          ? null
-          : doc._contextBefore(measures, previous + 1);
-      final starting = doc._contextBefore(measures, source + 1);
+      final arriving = previous == null ? null : contexts[previous + 1];
+      final starting = contexts[source + 1];
       if (jumped && (arriving == null || !starting.sameAs(arriving))) {
         // A jump into another key or time restates the whole context.
         copy.findElements('attributes').toList().forEach(_remove);
@@ -333,7 +358,21 @@ String expandMusicXml(String xml, List<int> measureMap) {
     );
     part.children.addAll(expanded);
   }
+  // Bars are now in playing order: where each came from follows it.
+  if (_originsOf(doc.document) case final origins?
+      when measureMap.every((source) => source < origins.length)) {
+    _writeOrigins(doc, [for (final source in measureMap) origins[source]]);
+  } else if (!_sameOrder(measureMap)) {
+    _writeOrigins(doc, measureMap);
+  }
   return doc.toXml();
+}
+
+bool _sameOrder(List<int> measureMap) {
+  for (var i = 0; i < measureMap.length; i++) {
+    if (measureMap[i] != i) return false;
+  }
+  return true;
 }
 
 int measureCountOf(String xml, int partIndex) =>
@@ -385,9 +424,29 @@ class XmlMeasureEditor {
   const XmlMeasureEditor();
 
   XmlNoteSummary describe(String xml, XmlNoteRef ref) {
+    final measure = _ScoreDoc(xml).measure(ref);
+    return _summarize(measure, measure.note(ref.noteIndex));
+  }
+
+  /// The bar on its own, a summary of each of its notes and its texts.
+  XmlBarInspection inspect(String xml, int partIndex, int measureIndex) {
     final doc = _ScoreDoc(xml);
-    final measure = doc.measure(ref);
-    final info = measure.note(ref.noteIndex);
+    final measure = doc.measureAt(partIndex, measureIndex);
+    final notes = [for (final info in measure.notes) _summarize(measure, info)];
+    final texts = [
+      for (final direction in _textDirections(measure.element))
+        _directionText(direction),
+    ];
+    // Last: this takes the rest of the score out of the document.
+    _isolate(doc, partIndex, measureIndex);
+    return XmlBarInspection(
+      isolatedXml: doc.toXml(),
+      notes: notes,
+      texts: texts,
+    );
+  }
+
+  XmlNoteSummary _summarize(_MeasureView measure, _NoteInfo info) {
     final group = measure.groupOf(info);
     final head = group.first;
     final harmony = measure.harmonyAt(head);
@@ -796,10 +855,11 @@ class XmlMeasureEditor {
   XmlEditResult insertMeasureAfter(String xml, XmlNoteRef ref) {
     final doc = _ScoreDoc(xml);
     doc.measureAt(ref.partIndex, ref.measureIndex);
-    final numbered = _numberedInOrder(doc);
+    final firstNumber = _firstNumberInOrder(doc);
     final origins = _readOrigins(doc, ref.partIndex);
     for (final (partIndex, part) in doc.parts.indexed) {
       final measures = doc._measures(partIndex);
+      final freed = <XmlElement>[];
       if (ref.measureIndex >= measures.length) continue;
       final source = measures[ref.measureIndex];
       final bar = _emptyMeasure(
@@ -810,12 +870,13 @@ class XmlMeasureEditor {
       if (ref.measureIndex == measures.length - 1) {
         _moveBarline(from: source, to: bar, right: true);
       }
-      _mendTies(source, bar);
+      _mendTies(source, bar, freed);
       if (ref.measureIndex + 1 < measures.length) {
-        _mendTies(bar, measures[ref.measureIndex + 1]);
+        _mendTies(bar, measures[ref.measureIndex + 1], freed);
       }
+      _spellFreed(doc, partIndex, freed);
     }
-    if (numbered) _renumber(doc);
+    if (firstNumber != null) _renumber(doc, firstNumber);
     _writeOrigins(doc, origins..insert(ref.measureIndex + 1, -1));
     return XmlEditResult(
       doc.toXml(),
@@ -834,30 +895,132 @@ class XmlMeasureEditor {
   XmlEditResult duplicateMeasure(String xml, XmlNoteRef ref) {
     final doc = _ScoreDoc(xml);
     doc.measureAt(ref.partIndex, ref.measureIndex);
-    final numbered = _numberedInOrder(doc);
+    final firstNumber = _firstNumberInOrder(doc);
     final origins = _readOrigins(doc, ref.partIndex);
     for (final (partIndex, part) in doc.parts.indexed) {
       final measures = doc._measures(partIndex);
+      final freed = <XmlElement>[];
       if (ref.measureIndex >= measures.length) continue;
       final source = measures[ref.measureIndex];
       final copy = source.copy();
-      _stripPlaceSigns(copy);
+      // A pickup bar is one by its place; an id names one element.
+      for (final name in ['implicit', 'id', 'xml:id', 'width']) {
+        copy.removeAttribute(name);
+      }
+      // A slur that leaves the bar now runs over the copy: a slur inside the
+      // copy must not answer to its number.
+      final passing = {
+        for (final slur in _openSlurs(source))
+          if (slur.getAttribute('type') == 'start')
+            slur.getAttribute('number') ?? '1',
+      };
+      _stripPlaceSigns(
+        copy,
+        startsIn: doc._contextBefore(measures, ref.measureIndex),
+        follows: doc._contextBefore(measures, ref.measureIndex + 1),
+      );
+      _renumberSlurs(copy, passing);
       part.children.insert(part.children.indexOf(source) + 1, copy);
       if (ref.measureIndex == measures.length - 1) {
         _moveBarline(from: source, to: copy, right: true);
       }
-      _mendTies(source, copy);
+      _mendTies(source, copy, freed);
       if (ref.measureIndex + 1 < measures.length) {
-        _mendTies(copy, measures[ref.measureIndex + 1]);
+        _mendTies(copy, measures[ref.measureIndex + 1], freed);
       }
+      _spellFreed(doc, partIndex, freed);
     }
-    if (numbered) _renumber(doc);
+    if (firstNumber != null) _renumber(doc, firstNumber);
     _writeOrigins(doc, origins..insert(ref.measureIndex + 1, -1));
     return XmlEditResult(
       doc.toXml(),
       XmlNoteRef(
         partIndex: ref.partIndex,
         measureIndex: ref.measureIndex + 1,
+        noteIndex: ref.noteIndex,
+      ),
+    );
+  }
+
+  /// Moves the selected note's bar one place earlier ([places] -1) or later
+  /// (+1), in every part: it changes places with its neighbour. Each bar
+  /// keeps its music, clef, key and time; repeat and ending barlines and
+  /// line breaks stay where they are in the score. The selection follows
+  /// the bar.
+  XmlEditResult moveMeasure(String xml, XmlNoteRef ref, int places) {
+    if (places != 1 && places != -1) {
+      throw const FormatException('마디는 한 칸씩 옮길 수 있습니다.');
+    }
+    final doc = _ScoreDoc(xml);
+    doc.measureAt(ref.partIndex, ref.measureIndex);
+    final first = places < 0 ? ref.measureIndex - 1 : ref.measureIndex;
+    if (first < 0 || first + 1 >= doc.measureCount(ref.partIndex)) {
+      throw const FormatException('더 옮길 자리가 없습니다.');
+    }
+    final firstNumber = _firstNumberInOrder(doc);
+    final origins = _readOrigins(doc, ref.partIndex);
+    for (final (partIndex, part) in doc.parts.indexed) {
+      final measures = doc._measures(partIndex);
+      final freed = <XmlElement>[];
+      if (first + 1 >= measures.length) continue;
+      final contexts = doc._contextsOf(measures);
+      final a = measures[first];
+      final b = measures[first + 1];
+      final before = first > 0 ? measures[first - 1] : null;
+      final after = first + 2 < measures.length ? measures[first + 2] : null;
+      // What the score is in before the pair, and how each bar begins.
+      final given = first == 0 ? _unstated : contexts[first];
+      final aBegins = _beginning(a, contexts[first]);
+      final bBegins = _beginning(b, contexts[first + 1]);
+      // A slur that leaves either bar cannot follow it to its new place.
+      for (final (start, stop) in _slurPairs(part)) {
+        bool inside(XmlElement e) => _within(e, a) || _within(e, b);
+        final together =
+            (_within(start, a) && _within(stop, a)) ||
+            (_within(start, b) && _within(stop, b));
+        if (!together && (inside(start) || inside(stop))) {
+          _removeNotation(start);
+          _removeNotation(stop);
+        }
+      }
+      // Barlines and line breaks belong to the place: they are taken off,
+      // and put back on the bar that comes to stand there.
+      final aPlace = _takePlaceSigns(a);
+      final bPlace = _takePlaceSigns(b);
+      final at = part.children.indexOf(a);
+      _remove(b);
+      part.children.insert(at, b);
+      _putPlaceSigns(b, aPlace);
+      _putPlaceSigns(a, bPlace);
+      // Each bar says how it begins, as far as that is not in force already.
+      _restate(b, bBegins, given);
+      final afterB = _ending(b, first == 0 ? const _Context() : given);
+      _restate(a, aBegins, afterB);
+      if (after != null) {
+        // The bar after the pair went on from the second one, now the first.
+        _restate(
+          after,
+          _beginning(after, contexts[first + 2]),
+          _ending(a, afterB),
+        );
+      }
+      if (before != null) _mendTies(before, b, freed);
+      if (before == null) _dropTies(b, 'stop', freed);
+      _mendTies(b, a, freed);
+      if (after != null) _mendTies(a, after, freed);
+      if (after == null) _dropTies(a, 'start', freed);
+      _spellFreed(doc, partIndex, freed);
+    }
+    if (firstNumber != null) _renumber(doc, firstNumber);
+    final moved = origins[first];
+    origins[first] = origins[first + 1];
+    origins[first + 1] = moved;
+    _writeOrigins(doc, origins);
+    return XmlEditResult(
+      doc.toXml(),
+      XmlNoteRef(
+        partIndex: ref.partIndex,
+        measureIndex: ref.measureIndex + places,
         noteIndex: ref.noteIndex,
       ),
     );
@@ -873,43 +1036,90 @@ class XmlMeasureEditor {
     if (count <= 1) {
       throw const FormatException('마지막 남은 마디는 지울 수 없습니다.');
     }
-    final numbered = _numberedInOrder(doc);
+    final firstNumber = _firstNumberInOrder(doc);
     final origins = _readOrigins(doc, ref.partIndex);
     for (final partIndex in [for (var i = 0; i < doc.parts.length; i++) i]) {
       final measures = doc._measures(partIndex);
+      final freed = <XmlElement>[];
       final index = ref.measureIndex;
       if (index >= measures.length || measures.length <= 1) continue;
       final target = measures[index];
       final previous = index > 0 ? measures[index - 1] : null;
       final next = index + 1 < measures.length ? measures[index + 1] : null;
+      // An ending bracket over this bar alone goes with it.
+      final endings = target
+          .findElements('barline')
+          .expand((barline) => barline.findElements('ending'))
+          .toList();
+      if (endings.any((e) => e.getAttribute('type') == 'start') &&
+          endings.any((e) => e.getAttribute('type') != 'start')) {
+        for (final ending in endings) {
+          final barline = ending.parentElement;
+          _remove(ending);
+          // A barline that only held the bracket.
+          if (barline != null &&
+              barline.childElements.every(
+                (child) =>
+                    child.name.local == 'bar-style' &&
+                    child.innerText.trim() == 'regular',
+              )) {
+            _remove(barline);
+          }
+        }
+      }
       if (next != null) {
+        // The tempo set in this bar holds for what follows.
+        final tempo = [
+          for (final child in target.childElements)
+            if (_setsTempo(child)) child,
+        ];
+        if (tempo.isNotEmpty && !next.childElements.any(_setsTempo)) {
+          tempo.forEach(_remove);
+          final at = next.children.indexWhere(
+            (node) =>
+                node is XmlElement &&
+                !['print', 'attributes'].contains(node.name.local) &&
+                !(node.name.local == 'barline' &&
+                    node.getAttribute('location') == 'left'),
+          );
+          next.children.insertAll(at < 0 ? next.children.length : at, tempo);
+        }
         final carried = target.findElements('attributes').toList();
         carried.forEach(_remove);
         next.children.insertAll(0, carried);
         _dropRestated(
           next,
-          index == 0
-              // The first bar states everything: nothing is "already known".
-              ? const _Context(
-                  divisions: -1,
-                  fifths: 99,
-                  beats: -1,
-                  beatType: -1,
-                  staves: -1,
-                )
-              : doc._contextBefore(measures, index),
+          // The first bar states everything: nothing is "already known".
+          index == 0 ? _unstated : doc._contextBefore(measures, index),
         );
         _moveBarline(from: target, to: next, right: false);
       }
       if (previous != null) {
         _moveBarline(from: target, to: previous, right: true);
       }
+      // A slur with one end in the bar loses it: the other end goes too.
+      final part = doc.parts[partIndex];
+      for (final (start, stop) in _slurPairs(part)) {
+        final startInside = _within(start, target);
+        if (startInside != _within(stop, target)) {
+          _removeNotation(startInside ? stop : start);
+        }
+      }
       _remove(target);
-      if (previous != null && next != null) _mendTies(previous, next);
-      if (previous == null && next != null) _dropTies(next, 'stop');
-      if (next == null && previous != null) _dropTies(previous, 'start');
+      if (previous != null && next != null) _mendTies(previous, next, freed);
+      if (previous == null && next != null) _dropTies(next, 'stop', freed);
+      if (next == null && previous != null) {
+        _dropTies(previous, 'start', freed);
+      }
+      _spellFreed(doc, partIndex, freed);
     }
-    if (numbered) _renumber(doc);
+    if (firstNumber != null) {
+      // Without its pickup bar (numbered 0) a score starts at bar 1.
+      _renumber(
+        doc,
+        ref.measureIndex == 0 && firstNumber == 0 ? 1 : firstNumber,
+      );
+    }
     _writeOrigins(doc, origins..removeAt(ref.measureIndex));
     return XmlEditResult(
       doc.toXml(),
@@ -931,6 +1141,45 @@ class XmlMeasureEditor {
       _directionText(direction),
   ];
 
+  /// [measureTexts] of every bar of a part, read in one pass.
+  List<List<String>> allMeasureTexts(String xml, int partIndex) => [
+    for (final measure in _ScoreDoc(xml)._measures(partIndex))
+      [
+        for (final direction in _textDirections(measure))
+          _directionText(direction),
+      ],
+  ];
+
+  /// Rewrites the [textIndex]-th text of the selected note's measure, as
+  /// [measureTexts] lists them (a section name read as "Uerse'").
+  XmlEditResult setText(
+    String xml,
+    XmlNoteRef ref,
+    int textIndex,
+    String text,
+  ) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return removeText(xml, ref, textIndex);
+    final doc = _ScoreDoc(xml);
+    final directions = _textDirections(doc.measure(ref).element).toList();
+    if (textIndex < 0 || textIndex >= directions.length) {
+      throw const FormatException('고칠 글자가 없습니다.');
+    }
+    final words = directions[textIndex]
+        .findElements('direction-type')
+        .expand((type) => type.findElements('words'))
+        .where((words) => words.innerText.trim().isNotEmpty)
+        .toList();
+    words.first.innerText = trimmed;
+    // A text split over several <words> becomes the one that was typed.
+    words.skip(1).forEach(_remove);
+    for (final type
+        in directions[textIndex].findElements('direction-type').toList()) {
+      if (type.childElements.isEmpty) _remove(type);
+    }
+    return XmlEditResult(doc.toXml(), ref);
+  }
+
   /// Removes the [textIndex]-th text of the selected note's measure, as
   /// [measureTexts] lists them. Notes, chords and lyrics stay.
   XmlEditResult removeText(String xml, XmlNoteRef ref, int textIndex) {
@@ -945,7 +1194,15 @@ class XmlMeasureEditor {
         .where((type) => type.findElements('words').isNotEmpty)
         .toList();
     if (worded.length == types.length) {
+      // What the direction plays (a tempo) stays, as a sound of the bar.
+      final sounds = direction.findElements('sound').toList();
+      final parent = direction.parent!;
+      final at = parent.children.indexOf(direction);
       _remove(direction);
+      for (final sound in sounds) {
+        _remove(sound);
+      }
+      parent.children.insertAll(at, sounds);
     } else {
       // The direction also carries a sign (a dynamic, a segno): that stays.
       worded.forEach(_remove);
@@ -1226,6 +1483,19 @@ class _ScoreDoc {
   }
 
   int measureCount(int partIndex) => _measures(partIndex).length;
+
+  /// For each bar the context before it, and after the last bar at the end.
+  List<_Context> _contextsOf(List<XmlElement> measures) {
+    var context = const _Context();
+    final contexts = [context];
+    for (final measure in measures) {
+      for (final attributes in measure.findElements('attributes')) {
+        context = context.merge(attributes);
+      }
+      contexts.add(context);
+    }
+    return contexts;
+  }
 
   _Context _contextBefore(List<XmlElement> measures, int measureIndex) {
     var context = const _Context();
@@ -2330,7 +2600,15 @@ List<int>? barOrigins(String xml) {
   } on XmlException {
     return null;
   }
-  return _originsOf(document);
+  final origins = _originsOf(document);
+  final bars = document.rootElement
+      .findElements('part')
+      .firstOrNull
+      ?.findElements('measure')
+      .length;
+  // A record that does not fit the bars (the score was rebuilt by something
+  // that does not keep it) says nothing.
+  return origins == null || origins.length != bars ? null : origins;
 }
 
 List<int>? _originsOf(XmlDocument document) {
@@ -2414,6 +2692,91 @@ XmlElement _emptyMeasure(_Context context, {required String number}) {
   );
 }
 
+/// A context no bar is in: against it, every clef, key and time is new.
+const _unstated = _Context(
+  divisions: -1,
+  fifths: 99,
+  beats: -1,
+  beatType: -1,
+  staves: -1,
+);
+
+/// The clef, key and time [measure] begins in: [before] with what the bar
+/// states ahead of its first note.
+_Context _beginning(XmlElement measure, _Context before) {
+  var context = before;
+  for (final child in measure.childElements) {
+    if (child.name.local == 'note') break;
+    if (child.name.local == 'attributes') context = context.merge(child);
+  }
+  return context;
+}
+
+/// The clef, key and time in force after [measure], entered in [before].
+_Context _ending(XmlElement measure, _Context before) {
+  var context = before;
+  for (final attributes in measure.findElements('attributes')) {
+    context = context.merge(attributes);
+  }
+  return context;
+}
+
+/// Makes [measure] begin in [begins] when it follows a bar ending in
+/// [given]: it states what differs from [given], and no longer what [given]
+/// already has. What the bar itself wrote (a common-time sign, a transposing
+/// clef) is kept where it still says something.
+void _restate(XmlElement measure, _Context begins, _Context given) {
+  final own = [
+    for (final child in measure.childElements.takeWhile(
+      (child) => child.name.local != 'note',
+    ))
+      if (child.name.local == 'attributes') child,
+  ];
+  final opening = begins.toAttributes();
+  opening.findElements('staves').toList().forEach(_remove);
+  if (begins.staves > 1 &&
+      given.staves != begins.staves &&
+      own.every((attributes) => attributes.getElement('staves') == null)) {
+    // The number of staves stands before the clefs.
+    final clef = opening.findElements('clef').firstOrNull;
+    opening.children.insert(
+      clef == null ? opening.children.length : opening.children.indexOf(clef),
+      XmlElement(XmlName('staves'), [], [XmlText('${begins.staves}')]),
+    );
+  }
+  final at = measure.children.indexWhere(
+    (node) => node is XmlElement && node.name.local != 'print',
+  );
+  // Ahead of the bar's own: where both say the same thing, the bar's stays.
+  measure.children.insert(at < 0 ? measure.children.length : at, opening);
+  _dropRestated(measure, given);
+}
+
+/// Takes the barlines and line breaks off [measure], in document order.
+({List<XmlElement> prints, List<XmlElement> left, List<XmlElement> right})
+_takePlaceSigns(XmlElement measure) {
+  final prints = measure.findElements('print').toList();
+  final barlines = measure.findElements('barline').toList();
+  [...prints, ...barlines].forEach(_remove);
+  return (
+    prints: prints,
+    left: [
+      for (final barline in barlines)
+        if (!_isRightBarline(barline)) barline,
+    ],
+    right: barlines.where(_isRightBarline).toList(),
+  );
+}
+
+void _putPlaceSigns(
+  XmlElement measure,
+  ({List<XmlElement> prints, List<XmlElement> left, List<XmlElement> right})
+  signs,
+) {
+  measure.children.insertAll(0, [...signs.prints, ...signs.left]);
+  measure.children.addAll(signs.right);
+}
+
 bool _isRightBarline(XmlElement barline) =>
     (barline.getAttribute('location') ?? 'right') == 'right';
 
@@ -2445,9 +2808,43 @@ void _moveBarline({
 }
 
 /// Removes from a copied bar what marks its place in the score.
-void _stripPlaceSigns(XmlElement measure) {
-  for (final name in ['attributes', 'print', 'barline']) {
+///
+/// The bar it is copied from was entered in [startsIn] (clef, key, time) and
+/// the copy comes after it, in [follows]. They differ when the bar changes
+/// clef, key or time on its way: the copy then says how it starts, and keeps
+/// the change, so it reads like the bar it was copied from.
+void _stripPlaceSigns(
+  XmlElement measure, {
+  required _Context startsIn,
+  required _Context follows,
+}) {
+  for (final name in ['print', 'barline']) {
     measure.findElements(name).toList().forEach(_remove);
+  }
+  var start = startsIn;
+  var seenNote = false;
+  var changesOnTheWay = false;
+  for (final child in measure.childElements.toList()) {
+    if (child.name.local == 'note') seenNote = true;
+    if (child.name.local != 'attributes') continue;
+    if (seenNote) {
+      changesOnTheWay = true;
+    } else {
+      // What the bar opens with is in force after it too, unless it changes
+      // again later in the bar.
+      start = start.merge(child);
+      _remove(child);
+    }
+  }
+  if (changesOnTheWay) {
+    final opening = start.toAttributes();
+    opening.findElements('staves').toList().forEach(_remove);
+    measure.children.insert(0, opening);
+    _dropRestated(measure, follows);
+  }
+  // A slur into or out of the bar belongs to the bars around the original.
+  for (final slur in _openSlurs(measure)) {
+    _removeNotation(slur);
   }
   const placed = ['rehearsal', 'segno', 'coda'];
   for (final direction in measure.findElements('direction').toList()) {
@@ -2470,6 +2867,85 @@ void _stripPlaceSigns(XmlElement measure) {
   }
 }
 
+/// Whether a measure child sets the playing tempo: a `<sound tempo>`, or a
+/// direction with one or with a metronome mark.
+bool _setsTempo(XmlElement child) => switch (child.name.local) {
+  'sound' => child.getAttribute('tempo') != null,
+  'direction' =>
+    child.findAllElements('metronome').isNotEmpty ||
+        child.findElements('sound').any((s) => s.getAttribute('tempo') != null),
+  _ => false,
+};
+
+bool _within(XmlElement element, XmlElement measure) =>
+    element.ancestorElements.any((ancestor) => identical(ancestor, measure));
+
+/// Removes a `<notations>` child, and the `<notations>` left empty by it.
+void _removeNotation(XmlElement mark) {
+  final notations = mark.parentElement;
+  _remove(mark);
+  if (notations != null && notations.childElements.isEmpty) _remove(notations);
+}
+
+/// The slurs of [part] as (start, stop) elements, matched by their number
+/// in the order they are written.
+List<(XmlElement, XmlElement)> _slurPairs(XmlElement part) {
+  final open = <String, XmlElement>{};
+  final pairs = <(XmlElement, XmlElement)>[];
+  for (final slur in part.findAllElements('slur')) {
+    final number = slur.getAttribute('number') ?? '1';
+    switch (slur.getAttribute('type')) {
+      case 'start':
+        open[number] = slur;
+      case 'stop':
+        if (open.remove(number) case final start?) pairs.add((start, slur));
+    }
+  }
+  return pairs;
+}
+
+/// Gives the slurs of [measure] that use a number in [taken] another one.
+void _renumberSlurs(XmlElement measure, Set<String> taken) {
+  if (taken.isEmpty) return;
+  final slurs = measure.findAllElements('slur').toList();
+  final used = {
+    ...taken,
+    for (final slur in slurs) slur.getAttribute('number') ?? '1',
+  };
+  final renamed = <String, String>{};
+  for (final slur in slurs) {
+    final number = slur.getAttribute('number') ?? '1';
+    if (!taken.contains(number)) continue;
+    final other = renamed.putIfAbsent(number, () {
+      // MusicXML numbers concurrent slurs from 1; 16 is its upper bound.
+      for (var n = 1; n <= 16; n++) {
+        if (used.add('$n')) return '$n';
+      }
+      return number;
+    });
+    slur.setAttribute('number', other);
+  }
+}
+
+/// The slur ends of [measure] whose other end is not in it.
+List<XmlElement> _openSlurs(XmlElement measure) {
+  final open = <String, XmlElement>{};
+  final loose = <XmlElement>[];
+  for (final slur in measure.findAllElements('slur')) {
+    final number = slur.getAttribute('number') ?? '1';
+    switch (slur.getAttribute('type')) {
+      case 'start':
+        if (open[number] case final earlier?) loose.add(earlier);
+        open[number] = slur;
+      case 'stop':
+        if (open.remove(number) == null) loose.add(slur);
+      default:
+        loose.add(slur);
+    }
+  }
+  return [...loose, ...open.values];
+}
+
 String _pitchKey(XmlElement note) {
   final pitch = note.getElement('pitch');
   if (pitch == null) return '';
@@ -2490,7 +2966,17 @@ Map<String, List<XmlElement>> _openTies(XmlElement measure, String type) {
     // a start) or earlier (for a stop).
     final others = type == 'start' ? notes.skip(i + 1) : notes.take(i);
     final closing = type == 'start' ? 'stop' : 'start';
-    if (others.any((n) => _pitchKey(n) == key && _hasTie(n, closing))) continue;
+    final voice = note.getElement('voice')?.innerText.trim();
+    // The other end of a tie inside the bar is in the same voice: the same
+    // pitch in another voice is another note.
+    if (others.any(
+      (n) =>
+          _pitchKey(n) == key &&
+          n.getElement('voice')?.innerText.trim() == voice &&
+          _hasTie(n, closing),
+    )) {
+      continue;
+    }
     open.putIfAbsent(key, () => []).add(note);
   }
   return open;
@@ -2499,7 +2985,10 @@ Map<String, List<XmlElement>> _openTies(XmlElement measure, String type) {
 /// After bars were put next to each other: a tie out of [left] needs the
 /// same pitch tied in at [right], and the other way round. Ties without
 /// their other end are removed.
-void _mendTies(XmlElement left, XmlElement right) {
+///
+/// A note that is no longer tied into is added to [freed]: it was written
+/// without its accidental, which the tie carried over the barline.
+void _mendTies(XmlElement left, XmlElement right, List<XmlElement> freed) {
   final leaving = _openTies(left, 'start');
   final arriving = _openTies(right, 'stop');
   for (final MapEntry(:key, value: notes) in leaving.entries) {
@@ -2513,44 +3002,63 @@ void _mendTies(XmlElement left, XmlElement right) {
     if (!leaving.containsKey(key)) {
       for (final note in notes) {
         _removeTieMarks(note, 'stop');
+        freed.add(note);
       }
     }
   }
 }
 
+/// Writes the accidentals of notes a bar edit freed from a tie.
+void _spellFreed(_ScoreDoc doc, int partIndex, List<XmlElement> freed) {
+  if (freed.isEmpty) return;
+  final measures = doc._measures(partIndex);
+  for (final note in freed) {
+    final index = measures.indexWhere((m) => identical(m, note.parentElement));
+    if (index < 0) continue;
+    final view = doc.measureAt(partIndex, index);
+    final info = view.notes
+        .where((info) => identical(info.element, note))
+        .firstOrNull;
+    final pitch = info?.pitch;
+    if (info == null || pitch == null) continue;
+    view.refreshAccidentals(info.staff, {pitch.step});
+  }
+}
+
 /// Removes the ties of [measure] that leave (`start`) or enter (`stop`) it.
-void _dropTies(XmlElement measure, String type) {
+void _dropTies(XmlElement measure, String type, List<XmlElement> freed) {
   for (final notes in _openTies(measure, type).values) {
     for (final note in notes) {
       _removeTieMarks(note, type);
+      if (type == 'stop') freed.add(note);
     }
   }
 }
 
-/// Whether every part numbers its bars 1, 2, 3… (or from 0 with a pickup),
-/// so the numbers can be written again after bars were added or removed.
-bool _numberedInOrder(_ScoreDoc doc) {
+/// The number of the first bar when every part numbers its bars in order
+/// from it (1, 2, 3…, from 0 with a pickup, or from 17 in an excerpt), so
+/// the numbers can be written again after bars were added or removed; null
+/// when they are not in order.
+int? _firstNumberInOrder(_ScoreDoc doc) {
+  int? first;
   for (final part in doc.parts) {
     final numbers = [
       for (final measure in part.findElements('measure'))
         int.tryParse(measure.getAttribute('number') ?? ''),
     ];
-    if (numbers.isEmpty || numbers.first == null) return false;
+    if (numbers.isEmpty || numbers.first == null) return null;
     for (var i = 0; i < numbers.length; i++) {
-      if (numbers[i] != numbers.first! + i) return false;
+      if (numbers[i] != numbers.first! + i) return null;
     }
+    first ??= numbers.first;
   }
-  return true;
+  return first;
 }
 
-void _renumber(_ScoreDoc doc) {
+/// Numbers the bars of every part from [start] on.
+void _renumber(_ScoreDoc doc, int start) {
   for (final part in doc.parts) {
     final measures = part.findElements('measure').toList();
-    if (measures.isEmpty) continue;
-    final first = int.tryParse(measures.first.getAttribute('number') ?? '');
-    // After the first bar was removed, the next one carries the old second
-    // number: a score starts at 1 unless it has a pickup bar numbered 0.
-    final start = first == null || first > 1 ? 1 : first;
     for (var i = 0; i < measures.length; i++) {
       measures[i].setAttribute('number', '${start + i}');
     }

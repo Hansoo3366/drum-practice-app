@@ -557,7 +557,9 @@ def _drop_chord_junk(parts) -> int:
     # "m" is often read as "rn"; the figure after it as "?".
     # A bare "m" is the end of a minor chord; "dim" alone is an instruction.
     suffix = re.compile(r"(?:rn|m)[0-9?]{0,2}|(?:M|maj|sus|dim|aug|add)[0-9?]{1,2}")
-    slash = re.compile(r"([A-G][#b]?(?:m7?|7|M7|maj7|sus4)?)[Il1|]([A-G][#b]?)")
+    slash = re.compile(r"([A-G])[#b]?(?:m7?|7|M7|maj7|sus4)?[Il1|]([A-G])[#b]?")
+    # Words that count or number: "2x", "x3", "1.", "2nd", "8va".
+    counted = re.compile(r"\d+\s?[xX]|[xX]\s?\d+|\d+\.|\d+(?:st|nd|rd|th)|\d+(?:va|vb|ma)")
     for part in parts:
         for measure in part.findall("measure"):
             for direction in measure.findall("direction"):
@@ -567,8 +569,21 @@ def _drop_chord_junk(parts) -> int:
                 if len(types) != 1 or [c.tag for c in types[0]] != ["words"]:
                     continue
                 tokens = (types[0][0].text or "").split()
-                if tokens and all(
-                    suffix.fullmatch(token) or slash.fullmatch(token) or
+                if not tokens or any(counted.fullmatch(token) for token in tokens):
+                    continue
+                # "DIE" is the "D/E" of this measure; without that chord it is
+                # a word ("BIG", "DID").
+                slashes = {
+                    (h.findtext("root/root-step"), h.findtext("bass/bass-step"))
+                    for h in measure.findall("harmony")
+                }
+
+                def misread_slash(token: str) -> bool:
+                    match = slash.fullmatch(token)
+                    return match is not None and match.groups() in slashes
+
+                if all(
+                    suffix.fullmatch(token) or misread_slash(token) or
                     junk.fullmatch(token) and (
                         any(c in "/?(" or c.isdigit() for c in token)
                         # A chord the chord line already carries.

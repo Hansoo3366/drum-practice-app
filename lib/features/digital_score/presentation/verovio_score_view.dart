@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -188,7 +189,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     arrangement: null,
     bpm: 0,
   );
-  nm.Score? _engraved;
+
+  /// Whether a score is loaded for the engraver (and so for the player).
+  var _engravable = false;
   String? _parseError;
   Offset? _ghostCenter;
   bool _ghostRest = false;
@@ -244,7 +247,14 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     if (visualScoreChanged) {
       final wasPlaying = widget.playback.state.playing;
       if (wasPlaying) unawaited(_stop());
-      _rebuildScore();
+      // Only the section boxes changed: the same music stays on screen
+      // while the new boxes are engraved, instead of a blank page each time
+      // a section is named.
+      final sameMusic =
+          oldWidget.engravingXml == widget.engravingXml &&
+          oldWidget.engravingPageSize == widget.engravingPageSize &&
+          identical(oldWidget.score, widget.score);
+      _rebuildScore(keepPages: sameMusic && _pages.isNotEmpty);
     } else if (playbackConfigurationChanged) {
       if (widget.playback.state.playing) unawaited(_stop());
       _resetPlaybackState();
@@ -310,12 +320,12 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     }
   }
 
-  void _rebuildScore() {
+  void _rebuildScore({bool keepPages = false}) {
     final generation = ++_renderGeneration;
     try {
-      // Only the written document is parsed on the UI isolate. A repeated
-      // performance document can be much longer than the visible score and
-      // parsing it here made Android appear to hang before Verovio started.
+      // The engraver reads the document in its own isolate, and the player
+      // builds its MIDI in another: nothing parses the score here, which on
+      // a long score made Android appear to hang before Verovio started.
       final writtenXml =
           widget.engravingXml ??
           utf8.decode(_codec.encodeMusicXml(widget.score));
@@ -323,13 +333,19 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       final visualXml = marks == null
           ? writtenXml
           : withSectionRehearsals(writtenXml, marks);
-      _engraved = nm.MusicXMLParser.scoreFromMusicXML(visualXml);
+      _engravable = true;
       _parseError = null;
-      _pages = const <_VerovioPage>[];
-      _layout = null;
-      _rendering = _renderWithVerovio(visualXml, generation);
+      if (!keepPages) {
+        _pages = const <_VerovioPage>[];
+        _layout = null;
+      }
+      _rendering = _renderWithVerovio(
+        visualXml,
+        generation,
+        publishWhenDone: keepPages,
+      );
     } catch (_) {
-      _engraved = null;
+      _engravable = false;
       _parseError = '악보를 표시할 수 없습니다.';
       _pages = const <_VerovioPage>[];
       _layout = null;
@@ -397,7 +413,14 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   /// Written line starts of the score on screen; empty when lines reflow.
   List<int> _lineStarts = const [];
 
-  Future<void> _renderWithVerovio(String xml, int generation) async {
+  /// Engraves [xml] page by page. Pages replace what is on screen as they
+  /// arrive, or, with [publishWhenDone], all at once at the end (the pages
+  /// shown meanwhile are those of the same music).
+  Future<void> _renderWithVerovio(
+    String xml,
+    int generation, {
+    bool publishWhenDone = false,
+  }) async {
     try {
       final timeout = _verovioOperationTimeout;
       final service = await _getService().timeout(timeout);
@@ -437,14 +460,16 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
               ),
             )
             .timeout(timeout);
+        final prepared = await prepareVerovioPage(svg);
         pages.add(
           _VerovioPage(
-            svg: normalizeVerovioSvgForFlutter(svg),
+            svg: prepared.svg,
             hitMap: hitMap,
-            chords: extractVerovioTextLabels(svg),
+            chords: prepared.labels,
           ),
         );
         if (!mounted || generation != _renderGeneration) return;
+        if (publishWhenDone && pageIndex < pageCount - 1) continue;
         // Publish each page as soon as it is ready. Large scores can contain
         // many A4 pages; waiting for every page made the entire viewer look
         // stuck even when the first page had already been engraved.
@@ -514,10 +539,11 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         ).firstMatch(svg)?.group(1);
         final size = box == null ? null : _parseSvgViewBoxSize(box);
         if (size == null) continue;
+        final prepared = await prepareVerovioPage(svg);
         pages.add(
           EngravedPage(
-            svg: normalizeVerovioSvgForFlutter(svg),
-            labels: extractVerovioTextLabels(svg),
+            svg: prepared.svg,
+            labels: prepared.labels,
             width: size.width,
             height: size.height,
           ),
@@ -914,10 +940,11 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       widget.playback.replaceState(
         widget.playback.state.copyWith(playing: false),
       );
+      // The bar that plays is drawn from the playing state.
+      if (mounted) setState(() {});
       return true;
     }
-    final engraved = _engraved;
-    if (engraved == null) {
+    if (!_engravable) {
       widget.onPlayerIssue?.call();
       return false;
     }
@@ -942,6 +969,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         ),
       ),
     );
+    // The playing bar shows from the first moment, not from the next bar.
+    if (mounted) setState(() {});
     _playbackTimer?.cancel();
     _playbackTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       if (!mounted || _playbackAnchor == null) return;
@@ -954,6 +983,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         return;
       }
       final measure = _measureForTime(elapsed);
+      final moved = widget.playback.state.measureNumber != measure + 1;
+      // The playback bar follows the controller; the score itself only
+      // changes when playing reaches another bar.
       widget.playback.replaceState(
         widget.playback.state.copyWith(
           currentTimeMs: elapsed.toDouble(),
@@ -961,7 +993,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
           beatIndex: 0,
         ),
       );
-      setState(() {});
+      if (moved) setState(() {});
     });
     return true;
   }
@@ -1073,13 +1105,29 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   /// each bar's real length rather than a uniform bar count.
   int _measureForTime(num ms) {
     final duration = math.max(1.0, widget.playback.state.durationMs);
-    final map = performanceMeasureMap(widget.score, widget.playbackSequence);
-    return writtenMeasureAt(
-      map,
-      measureQuarterLengths(widget.score),
-      ms / duration,
-    );
+    // Asked twenty times a second while playing: the bar order and the bar
+    // lengths are worked out once per score and order.
+    var timeline = _timeline;
+    if (timeline == null ||
+        !identical(timeline.score, widget.score) ||
+        timeline.sequence != widget.playbackSequence) {
+      timeline = _timeline = (
+        score: widget.score,
+        sequence: widget.playbackSequence,
+        map: performanceMeasureMap(widget.score, widget.playbackSequence),
+        lengths: measureQuarterLengths(widget.score),
+      );
+    }
+    return writtenMeasureAt(timeline.map, timeline.lengths, ms / duration);
   }
+
+  ({
+    MusicScore score,
+    PlaybackSequence sequence,
+    List<int> map,
+    List<double> lengths,
+  })?
+  _timeline;
 
   static bool _sameMarks(
     List<({int measureIndex, String label})>? a,

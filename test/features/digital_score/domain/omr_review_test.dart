@@ -23,6 +23,7 @@ final _validation = jsonEncode({
       'measure': '4',
       'detail': 'measure lasts 3.5 quarters, time signature wants 4',
       'image': 'p1-s1-m4.png',
+      'focus': [0.25, 0.5],
     },
     {
       'rule': 'A001',
@@ -101,6 +102,9 @@ void main() {
     expect(bars[0].key, '0:3');
     expect(bars[0].severity, OmrIssueSeverity.high);
     expect(bars[0].image, 'p1-s1-m4.png');
+    expect(bars[0].focus, (0.25, 0.5));
+    // An older report has no focus.
+    expect(bars[1].focus, isNull);
     expect(bars[0].issues.map((issue) => issue.text), [
       '마디 길이가 4분음표 3.5개인데 박자표는 4개입니다.',
       '읽다 남은 글자가 있습니다: x2',

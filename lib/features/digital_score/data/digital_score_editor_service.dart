@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +11,12 @@ import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.da
 import 'package:page_a_diddle/features/digital_score/domain/score_transpose.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:path/path.dart' as path;
+
+/// Decodes [xml] in a background isolate.
+Future<MusicScore> decodeMusicXmlInBackground(
+  String xml, [
+  MusicXmlCodec codec = const MusicXmlCodec(),
+]) => Isolate.run(() => codec.decodeXml(xml));
 
 class DigitalScoreEditorService {
   const DigitalScoreEditorService({
@@ -170,6 +177,27 @@ class DigitalScoreEditorService {
     );
   }
 
+  /// A version's score and its MusicXML, from one read of its file. The
+  /// score is decoded off the UI isolate: a long score takes a while.
+  Future<({MusicScore score, String? xml})?> loadVersion({
+    required String songId,
+    required String versionId,
+  }) async {
+    if (versionId == scoreVersionOriginalId) return null;
+    final stored = await _storage.loadScoreVersionBytes(songId, versionId);
+    if (stored == null) {
+      final score = await loadVersionScore(
+        songId: songId,
+        versionId: versionId,
+      );
+      return score == null ? null : (score: score, xml: null);
+    }
+    final bytes = stored is Uint8List ? stored : Uint8List.fromList(stored);
+    final codec = _codec;
+    final xml = codec.xmlString(bytes, fileName: '$versionId.musicxml');
+    return (score: await decodeMusicXmlInBackground(xml, codec), xml: xml);
+  }
+
   Future<ScoreVersionCatalog> addVersion({
     required String songId,
     required MusicScore source,
@@ -204,12 +232,17 @@ class DigitalScoreEditorService {
   }
 
   /// Preserve directions, harmony, lyrics and other XML outside edited notes.
+  ///
+  /// With [sequence], the version's sections and playback order are saved
+  /// with it, before the catalog names the version: a version whose bars
+  /// differ never exists without the sections that fit it.
   Future<ScoreVersionCatalog> addXmlVersion({
     required String songId,
     required String musicXml,
     required ScoreVersionCatalog catalog,
     required String name,
     String? origin,
+    PlaybackSequence? sequence,
   }) async {
     _codec.decodeXml(musicXml);
     final current = await loadVersionCatalog(songId);
@@ -219,6 +252,9 @@ class DigitalScoreEditorService {
     final id = 'ai${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}';
     try {
       await _storage.saveScoreVersionBytes(songId, id, utf8.encode(musicXml));
+      if (sequence != null) {
+        await saveSequence(songId: songId, versionId: id, sequence: sequence);
+      }
       final next = catalog.copyWith(
         activeId: id,
         versions: [

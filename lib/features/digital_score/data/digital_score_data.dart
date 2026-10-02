@@ -70,7 +70,7 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
       final bytes = await file.readAsBytes();
       final codec = const MusicXmlCodec();
       final sourceXml = codec.xmlString(bytes, fileName: file.path);
-      final score = codec.decodeXml(sourceXml);
+      final score = await decodeMusicXmlInBackground(sourceXml, codec);
       final editor = ref.watch(digitalScoreEditorServiceProvider);
       final arrangement = await editor.loadArrangement(songId);
       final originalFifths = await editor.loadOrCaptureOriginalFifths(
@@ -82,14 +82,12 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
       String? activeVersionXml;
       if (versionCatalog.activeId != scoreVersionOriginalId) {
         try {
-          activeVersionScore = await editor.loadVersionScore(
+          final version = await editor.loadVersion(
             songId: songId,
             versionId: versionCatalog.activeId,
           );
-          activeVersionXml = await editor.loadVersionXml(
-            songId,
-            versionCatalog.activeId,
-          );
+          activeVersionScore = version?.score;
+          activeVersionXml = version?.xml;
         } on Object {
           activeVersionScore = null;
         }

@@ -407,6 +407,11 @@ class SongRepository {
       } on Object {
         // Best-effort file cleanup.
       }
+      try {
+        await _storage.deleteOmrReviewFiles(song.id);
+      } on Object {
+        // Best-effort file cleanup.
+      }
     }
   }
 

@@ -367,6 +367,32 @@ void main() {
     await _close(tester);
   });
 
+  testWidgets('rewrites a misread text of the bar', (tester) async {
+    final storage = _MemoryStorage();
+    await _open(
+      tester,
+      storage,
+      musicXml: _xml.replaceFirst(
+        '<direction>',
+        '<direction placement="above"><direction-type><words>Uerse</words></direction-type></direction><direction>',
+      ),
+    );
+
+    await _tapTool(tester, '이 마디의 글자');
+    await tester.enterText(find.byType(TextField), 'Verse');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await _settle(tester);
+    await tester.tap(find.widgetWithText(FilledButton, '저장'));
+    await _settle(tester);
+    await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+    await _settle(tester);
+
+    final saved = utf8.decode(storage.versions.values.single);
+    expect(saved, contains('<words>Verse</words>'));
+    expect(saved, isNot(contains('Uerse')));
+    await _close(tester);
+  });
+
   testWidgets('adds, copies and removes bars, with undo', (tester) async {
     final storage = _MemoryStorage();
     await _open(tester, storage);
@@ -404,6 +430,70 @@ void main() {
     expect(measures[1].notes.first.pitch?.step, PitchStep.c);
     expect(measures[2].notes.every((note) => note.pitch == null), isTrue);
     expect(tester.takeException(), isNull);
+    await _close(tester);
+  });
+
+  testWidgets('a bar read without any note can still be removed', (
+    tester,
+  ) async {
+    final storage = _MemoryStorage();
+    await _open(
+      tester,
+      storage,
+      musicXml: _xml.replaceFirst(
+        '</part>',
+        '<measure number="3"></measure></part>',
+      ),
+    );
+
+    await _tapTool(tester, '다음 마디');
+    await _tapTool(tester, '다음 마디');
+    expect(find.text('3 / 3마디'), findsOneWidget);
+    await _tapTool(tester, '마디 삭제');
+    expect(find.text('2 / 2마디'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await _close(tester);
+  });
+
+  testWidgets('moves a bar and takes its section along', (tester) async {
+    final storage = _MemoryStorage();
+    await _open(
+      tester,
+      storage,
+      sequence: PlaybackSequence(
+        marks: [
+          SectionMark(startMeasureIndex: 0, name: 'INTRO'),
+          SectionMark(startMeasureIndex: 1, name: 'VERSE'),
+        ],
+      ),
+    );
+
+    await _tapTool(tester, '마디 뒤로');
+    expect(find.text('2 / 2마디'), findsOneWidget);
+    await tester.tap(find.byTooltip('실행 취소'));
+    await _settle(tester);
+    expect(find.text('1 / 2마디'), findsOneWidget);
+    await tester.tap(find.byTooltip('다시 실행'));
+    await _settle(tester);
+    await tester.tap(find.widgetWithText(FilledButton, '저장'));
+    await _settle(tester);
+    await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+    await _settle(tester);
+
+    final versionId = storage.versions.keys.single;
+    final saved = const MusicXmlCodec().decodeXml(
+      utf8.decode(storage.versions[versionId]!),
+    );
+    // The whole-rest bar now comes first, the bar with the tune second.
+    expect(saved.parts.first.measures[0].notes.first.pitch, isNull);
+    expect(saved.parts.first.measures[1].notes.first.pitch?.step, PitchStep.c);
+    final sequence = PlaybackSequence.fromJson(
+      jsonDecode(storage.sequences[versionId]!),
+    );
+    expect(sequence.marks.map((m) => (m.startMeasureIndex, m.name)), [
+      (0, 'VERSE'),
+      (1, 'INTRO'),
+    ]);
     await _close(tester);
   });
 

@@ -291,7 +291,9 @@ def _crop_suspects(book: dict, issues: list[dict], folder: Path) -> None:
     for group, sheet, staves in book["unmatched"]:
         for index in group:
             systems[index] = (sheet, staves, None)
-    made: dict[tuple, str] = {}
+    # Per crop: its file, and where in it the measure itself is (as fractions
+    # of the width), since the crop shows its neighbours too.
+    made: dict[tuple, tuple[str, list[float] | None]] = {}
     images = {number: (image, interline) for number, _s, image, interline, _st in book["sheets"]}
     for issue in issues:
         entries = book["placements"][issue["part"]] if issue["part"] < len(book["placements"]) else []
@@ -317,12 +319,18 @@ def _crop_suspects(book: dict, issues: list[dict], folder: Path) -> None:
             top = min(s["top"] for s in staves) - interline * 5
             bottom = max(s["bottom"] for s in staves) + interline * 7
             name = f"p{sheet}-s{staves[0]['system'] + 1}-m{'all' if stack is None else stack + 1}.png"
-            image.crop((
-                max(0, int(left - interline)), max(0, int(top)),
-                min(image.width, int(right + interline)), min(image.height, int(bottom)),
-            )).save(folder / name)
-            made[key] = name
-        issue["image"] = made[key]
+            x0, x1 = max(0, int(left - interline)), min(image.width, int(right + interline))
+            image.crop((x0, max(0, int(top)), x1, min(image.height, int(bottom)))).save(folder / name)
+            focus = None
+            if stack is not None and bars and x1 > x0:
+                focus = [
+                    round(min(1.0, max(0.0, (edge - x0) / (x1 - x0))), 4)
+                    for edge in bars[stack][:2]
+                ]
+            made[key] = (name, focus)
+        issue["image"], focus = made[key]
+        if focus is not None:
+            issue["focus"] = focus
 
 
 def _harmony_label(harmony: ET.Element) -> str:

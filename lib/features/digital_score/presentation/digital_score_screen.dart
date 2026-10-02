@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
@@ -51,6 +52,25 @@ import 'package:page_a_diddle/features/digital_score/presentation/score_transpos
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
 
 part 'digital_score_screen_widgets.dart';
+
+/// The scores of [plans] (a name and what to write) over the melody of
+/// [source], with [corrections] made to its chords first. A top-level
+/// function, so the isolate is sent these values and nothing of the screen.
+Future<List<({String name, String xml})>> _instrumentScoresInBackground(
+  String source,
+  List<ChordCorrection> corrections,
+  Map<AccompanimentInstrument, String> names,
+  List<({String name, AccompanimentSetup setup})> plans,
+) => Isolate.run(() {
+  final corrected = applyChordCorrections(source, corrections);
+  return [
+    for (final plan in plans)
+      (
+        name: plan.name,
+        xml: accompanimentMusicXml(corrected, setup: plan.setup, names: names),
+      ),
+  ];
+});
 
 class DigitalScoreScreen extends ConsumerStatefulWidget {
   const DigitalScoreScreen({required this.songId, super.key});
@@ -210,15 +230,47 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     }
   }
 
+  /// The score as it plays. Built again only when what it is made from
+  /// changes: the score view takes a new object for a new performance and
+  /// stops playing, so an unrelated rebuild must hand it the same one.
   MusicScore _performanceScore(MusicScore written) {
-    return displayedDigitalScore(
+    final editing = _editing || _showSequencePanel;
+    final made = _performance;
+    if (made != null &&
+        identical(made.written, written) &&
+        made.editing == editing &&
+        made.playbackEnabled == _playbackEnabled &&
+        made.sequence == _sequence &&
+        made.arrangement == _arrangement) {
+      return made.score;
+    }
+    final score = displayedDigitalScore(
       written: written,
-      editing: _editing || _showSequencePanel,
+      editing: editing,
       playbackEnabled: _playbackEnabled,
       sequence: _sequence,
       arrangement: _arrangement,
     );
+    _performance = (
+      written: written,
+      editing: editing,
+      playbackEnabled: _playbackEnabled,
+      sequence: _sequence,
+      arrangement: _arrangement,
+      score: score,
+    );
+    return score;
   }
+
+  ({
+    MusicScore written,
+    bool editing,
+    bool playbackEnabled,
+    PlaybackSequence sequence,
+    ArrangementProfile arrangement,
+    MusicScore score,
+  })?
+  _performance;
 
   Future<bool> _save(DigitalScoreData data, MusicScoreEditor editor) async {
     if (_saving) return false;
@@ -914,16 +966,14 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         final existing = _versionEditors[versionId];
         if (existing == null) {
           final service = ref.read(digitalScoreEditorServiceProvider);
-          final score = await service.loadVersionScore(
+          final version = await service.loadVersion(
             songId: data.song.id,
             versionId: versionId,
           );
           if (!mounted) return;
-          if (score == null) return;
-          _versionEditors[versionId] = MusicScoreEditor(score);
-          final xml = await service.loadVersionXml(data.song.id, versionId);
-          if (!mounted) return;
-          if (xml != null) _versionXml[versionId] = xml;
+          if (version == null) return;
+          _versionEditors[versionId] = MusicScoreEditor(version.score);
+          if (version.xml case final xml?) _versionXml[versionId] = xml;
         }
       }
       final target = versionId == scoreVersionOriginalId
@@ -1480,34 +1530,27 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       if (!mounted || request == null) return;
       setState(() => _saving = true);
       final service = ref.read(digitalScoreEditorServiceProvider);
-      final corrected = applyChordCorrections(source, request.corrections);
       final names = {
         for (final instrument in request.instruments)
           instrument: accompanimentInstrumentLabel(l10n, instrument),
       };
       // One score per instrument, named after it, or one for them all.
-      final scores = request.separate
-          ? [
-              for (final instrument in request.instruments)
-                (
-                  name: names[instrument]!,
-                  xml: accompanimentMusicXml(
-                    corrected,
+      // Written in the background: each score reads the melody again.
+      final scores = await _instrumentScoresInBackground(
+        source,
+        request.corrections,
+        names,
+        request.separate
+            ? [
+                for (final instrument in request.instruments)
+                  (
+                    name: names[instrument]!,
                     setup: request.setupFor(instrument),
-                    names: names,
                   ),
-                ),
-            ]
-          : [
-              (
-                name: l10n.threeStaffVersionName,
-                xml: accompanimentMusicXml(
-                  corrected,
-                  setup: request.setup,
-                  names: names,
-                ),
-              ),
-            ];
+              ]
+            : [(name: l10n.threeStaffVersionName, setup: request.setup)],
+      );
+      if (!mounted) return;
       var catalog = _versionCatalog;
       for (final made in scores) {
         catalog = await service.addXmlVersion(

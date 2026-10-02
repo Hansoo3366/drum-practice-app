@@ -197,6 +197,7 @@ class VerovioTextLabelPainter extends CustomPainter {
         _ => label.x * scale,
       };
       painter.paint(canvas, Offset(left, label.baselineY * scale - baseline));
+      painter.dispose();
     }
   }
 

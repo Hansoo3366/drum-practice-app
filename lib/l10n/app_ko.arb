@@ -493,7 +493,7 @@
   "rest": "쉼표",
   "chordSymbol": "코드",
   "barTexts": "이 마디의 글자",
-  "barTextsHint": "코드·가사·음표가 아닌, 악보에서 읽힌 글자입니다. 잘못 읽힌 것은 지우세요.",
+  "barTextsHint": "코드·가사·음표가 아닌, 악보에서 읽힌 글자입니다. 잘못 읽힌 것은 고치거나 지우세요.",
   "addNote": "음표 추가",
   "addRest": "쉼표 추가",
   "addChordSymbol": "코드 추가",

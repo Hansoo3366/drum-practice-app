@@ -119,8 +119,12 @@ class OmrConvertService {
   /// The original crop around a suspect measure: the stored one, or fetched
   /// from the server while it still has the job (songs converted earlier).
   Future<Uint8List?> suspectImage(String songId, String name) async {
-    if (await _storage.loadOmrSuspectImage(songId, name) case final stored?) {
-      return Uint8List.fromList(stored);
+    try {
+      if (await _storage.loadOmrSuspectImage(songId, name) case final stored?) {
+        return Uint8List.fromList(stored);
+      }
+    } on FormatException {
+      return null;
     }
     final jobId = await _storage.loadOmrJobId(songId);
     if (jobId == null) return null;
@@ -134,6 +138,8 @@ class OmrConvertService {
       return null;
     }
   }
+
+  static const _suspectDownloads = 6;
 
   Future<String> importResult({
     required String jobId,
@@ -191,10 +197,23 @@ class OmrConvertService {
     if (validation != null) {
       await _storage.saveOmrValidation(songId, validation);
       // The crops go with the song: the server forgets a job after a while.
-      for (final name in omrSuspectImageNames(validation)) {
-        if (await _client.jobSuspectImage(jobId, name) case final image?) {
-          await _storage.saveOmrSuspectImage(songId, name, image);
-        }
+      final names = omrSuspectImageNames(validation).toList();
+      // A few at a time: a long song has dozens of them.
+      for (var at = 0; at < names.length; at += _suspectDownloads) {
+        await Future.wait([
+          for (final name in names.skip(at).take(_suspectDownloads))
+            () async {
+              try {
+                if (await _client.jobSuspectImage(jobId, name)
+                    case final image?) {
+                  await _storage.saveOmrSuspectImage(songId, name, image);
+                }
+              } on Object {
+                // A crop that cannot be kept must not fail the import; the
+                // review screen fetches it again when it is opened.
+              }
+            }(),
+        ]);
       }
     }
     // What the server took out of the upload (pen, highlighter) stays with

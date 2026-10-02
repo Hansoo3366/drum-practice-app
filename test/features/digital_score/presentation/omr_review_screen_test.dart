@@ -41,6 +41,7 @@ const _bars = [
     measureIndex: 1,
     measure: '2',
     image: 'p1-s1-m2.png',
+    focus: (0.3, 0.7),
     issues: [
       OmrReviewIssue(
         rule: 'V001',
@@ -206,6 +207,15 @@ void main() {
     expect(find.text('코드: G → G/B'), findsOneWidget);
     expect(find.text('확신 92% · AI 보정 버전에 반영됨'), findsOneWidget);
     expect(crops.asked, ['p1-s1-m2.png']);
+    // The bar itself is marked in the crop, which shows its neighbours too.
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is CustomPaint &&
+            '${widget.painter.runtimeType}' == '_NeighbourDimmer',
+      ),
+      findsOneWidget,
+    );
     expect(find.bySemanticsLabel('마디 2 현재 인식'), findsOneWidget);
 
     await _close(tester);

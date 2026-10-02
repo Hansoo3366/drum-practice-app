@@ -123,6 +123,19 @@ Size? _parseSvgViewBoxSize(String value) {
   return Size(values[2]!, values[3]!);
 }
 
+/// A rendered page made ready to draw: the SVG as flutter_svg can draw it
+/// and its text as labels. Both read the whole SVG several times, so they
+/// run off the UI isolate: pages arrive while the first is already on screen
+/// and being scrolled.
+Future<({String svg, List<VerovioTextLabel> labels})> prepareVerovioPage(
+  String svg,
+) => Isolate.run(
+  () => (
+    svg: normalizeVerovioSvgForFlutter(svg),
+    labels: extractVerovioTextLabels(svg),
+  ),
+);
+
 class _VerovioPages extends StatelessWidget {
   const _VerovioPages({
     required this.pages,
@@ -178,11 +191,16 @@ class _VerovioPages extends StatelessWidget {
             width: width,
             height: height,
             child: IgnorePointer(
-              child: CustomPaint(
-                painter: VerovioTextLabelPainter(
-                  labels: page.chords,
-                  scale: width / viewBox.width,
-                  color: AppColors.ink,
+              // Laying out every chord and syllable is the costly part of a
+              // page: on its own layer it is not done again while the score
+              // is panned, zoomed or the playing bar moves.
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: VerovioTextLabelPainter(
+                    labels: page.chords,
+                    scale: width / viewBox.width,
+                    color: AppColors.ink,
+                  ),
                 ),
               ),
             ),
