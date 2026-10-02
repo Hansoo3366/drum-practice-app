@@ -1860,6 +1860,9 @@ class AppLocalizationsJa extends AppLocalizations {
   String get sectionCustom => 'Custom…';
 
   @override
+  String get sectionCancelPick => 'Clear selection';
+
+  @override
   String get sectionRemoveBoundary => 'Merge with previous';
 
   @override

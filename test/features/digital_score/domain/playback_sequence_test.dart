@@ -757,7 +757,7 @@ void main() {
       );
     });
 
-    test('the expanded copy keeps a section at the start of every step', () {
+    test('the expanded copy keeps a section at the start of every pass', () {
       final score = withEndings();
       final sequence = PlaybackSequence(
         steps: [
@@ -772,7 +772,8 @@ void main() {
           score,
           sequence,
         ).map((m) => (m.startMeasureIndex, m.name)),
-        [(0, 'VERSE'), (2, 'CHORUS'), (8, 'VERSE')],
+        // The chorus played twice reads as two sections.
+        [(0, 'VERSE'), (2, 'CHORUS'), (5, 'CHORUS'), (8, 'VERSE')],
       );
     });
 

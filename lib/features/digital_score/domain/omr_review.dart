@@ -101,24 +101,34 @@ class OmrReviewSuggestion {
   /// low_confidence, notes or no_fit. Null in reports from before this.
   final String? status;
 
-  /// What the user should know about the suggestion.
-  String get advice => switch (status) {
-    'applied' => 'AI 보정 버전에 반영됨',
-    'low_confidence' => '확신이 낮아 반영하지 않음 · 검토 권장',
-    'notes' => '음표 수정은 반영하지 않음 · 검토 권장',
-    'no_fit' => '악보에 맞지 않아 반영하지 않음 · 검토 권장',
-    _ => applied ? 'AI 보정 버전에 반영됨' : '제안만',
+  /// Whether the user can take it into the score from the review screen:
+  /// a note, a length or a whole melody. Chords and lyrics the server writes
+  /// itself when it is sure; otherwise they are fixed in the editor.
+  bool get canApply => switch (field) {
+    'melody' => suggested.trim().isNotEmpty,
+    'pitch' || 'duration' => note != null && suggested.trim().isNotEmpty,
+    _ => false,
   };
-  final String? verse;
-  final int? note;
 
   String get label => switch (field) {
     'chords' => '코드',
     'lyrics' => verse == null ? '가사' : '가사 $verse절',
     'pitch' => note == null ? '음높이' : '$note번째 음 높이',
     'duration' => note == null ? '음 길이' : '$note번째 음 길이',
+    'melody' => '마디 멜로디',
     _ => '기타',
   };
+
+  /// What the user should know about the suggestion.
+  String get advice => switch (status) {
+    'applied' => 'AI 보정 버전에 반영됨',
+    'low_confidence' => '확신이 낮아 반영하지 않음 · 검토 권장',
+    'notes' => '음표는 자동으로 넣지 않음 · 확인 후 넣기',
+    'no_fit' => '악보에 맞지 않아 반영하지 않음 · 검토 권장',
+    _ => applied ? 'AI 보정 버전에 반영됨' : '제안만',
+  };
+  final String? verse;
+  final int? note;
 }
 
 /// A measure to look at again, with everything known about it.

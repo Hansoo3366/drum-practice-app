@@ -3584,6 +3584,12 @@ abstract class AppLocalizations {
   /// **'Custom…'**
   String get sectionCustom;
 
+  /// No description provided for @sectionCancelPick.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear selection'**
+  String get sectionCancelPick;
+
   /// Remove the section boundary at the selected bar
   ///
   /// In en, this message translates to:

@@ -1857,6 +1857,9 @@ class AppLocalizationsKo extends AppLocalizations {
   String get sectionCustom => '직접 입력';
 
   @override
+  String get sectionCancelPick => '선택 취소';
+
+  @override
   String get sectionRemoveBoundary => '앞 구간과 합치기';
 
   @override

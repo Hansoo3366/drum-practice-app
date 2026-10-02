@@ -1192,6 +1192,7 @@
   "sectionInfo": "{name} · bars {start}–{end}",
   "@sectionInfo": {"description": "Section containing the selected bar", "placeholders": {"name": {"type": "String"}, "start": {"type": "int"}, "end": {"type": "int"}}},
   "sectionCustom": "Custom…",
+  "sectionCancelPick": "Clear selection",
   "@sectionCustom": {"description": "Enter a custom section name"},
   "sectionRemoveBoundary": "Merge with previous",
   "@sectionRemoveBoundary": {"description": "Remove the section boundary at the selected bar"},

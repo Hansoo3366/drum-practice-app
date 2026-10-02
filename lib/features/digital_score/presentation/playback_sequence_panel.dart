@@ -57,6 +57,21 @@ List<List<ScoreSection>> namedSections(List<ScoreSection> sections) {
   return groups;
 }
 
+/// The section a pick means, when it means one: the pick began on the bar
+/// a section starts at and was not drawn out to a later line. Naming then
+/// renames that section; a pick elsewhere starts a new section.
+ScoreSection? pickedSection(
+  List<ScoreSection> sections,
+  int? pickStart, {
+  required bool extended,
+}) {
+  if (pickStart == null || extended) return null;
+  for (final section in sections) {
+    if (section.startMeasureIndex == pickStart) return section;
+  }
+  return null;
+}
+
 /// Divides the score into sections, then sets the playback order.
 ///
 /// "Sections": tapping a staff line on the score picks it (a later line
@@ -76,6 +91,7 @@ class ScoreStructurePanel extends StatelessWidget {
     required this.canUndo,
     required this.onUndo,
     required this.onClose,
+    this.onCancelPick,
     required this.onSectionNamed,
     required this.onCustomSection,
     required this.onBoundaryRemoved,
@@ -101,6 +117,12 @@ class ScoreStructurePanel extends StatelessWidget {
   final bool canUndo;
   final VoidCallback onUndo;
   final VoidCallback onClose;
+
+  /// Takes the pick back without changing anything.
+  final VoidCallback? onCancelPick;
+
+  /// A name for the picked bars; an empty name takes a section's name away
+  /// (the selected chip tapped again).
   final ValueChanged<String> onSectionNamed;
   final VoidCallback onCustomSection;
   final VoidCallback onBoundaryRemoved;
@@ -213,19 +235,32 @@ class ScoreStructurePanel extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          bar == null
-              ? l10n.sectionStartHint
-              : selectedEnd != null
-              ? l10n.sectionRange(bar + 1, selectedEnd! + 1)
-              : picking || current == null
-              ? l10n.sectionBarPickEnd(bar + 1)
-              : l10n.sectionInfo(
-                  sectionDisplayName(l10n, current),
-                  current.startMeasureIndex + 1,
-                  current.endMeasureIndex + 1,
-                ),
-          style: bar == null ? muted : theme.textTheme.titleSmall,
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                bar == null
+                    ? l10n.sectionStartHint
+                    : selectedEnd != null
+                    ? l10n.sectionRange(bar + 1, selectedEnd! + 1)
+                    : picking || current == null
+                    ? l10n.sectionBarPickEnd(bar + 1)
+                    : l10n.sectionInfo(
+                        current.name.isEmpty
+                            ? l10n.sectionUnnamed
+                            : scoreSectionLabel(l10n, current),
+                        current.startMeasureIndex + 1,
+                        current.endMeasureIndex + 1,
+                      ),
+                style: bar == null ? muted : theme.textTheme.titleSmall,
+              ),
+            ),
+            if (bar != null && onCancelPick != null)
+              TextButton(
+                onPressed: onCancelPick,
+                child: Text(l10n.sectionCancelPick),
+              ),
+          ],
         ),
         const SizedBox(height: 8),
         Wrap(
@@ -236,7 +271,10 @@ class ScoreStructurePanel extends StatelessWidget {
               ChoiceChip(
                 label: Text(playbackSectionLabel(l10n, value)),
                 selected: named == value,
-                onSelected: bar == null ? null : (_) => onSectionNamed(value),
+                // Tapped again, the name comes off: the bars stay a section.
+                onSelected: bar == null
+                    ? null
+                    : (_) => onSectionNamed(named == value ? '' : value),
               ),
             ActionChip(
               avatar: const Icon(Icons.edit_outlined, size: 18),

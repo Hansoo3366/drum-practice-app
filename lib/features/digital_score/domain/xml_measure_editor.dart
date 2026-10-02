@@ -277,6 +277,7 @@ String expandMusicXml(String xml, List<int> measureMap) {
     // The clef, key and time in force before each bar, read once: looking
     // them up from the first bar for every played bar is quadratic.
     final contexts = doc._contextsOf(measures);
+    final lineOf = _writtenLineOf(measures);
     final expanded = <XmlElement>[];
     for (var position = 0; position < measureMap.length; position++) {
       final source = measureMap[position];
@@ -287,6 +288,13 @@ String expandMusicXml(String xml, List<int> measureMap) {
         ..setAttribute('number', '${position + 1}');
       final previous = position == 0 ? null : measureMap[position - 1];
       final jumped = previous == null ? source != 0 : source != previous + 1;
+      // Skipping ahead inside a written line (a first ending left out) is
+      // not a new line; the line just loses the skipped bars.
+      final skipsWithinLine =
+          jumped &&
+          previous != null &&
+          source > previous &&
+          lineOf[source] == lineOf[previous];
       // Keep the written line starts, and start a line where playing jumps
       // back, so the copy reads like the page instead of reflowing.
       final lineStart = copy
@@ -299,7 +307,7 @@ String expandMusicXml(String xml, List<int> measureMap) {
       copy.children.removeWhere(
         (node) => node is XmlElement && node.name.local == 'print',
       );
-      if (position > 0 && (lineStart || jumped)) {
+      if (position > 0 && (lineStart || (jumped && !skipsWithinLine))) {
         copy.children.insert(
           0,
           XmlElement(XmlName('print'), [
@@ -366,6 +374,26 @@ String expandMusicXml(String xml, List<int> measureMap) {
     _writeOrigins(doc, measureMap);
   }
   return doc.toXml();
+}
+
+/// The written line (0-based, counted from `<print new-system|new-page>`)
+/// each measure of a part is on.
+List<int> _writtenLineOf(List<XmlElement> measures) {
+  var line = -1;
+  return [
+    for (var i = 0; i < measures.length; i++)
+      if (i == 0 ||
+          measures[i]
+              .findElements('print')
+              .any(
+                (p) =>
+                    p.getAttribute('new-system') == 'yes' ||
+                    p.getAttribute('new-page') == 'yes',
+              ))
+        ++line
+      else
+        line,
+  ];
 }
 
 bool _sameOrder(List<int> measureMap) {
@@ -1129,6 +1157,158 @@ class XmlMeasureEditor {
         noteIndex: 0,
       ),
     );
+  }
+
+  /// Writes [melody] as the notes of one measure of one part, in place of
+  /// its notes: a suggestion such as "G4 q, A4 8, B4 8., rest 16" (pitch or
+  /// rest, then w h q 8 16 32 with dots). Chord symbols keep their place in
+  /// the bar and the lyrics move onto the new sung notes in order. The
+  /// melody must fill the measure for its time signature. Multi-staff
+  /// measures and measures with more than one voice are not changed.
+  XmlEditResult replaceMelody(
+    String xml,
+    int partIndex,
+    int measureIndex,
+    String melody,
+  ) {
+    final doc = _ScoreDoc(xml);
+    final measure = doc.measureAt(partIndex, measureIndex);
+    if (measure.context.staves > 1) {
+      throw const FormatException('보표가 둘인 마디에는 멜로디를 쓸 수 없습니다.');
+    }
+    final voices = {for (final note in measure.notes) note.voice};
+    if (voices.length > 1) {
+      throw const FormatException('성부가 둘 이상인 마디에는 멜로디를 쓸 수 없습니다.');
+    }
+    final tokens = parseMelodyTokens(melody);
+    if (tokens.isEmpty) throw const FormatException('멜로디가 비어 있습니다.');
+    final divisions = measure.divisions;
+    var total = 0;
+    final lengths = <int>[];
+    for (final token in tokens) {
+      final quarters = _typeQuarters[token.type]!;
+      final value = divisions * quarters * (2 - 1 / math.pow(2, token.dots));
+      if (value != value.roundToDouble() || value < 1) {
+        throw const FormatException('이 악보의 음가 단위로 쓸 수 없는 음표가 있습니다.');
+      }
+      lengths.add(value.round());
+      total += value.round();
+    }
+    if (total != measure.capacity) {
+      throw const FormatException('멜로디 길이가 박자표와 맞지 않습니다.');
+    }
+    final voice = voices.isEmpty ? '1' : voices.first;
+    final element = measure.element;
+    // What the old notes carried that the new ones take over.
+    final lyrics = [
+      for (final note in measure.notes)
+        if (!note.isRest && !note.isGrace)
+          for (final lyric in note.element.findElements('lyric')) lyric.copy(),
+    ];
+    final harmonies = [
+      for (final (onset, harmony) in measure._harmonies) (onset, harmony),
+    ];
+    final old = [for (final note in measure.notes) note.element];
+    // Where the new notes go: where the old ones began, else after what
+    // opens the bar. Marked before anything is taken out.
+    final marker = XmlComment('melody');
+    if (old.isNotEmpty) {
+      element.children.insert(element.children.indexOf(old.first), marker);
+    } else {
+      final index = element.children.indexWhere(
+        (node) =>
+            node is XmlElement &&
+            !['print', 'attributes'].contains(node.name.local) &&
+            !(node.name.local == 'barline' &&
+                node.getAttribute('location') == 'left'),
+      );
+      element.children.insert(
+        index < 0 ? element.children.length : index,
+        marker,
+      );
+    }
+    for (final harmony in harmonies) {
+      _remove(harmony.$2);
+    }
+    for (final note in old) {
+      _remove(note);
+    }
+    // The new notes, each chord symbol before the note at (or after) its
+    // onset, as it stood before.
+    final made = <XmlElement>[];
+    var onset = 0;
+    var lyricAt = 0;
+    final pending = harmonies.toList();
+    for (final (index, token) in tokens.indexed) {
+      final note = XmlElement(XmlName('note'));
+      if (token.pitch case final pitch?) {
+        note.children.add(_pitchElement(pitch));
+      } else {
+        note.children.add(XmlElement(XmlName('rest')));
+      }
+      note.children.add(
+        XmlElement(XmlName('duration'), [], [XmlText('${lengths[index]}')]),
+      );
+      note.children.add(XmlElement(XmlName('voice'), [], [XmlText(voice)]));
+      note.children.add(XmlElement(XmlName('type'), [], [XmlText(token.type)]));
+      for (var i = 0; i < token.dots; i++) {
+        note.children.add(XmlElement(XmlName('dot')));
+      }
+      if (token.pitch != null && lyricAt < lyrics.length) {
+        final lyric = lyrics[lyricAt++];
+        for (final other in lyrics.skip(lyricAt)) {
+          // Several verses on one note travel together.
+          if (other.getAttribute('number') == lyric.getAttribute('number')) {
+            break;
+          }
+          note.children.add(other);
+          lyricAt++;
+        }
+        note.children.insert(note.children.length - 0, lyric);
+      }
+      while (pending.isNotEmpty && pending.first.$1 <= onset) {
+        made.add(pending.removeAt(0).$2);
+      }
+      made.add(note);
+      onset += lengths[index];
+    }
+    made.addAll(pending.map((h) => h.$2));
+    final at = element.children.indexOf(marker);
+    element.children.insertAll(at, made);
+    _remove(marker);
+    final rebuilt = doc.measureAt(partIndex, measureIndex);
+    rebuilt
+      ..rebeamRange(voice, 0, rebuilt.capacity)
+      ..refreshAccidentals(1, {
+        for (final token in tokens)
+          if (token.pitch case final pitch?) pitch.step,
+      });
+    doc.measureAt(partIndex, measureIndex).fixOrphanBeams(voice);
+    return XmlEditResult(
+      doc.toXml(),
+      XmlNoteRef(
+        partIndex: partIndex,
+        measureIndex: measureIndex,
+        noteIndex: 0,
+      ),
+    );
+  }
+
+  /// Gives the [noteIndex]-th note of a measure the pitch [spelled] ("F#4",
+  /// "Bb3"); its length stays. Tied notes move together.
+  XmlEditResult setNotePitch(String xml, XmlNoteRef ref, String spelled) {
+    final pitch = parseSpelledPitch(spelled);
+    if (pitch == null) throw FormatException('음높이를 읽을 수 없습니다: $spelled');
+    final doc = _ScoreDoc(xml);
+    final measure = doc.measure(ref);
+    final info = measure.note(ref.noteIndex);
+    if (info.isRest) throw const FormatException('쉼표에는 음높이가 없습니다.');
+    final steps = {pitch.step, if (info.pitch case final old?) old.step};
+    for (final (index, note) in doc.tieChain(ref.measureIndex, info)) {
+      note.element.getElement('pitch')?.replace(_pitchElement(pitch));
+      doc.measureAt(ref.partIndex, index).refreshAccidentals(note.staff, steps);
+    }
+    return XmlEditResult(doc.toXml(), ref);
   }
 
   /// The texts written in a measure (`<words>`: instructions such as "rit.",
@@ -2583,6 +2763,71 @@ void _insertOrdered(
     }
   }
   children.insert(insertAt, child);
+}
+
+// --- Melody suggestions -------------------------------------------------------
+
+/// One note or rest of a suggested melody.
+typedef MelodyToken = ({MusicPitch? pitch, String type, int dots});
+
+/// "G4 q, A4 8, B4 8., rest 16" as tokens; throws a [FormatException] with a
+/// readable message for anything else.
+List<MelodyToken> parseMelodyTokens(String melody) {
+  const types = {
+    'w': 'whole',
+    'h': 'half',
+    'q': 'quarter',
+    '8': 'eighth',
+    '16': '16th',
+    '32': '32nd',
+  };
+  final tokens = <MelodyToken>[];
+  for (final raw in melody.split(RegExp(r'[,;]'))) {
+    final text = raw.trim();
+    if (text.isEmpty) continue;
+    final parts = text.split(RegExp(r'\s+'));
+    if (parts.length != 2) {
+      throw FormatException('멜로디 표기를 읽을 수 없습니다: $text');
+    }
+    final length = RegExp(r'^(w|h|q|8|16|32)(\.*)$').firstMatch(parts[1]);
+    if (length == null) {
+      throw FormatException('음가를 읽을 수 없습니다: ${parts[1]}');
+    }
+    final dots = length.group(2)!.length;
+    if (dots > 2) throw FormatException('음가를 읽을 수 없습니다: ${parts[1]}');
+    final MusicPitch? pitch;
+    if (parts[0].toLowerCase() == 'rest' || parts[0] == 'r') {
+      pitch = null;
+    } else {
+      pitch = parseSpelledPitch(parts[0]);
+      if (pitch == null) {
+        throw FormatException('음높이를 읽을 수 없습니다: ${parts[0]}');
+      }
+    }
+    tokens.add((pitch: pitch, type: types[length.group(1)]!, dots: dots));
+  }
+  return tokens;
+}
+
+/// "F#4", "Bb3", "C5" as a pitch; null when it is not one.
+MusicPitch? parseSpelledPitch(String text) {
+  final match = RegExp(
+    r'^([A-Ga-g])(#|♯|b|♭|x|bb)?(-?\d)$',
+  ).firstMatch(text.trim());
+  if (match == null) return null;
+  final step = PitchStep.values.byName(match.group(1)!.toLowerCase());
+  final alter = switch (match.group(2)) {
+    '#' || '♯' => 1,
+    'b' || '♭' => -1,
+    'x' => 2,
+    'bb' => -2,
+    _ => 0,
+  };
+  return MusicPitch(
+    step: step,
+    octave: int.parse(match.group(3)!),
+    alter: alter,
+  );
 }
 
 // --- Whole bars -------------------------------------------------------------

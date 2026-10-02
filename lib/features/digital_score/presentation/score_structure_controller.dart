@@ -30,6 +30,7 @@ class ScoreStructureController extends ChangeNotifier {
   int? _pickStart;
   int? _pickEnd;
   bool _pickingEnd = false;
+  bool _pickExtended = false;
 
   /// The order before the first bar insert/delete/move, and what it became
   /// for the bars last seen; see [followMeasureEdits].
@@ -60,6 +61,10 @@ class ScoreStructureController extends ChangeNotifier {
 
   /// True after a pick, until a name is chosen: a later line extends it.
   bool get pickingEnd => _pickingEnd;
+
+  /// True once a later line was added to the pick: the pick is a range the
+  /// user drew, not the one line first tapped.
+  bool get pickExtended => _pickExtended;
 
   /// Shows [sequence] as saved for the version now on screen.
   void load(PlaybackSequence sequence) {
@@ -100,15 +105,22 @@ class ScoreStructureController extends ChangeNotifier {
   }
 
   /// Picks the staff line of bars [lineStart]..[lineEnd]; while a pick is
-  /// open, a later line extends it to that line's end.
+  /// open, a later line extends it to that line's end, and tapping the line
+  /// the pick began on takes the pick back.
   void pickLine(int lineStart, int lineEnd) {
     final start = _pickStart;
-    if (_pickingEnd && start != null && lineStart > start) {
+    if (start != null &&
+        lineStart == start &&
+        (_pickingEnd || _pickEnd != null)) {
+      _clearPick();
+    } else if (_pickingEnd && start != null && lineStart > start) {
       _pickEnd = lineEnd;
+      _pickExtended = true;
     } else {
       _pickStart = lineStart;
       _pickEnd = lineEnd > lineStart ? lineEnd : null;
       _pickingEnd = true;
+      _pickExtended = false;
     }
     _notify();
   }
@@ -117,6 +129,7 @@ class ScoreStructureController extends ChangeNotifier {
   void endPick() {
     _pickEnd = null;
     _pickingEnd = false;
+    _pickExtended = false;
     _notify();
   }
 
@@ -163,6 +176,7 @@ class ScoreStructureController extends ChangeNotifier {
     _pickStart = null;
     _pickEnd = null;
     _pickingEnd = false;
+    _pickExtended = false;
   }
 
   void _autosave() {

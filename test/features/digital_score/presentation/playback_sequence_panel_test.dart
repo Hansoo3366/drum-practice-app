@@ -84,6 +84,67 @@ void main() {
     expect(find.widgetWithText(ActionChip, '앞 구간과 합치기'), findsNothing);
   });
 
+  testWidgets('a pick can be taken back, and a name taken off', (tester) async {
+    final named = <String>[];
+    var cancelled = 0;
+    await _pump(
+      tester,
+      selectedBar: 4,
+      onSectionNamed: named.add,
+      onCancelPick: () => cancelled++,
+    );
+
+    await tester.tap(find.text('선택 취소'));
+    expect(cancelled, 1);
+    // The chip of the section's own name, tapped again, takes the name off.
+    for (final (chip, expected) in [
+      (find.widgetWithText(ChoiceChip, 'Chorus'), ['']),
+      (find.widgetWithText(ChoiceChip, 'Verse'), ['', 'VERSE']),
+    ]) {
+      await tester.ensureVisible(chip);
+      await tester.tap(chip);
+      await tester.pump();
+      expect(named, expected);
+    }
+  });
+
+  testWidgets('an unnamed section says so instead of its bars twice', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      sections: const [
+        ScoreSection(
+          id: 'm0',
+          name: '',
+          number: null,
+          startMeasureIndex: 0,
+          endMeasureIndex: 5,
+        ),
+        ScoreSection(
+          id: 'm6',
+          name: 'VERSE',
+          number: null,
+          startMeasureIndex: 6,
+          endMeasureIndex: 9,
+        ),
+      ],
+      selectedBar: 0,
+    );
+
+    expect(find.text('이름 없음 · 1–6마디'), findsOneWidget);
+  });
+
+  test(
+    'a pick on a section start means that section, a drawn range does not',
+    () {
+      expect(pickedSection(_sections, 4, extended: false)?.name, 'CHORUS');
+      expect(pickedSection(_sections, 4, extended: true), isNull);
+      expect(pickedSection(_sections, 5, extended: false), isNull);
+      expect(pickedSection(_sections, null, extended: false), isNull);
+    },
+  );
+
   testWidgets('without a selection only shows how to start', (tester) async {
     await _pump(tester);
 
@@ -244,6 +305,7 @@ Future<void> _pump(
   bool madeScoreExists = false,
   ValueChanged<StructureTab>? onTabChanged,
   VoidCallback? onClose,
+  VoidCallback? onCancelPick,
   ValueChanged<String>? onSectionNamed,
   VoidCallback? onCustomSection,
   VoidCallback? onBoundaryRemoved,
@@ -274,6 +336,7 @@ Future<void> _pump(
               canUndo: false,
               onUndo: () {},
               onClose: onClose ?? () {},
+              onCancelPick: onCancelPick ?? () {},
               onSectionNamed: onSectionNamed ?? (_) {},
               onCustomSection: onCustomSection ?? () {},
               onBoundaryRemoved: onBoundaryRemoved ?? () {},

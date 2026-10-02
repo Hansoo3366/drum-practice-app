@@ -434,7 +434,51 @@ PlaybackSequence setSectionBoundary(
       if (mark.startMeasureIndex != measureIndex) mark,
     SectionMark(startMeasureIndex: measureIndex, name: name),
   ];
-  return sequence.copyWith(marks: marks);
+  return _withoutLostSteps(score, sequence.copyWith(marks: marks));
+}
+
+/// [sequence] without steps that play a section it no longer has: an edit
+/// can take a section away (the last boundary merged, a range drawn over
+/// one), and a step left pointing at it would play nothing and show nowhere.
+PlaybackSequence _withoutLostSteps(
+  MusicScore score,
+  PlaybackSequence sequence,
+) {
+  final ids = {
+    for (final section in scoreSections(score, sequence)) section.id,
+  };
+  final steps = [
+    for (final step in sequence.steps)
+      if (step.sectionId.startsWith(_legacyNamePrefix) ||
+          ids.contains(step.sectionId))
+        step,
+  ];
+  return steps.length == sequence.steps.length
+      ? sequence
+      : sequence.copyWith(steps: steps);
+}
+
+/// What naming a pick does, as the structure panel decides it: a pick that
+/// began on the bar a section starts at and was not drawn out ([extended])
+/// renames that section; otherwise the picked bars [start]..[end] (or the
+/// one bar [start]) become a section named [name]. An empty [name] leaves
+/// the bars a section without a name.
+PlaybackSequence nameSectionPick(
+  MusicScore score,
+  PlaybackSequence sequence, {
+  required int start,
+  int? end,
+  required bool extended,
+  required String name,
+}) {
+  final startsSection =
+      !extended &&
+      scoreSections(score, sequence).any((s) => s.startMeasureIndex == start);
+  final last = end == null ? null : end.clamp(start, score.measureCount - 1);
+  if (startsSection || last == null) {
+    return setSectionBoundary(score, sequence, measureIndex: start, name: name);
+  }
+  return setSectionRange(score, sequence, start: start, end: last, name: name);
 }
 
 /// Makes bars [start]..[end] one section named [name]. Boundaries inside
@@ -465,18 +509,21 @@ PlaybackSequence setSectionRange(
       if (mark.startMeasureIndex > start && mark.startMeasureIndex <= end)
         sectionIdAt(mark.startMeasureIndex),
   };
-  return sequence.copyWith(
-    marks: [
-      for (final mark in marks)
-        if (mark.startMeasureIndex < start || mark.startMeasureIndex > end)
-          mark,
-      SectionMark(startMeasureIndex: start, name: name),
-      if (rest != null) SectionMark(startMeasureIndex: end + 1, name: rest),
-    ],
-    steps: [
-      for (final step in sequence.steps)
-        if (!removed.contains(step.sectionId)) step,
-    ],
+  return _withoutLostSteps(
+    score,
+    sequence.copyWith(
+      marks: [
+        for (final mark in marks)
+          if (mark.startMeasureIndex < start || mark.startMeasureIndex > end)
+            mark,
+        SectionMark(startMeasureIndex: start, name: name),
+        if (rest != null) SectionMark(startMeasureIndex: end + 1, name: rest),
+      ],
+      steps: [
+        for (final step in sequence.steps)
+          if (!removed.contains(step.sectionId)) step,
+      ],
+    ),
   );
 }
 
@@ -550,15 +597,18 @@ PlaybackSequence removeSectionBoundary(
     return sequence;
   }
   final removedId = sectionIdAt(measureIndex);
-  return sequence.copyWith(
-    marks: [
-      for (final mark in marks)
-        if (mark.startMeasureIndex != measureIndex) mark,
-    ],
-    steps: [
-      for (final step in sequence.steps)
-        if (step.sectionId != removedId) step,
-    ],
+  return _withoutLostSteps(
+    score,
+    sequence.copyWith(
+      marks: [
+        for (final mark in marks)
+          if (mark.startMeasureIndex != measureIndex) mark,
+      ],
+      steps: [
+        for (final step in sequence.steps)
+          if (step.sectionId != removedId) step,
+      ],
+    ),
   );
 }
 
@@ -633,9 +683,10 @@ List<int> performanceMeasureMap(MusicScore score, PlaybackSequence sequence) {
   return _customOrder(score, steps).map;
 }
 
-/// Section boundaries of the performance laid out bar by bar: each step of
-/// the order starts a section with its name, so the expanded copy of a custom
-/// order shows the same sections as the written score.
+/// Section boundaries of the performance laid out bar by bar: every pass of
+/// every step starts a section with the step's name, so the expanded copy
+/// of a custom order shows the same sections as the written score, and a
+/// section played twice reads as two (Verse 1, Verse 2).
 List<SectionMark> performanceSectionMarks(
   MusicScore score,
   PlaybackSequence sequence,
@@ -644,17 +695,18 @@ List<SectionMark> performanceSectionMarks(
   if (steps.isEmpty) return const [];
   final starts = _customOrder(score, steps).starts;
   return [
-    for (var i = 0; i < steps.length; i++)
+    for (final (:start, :name, :step, :pass) in starts)
       SectionMark(
-        startMeasureIndex: starts[i].start,
-        name: starts[i].name,
+        startMeasureIndex: start,
+        name: name,
         // A split piece right after the piece before it goes on without a
         // new box, as in the written score.
         continued:
-            i > 0 &&
-            steps[i].section.continued &&
-            steps[i - 1].section.endMeasureIndex + 1 ==
-                steps[i].section.startMeasureIndex,
+            pass == 1 &&
+            step > 0 &&
+            steps[step].section.continued &&
+            steps[step - 1].section.endMeasureIndex + 1 ==
+                steps[step].section.startMeasureIndex,
       ),
   ];
 }
@@ -666,16 +718,30 @@ List<SectionMark> performanceSectionMarks(
 /// after a D.S. takes the 2nd ending. A step played once with a [pass] takes
 /// the bracket naming that pass, as a written repeat spanning several
 /// sections does.
-({List<int> map, List<({int start, String name})> starts}) _customOrder(
+({List<int> map, List<({int start, String name, int step, int pass})> starts})
+_customOrder(
   MusicScore score,
   List<({ScoreSection section, int repeats, int? pass})> steps,
 ) {
   final endings = _endingNumbers(score.parts.first.measures);
   final map = <int>[];
-  final starts = <({int start, String name})>[];
-  for (final (:section, :repeats, :pass) in steps) {
-    starts.add((start: map.length, name: section.name));
-    map.addAll(_sectionPasses(section, repeats, pass, endings));
+  final starts = <({int start, String name, int step, int pass})>[];
+  for (var index = 0; index < steps.length; index++) {
+    final (:section, :repeats, :pass) = steps[index];
+    final bars = _sectionPasses(section, repeats, pass, endings);
+    // Every pass begins at the section's first bar.
+    var passes = 0;
+    for (var i = 0; i < bars.length; i++) {
+      if (bars[i] == section.startMeasureIndex || i == 0) {
+        starts.add((
+          start: map.length + i,
+          name: section.name,
+          step: index,
+          pass: ++passes,
+        ));
+      }
+    }
+    map.addAll(bars);
     if (map.length > maxExpandedMeasures) {
       throw const FormatException('Playback Sequence is too long.');
     }

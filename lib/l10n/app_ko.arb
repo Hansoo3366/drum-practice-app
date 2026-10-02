@@ -581,6 +581,7 @@
   "sectionStartHint": "마디를 누르면 그 마디부터 새 구간이 됩니다",
   "sectionInfo": "{name} · {start}–{end}마디",
   "sectionCustom": "직접 입력",
+  "sectionCancelPick": "선택 취소",
   "sectionRemoveBoundary": "앞 구간과 합치기",
   "sectionUnnamed": "이름 없음",
   "sectionNameTitle": "구간 이름",

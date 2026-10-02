@@ -139,7 +139,7 @@ void main() {
     expect(chords.advice, 'AI 보정 버전에 반영됨');
     expect(pitch.label, '2번째 음 높이');
     expect(pitch.applied, isFalse);
-    expect(pitch.advice, '음표 수정은 반영하지 않음 · 검토 권장');
+    expect(pitch.advice, '음표는 자동으로 넣지 않음 · 확인 후 넣기');
     expect(lyrics.applied, isFalse);
     expect(lyrics.advice, '확신이 낮아 반영하지 않음 · 검토 권장');
     // A bar only the AI doubts is listed too.

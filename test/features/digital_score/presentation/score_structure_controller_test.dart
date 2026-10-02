@@ -91,6 +91,40 @@ void main() {
     expect((structure.pickStart, structure.pickEnd), (8, null));
   });
 
+  test('tapping the line a pick began on takes the pick back', () {
+    final structure = controller()
+      ..load(PlaybackSequence.empty)
+      ..pickLine(4, 7);
+    expect(structure.pickStart, 4);
+    expect(structure.pickExtended, isFalse);
+
+    structure.pickLine(4, 7);
+    expect(
+      (structure.pickStart, structure.pickEnd, structure.pickingEnd),
+      (null, null, false),
+    );
+
+    // Extended over a later line, the first line still takes it all back.
+    structure
+      ..pickLine(4, 7)
+      ..pickLine(8, 11);
+    expect(
+      (structure.pickStart, structure.pickEnd, structure.pickExtended),
+      (4, 11, true),
+    );
+    structure.pickLine(4, 7);
+    expect(structure.pickStart, isNull);
+
+    // After naming, the same line is a fresh pick, not a cancel.
+    structure
+      ..pickLine(4, 7)
+      ..endPick();
+    structure.pickLine(4, 7);
+    expect((structure.pickStart, structure.pickEnd), (4, 7));
+    structure.clearPick();
+    expect(structure.pickStart, isNull);
+  });
+
   test('bar edits move sections without saving them', () async {
     final structure = controller()..load(verse);
 

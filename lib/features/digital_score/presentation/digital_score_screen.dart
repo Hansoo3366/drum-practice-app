@@ -1126,23 +1126,18 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   void _nameSection(MusicScore score, String name) {
     final bar = _structure.pickStart;
     if (bar == null) return;
-    final end = _structure.pickEnd;
     try {
+      // A pick that means an existing section renames it; a drawn range or
+      // a bar inside a section makes a new section of the picked bars.
       _structure.update(
-        end == null
-            ? setSectionBoundary(
-                score,
-                _sequence,
-                measureIndex: bar,
-                name: name,
-              )
-            : setSectionRange(
-                score,
-                _sequence,
-                start: bar,
-                end: end,
-                name: name,
-              ),
+        nameSectionPick(
+          score,
+          _sequence,
+          start: bar,
+          end: _structure.pickEnd,
+          extended: _structure.pickExtended,
+          name: name,
+        ),
       );
       // The range is now a section starting at the first bar; show it as one.
       // The next tap starts a new pick.
@@ -1626,8 +1621,18 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       for (final system in _systems) {
         if (system.contains(measureIndex)) line = system;
       }
-      final lineStart = line?.startMeasureIndex ?? measureIndex;
-      final lineEnd = line?.endMeasureIndex ?? measureIndex;
+      // The engraving can show more bars than the model (another part, a
+      // stale layout): a pick never points past the score.
+      final last = (_editor?.score.measureCount ?? measureIndex + 1) - 1;
+      if (measureIndex > last) return;
+      final lineStart = (line?.startMeasureIndex ?? measureIndex).clamp(
+        0,
+        last,
+      );
+      final lineEnd = (line?.endMeasureIndex ?? measureIndex).clamp(
+        lineStart,
+        last,
+      );
       setState(() => _structureTab = StructureTab.sections);
       _structure.pickLine(lineStart, lineEnd);
       return;
@@ -1915,25 +1920,25 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         // Folded phones cannot fit every score action in the app bar.
         final compact = MediaQuery.sizeOf(context).width < 600;
         final sections = scoreSections(score, _sequence);
-        ScoreSection? selectedSection;
-        if (_showSequencePanel && _structure.pickStart != null) {
-          for (final section in sections) {
-            // Only a section that starts here is "selected"; a bar in the
-            // middle of one is a new start, not the whole section.
-            if (section.startMeasureIndex == _structure.pickStart) {
-              selectedSection = section;
-            }
-          }
-        }
+        // Only a section that starts here is "selected"; a bar in the
+        // middle of one, or a range drawn over lines, is a new section.
+        final selectedSection = _showSequencePanel
+            ? pickedSection(
+                sections,
+                _structure.pickStart,
+                extended: _structure.pickExtended,
+              )
+            : null;
+        final pickedEnd = selectedSection != null ? null : _structure.pickEnd;
         final pickedRange = _showSequencePanel
-            ? (_structure.pickEnd != null
-                  ? (start: _structure.pickStart!, end: _structure.pickEnd!)
-                  : _structure.pickingEnd || selectedSection == null
-                  ? null
-                  : (
+            ? (selectedSection != null
+                  ? (
                       start: selectedSection.startMeasureIndex,
                       end: selectedSection.endMeasureIndex,
-                    ))
+                    )
+                  : pickedEnd != null
+                  ? (start: _structure.pickStart!, end: pickedEnd)
+                  : null)
             : null;
         return Focus(
           autofocus: _editing,
@@ -2288,8 +2293,9 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                       sequence: _sequence,
                       sections: sections,
                       selectedBar: _structure.pickStart,
-                      selectedEnd: _structure.pickEnd,
-                      picking: _structure.pickingEnd,
+                      selectedEnd: pickedEnd,
+                      picking: selectedSection == null && _structure.pickingEnd,
+                      onCancelPick: _structure.clearPick,
                       summary: _sequenceSummary(score),
                       canUndo: _structure.canUndo,
                       onUndo: _structure.undo,

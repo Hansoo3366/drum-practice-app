@@ -68,6 +68,17 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
   String? _preview;
   MusicScore? _previewScore;
 
+  /// Note suggestions the user took into the score, by bar key and the
+  /// suggestion's index in that bar: the score on screen is the version
+  /// with these written in. They become a version with "저장".
+  final _approved = <String, Set<int>>{};
+
+  /// The version as opened, before any approved suggestion.
+  late final String _baseXml = widget.musicXml;
+  var _saving = false;
+
+  bool get _dirty => _approved.values.any((set) => set.isNotEmpty);
+
   OmrReviewBar get _bar => widget.bars[_index];
 
   /// Where [bar], counted as the conversion left it, is in the version on
@@ -221,7 +232,153 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
         .saveOmrReviewState(widget.songId, omrReviewStateJson(_checked));
   }
 
+  /// Writes [suggestion] of [bar] into the score on screen, or takes it out
+  /// again. Done from the version as opened, so approvals of one bar never
+  /// depend on the order they were given in.
+  void _toggleApproval(OmrReviewBar bar, int suggestionIndex) {
+    final set = _approved.putIfAbsent(bar.key, () => {});
+    final adding = !set.contains(suggestionIndex);
+    if (adding) {
+      set.add(suggestionIndex);
+    } else {
+      set.remove(suggestionIndex);
+    }
+    try {
+      final xml = _withApprovals(_baseXml);
+      setState(() {
+        _xml = xml;
+        _readVersion();
+        _engrave();
+      });
+    } on FormatException catch (error) {
+      if (adding) set.remove(suggestionIndex);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  /// [xml] with every approved suggestion written in.
+  String _withApprovals(String xml) {
+    var result = xml;
+    for (final bar in widget.bars) {
+      final chosen = _approved[bar.key];
+      if (chosen == null || chosen.isEmpty) continue;
+      final index = _barIndexIn(result, bar);
+      if (index == null) {
+        throw const FormatException('이 버전에는 없는 마디입니다.');
+      }
+      // A whole melody first; single notes are then addressed in it.
+      final order = chosen.toList()
+        ..sort((a, b) {
+          int rank(int i) => bar.suggestions[i].field == 'melody' ? 0 : 1;
+          return rank(a) != rank(b) ? rank(a) - rank(b) : a - b;
+        });
+      for (final i in order) {
+        final suggestion = bar.suggestions[i];
+        result = switch (suggestion.field) {
+          'melody' => _editor.replaceMelody(
+            result,
+            bar.partIndex,
+            index,
+            suggestion.suggested,
+          ),
+          'pitch' when suggestion.note != null => _editor.setNotePitch(
+            result,
+            XmlNoteRef(
+              partIndex: bar.partIndex,
+              measureIndex: index,
+              noteIndex: suggestion.note! - 1,
+            ),
+            suggestion.suggested,
+          ),
+          'duration' when suggestion.note != null => _applyDuration(
+            result,
+            XmlNoteRef(
+              partIndex: bar.partIndex,
+              measureIndex: index,
+              noteIndex: suggestion.note! - 1,
+            ),
+            suggestion.suggested,
+          ),
+          _ => throw const FormatException('이 제안은 바로 넣을 수 없습니다.'),
+        }.xml;
+      }
+    }
+    return result;
+  }
+
+  /// A duration suggestion ("8.", "q", "D5 8"): its last token is the length.
+  XmlEditResult _applyDuration(String xml, XmlNoteRef ref, String suggested) {
+    final token = parseMelodyTokens(
+      'C4 ${suggested.trim().split(RegExp(r'\s+')).last}',
+    ).single;
+    return _editor.setDuration(xml, ref, token.type, token.dots);
+  }
+
+  /// Where [bar] is in [xml], by the bar origins written in it.
+  int? _barIndexIn(String xml, OmrReviewBar bar) {
+    final origins = barOrigins(xml);
+    if (origins == null) return bar.measureIndex;
+    final index = origins.indexOf(bar.measureIndex);
+    return index < 0 ? null : index;
+  }
+
+  /// Saves the score with the approved suggestions as a new version.
+  Future<void> _saveApprovals() async {
+    if (_saving || !_dirty) return;
+    final service = ref.read(digitalScoreEditorServiceProvider);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) =>
+          _VersionNameDialog(initial: 'AI 승인 ${_catalog.versions.length + 1}'),
+    );
+    if (name == null || name.isEmpty || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      final sequence = await service.loadSequence(
+        widget.songId,
+        versionId: _catalog.activeId,
+      );
+      final catalog = await service.addXmlVersion(
+        songId: widget.songId,
+        musicXml: _xml,
+        catalog: _catalog,
+        name: name,
+        // Same bars: the sections and order carry over.
+        sequence: sequence,
+      );
+      if (!mounted) return;
+      setState(() {
+        _saved = true;
+        _catalog = catalog;
+        _approved.clear();
+        // Bars whose suggestions went in need no second look.
+        for (final bar in widget.bars) {
+          if (_settled(bar)) _checked.add(bar.key);
+        }
+      });
+      await ref
+          .read(songFileStorageProvider)
+          .saveOmrReviewState(widget.songId, omrReviewStateJson(_checked));
+    } on FormatException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _fix() async {
+    if (_dirty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('넣은 제안을 먼저 저장하거나 되돌리세요.')));
+      return;
+    }
     final saved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => ScoreProofreadScreen(
@@ -305,12 +462,22 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
     return PopScope<bool>(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) Navigator.of(context).pop(_saved);
+        if (didPop) return;
+        if (_dirty) {
+          unawaited(_confirmLeave());
+        } else {
+          Navigator.of(context).pop(_saved);
+        }
       },
       child: Scaffold(
         appBar: AppBar(
           title: const Text('변환 검토'),
           actions: [
+            if (_dirty)
+              TextButton(
+                onPressed: _saving ? null : () => unawaited(_saveApprovals()),
+                child: const Text('저장'),
+              ),
             if (widget.annotations.isNotEmpty)
               IconButton(
                 tooltip: '분리한 필기',
@@ -389,7 +556,12 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
               const Divider(height: 1, color: AppColors.border),
               Expanded(
                 flex: 2,
-                child: _Findings(bar: bar, issues: _openIssues(bar)),
+                child: _Findings(
+                  bar: bar,
+                  issues: _openIssues(bar),
+                  approved: _approved[bar.key] ?? const {},
+                  onToggle: (index) => _toggleApproval(bar, index),
+                ),
               ),
               const Divider(height: 1, color: AppColors.border),
               Padding(
@@ -542,12 +714,21 @@ class _Original extends StatelessWidget {
 }
 
 class _Findings extends StatelessWidget {
-  const _Findings({required this.bar, required this.issues});
+  const _Findings({
+    required this.bar,
+    required this.issues,
+    required this.approved,
+    required this.onToggle,
+  });
 
   final OmrReviewBar bar;
 
   /// The reasons that still hold.
   final List<OmrReviewIssue> issues;
+
+  /// Indexes of the bar's suggestions written into the score on screen.
+  final Set<int> approved;
+  final ValueChanged<int> onToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -575,7 +756,7 @@ class _Findings extends StatelessWidget {
         if (bar.suggestions.isNotEmpty || bar.uncertain.isNotEmpty) ...[
           if (issues.isNotEmpty) const SizedBox(height: 12),
           Text('AI 제안', style: heading),
-          for (final suggestion in bar.suggestions)
+          for (final (index, suggestion) in bar.suggestions.indexed)
             _Line(
               icon: suggestion.applied
                   ? Icons.auto_fix_high_outlined
@@ -587,8 +768,15 @@ class _Findings extends StatelessWidget {
               note: [
                 if (suggestion.confidence case final confidence?)
                   '확신 ${(confidence * 100).round()}%',
-                suggestion.advice,
+                approved.contains(index) ? '넣음 · 저장하면 새 버전' : suggestion.advice,
               ].join(' · '),
+              // A note suggestion is taken into the score by hand, here.
+              action: suggestion.canApply
+                  ? TextButton(
+                      onPressed: () => onToggle(index),
+                      child: Text(approved.contains(index) ? '빼기' : '이 마디에 넣기'),
+                    )
+                  : null,
             ),
           for (final reason in bar.uncertain)
             _Line(icon: Icons.help_outline, text: reason, note: 'AI가 읽지 못함'),
@@ -599,11 +787,12 @@ class _Findings extends StatelessWidget {
 }
 
 class _Line extends StatelessWidget {
-  const _Line({required this.icon, required this.text, this.note});
+  const _Line({required this.icon, required this.text, this.note, this.action});
 
   final IconData icon;
   final String text;
   final String? note;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -630,8 +819,84 @@ class _Line extends StatelessWidget {
               ],
             ),
           ),
+          if (action != null) action!,
         ],
       ),
+    );
+  }
+}
+
+/// Asks what to do with approved suggestions when leaving.
+extension on _OmrReviewScreenState {
+  Future<void> _confirmLeave() async {
+    final choice = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('넣은 제안이 저장되지 않았습니다'),
+        content: const Text('저장하지 않으면 넣은 제안은 사라집니다.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('버리기'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('저장'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice) {
+      await _saveApprovals();
+      if (mounted && !_dirty) Navigator.of(context).pop(_saved);
+    } else {
+      Navigator.of(context).pop(_saved);
+    }
+  }
+}
+
+class _VersionNameDialog extends StatefulWidget {
+  const _VersionNameDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_VersionNameDialog> createState() => _VersionNameDialogState();
+}
+
+class _VersionNameDialogState extends State<_VersionNameDialog> {
+  late final _controller = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('버전 이름'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        onSubmitted: (_) => Navigator.of(context).pop(_controller.text.trim()),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('취소'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('저장'),
+        ),
+      ],
     );
   }
 }

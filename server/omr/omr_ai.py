@@ -275,7 +275,8 @@ def _apply_ai_measure(measure: ET.Element, corrections: list[dict], fifths: int)
 def _status(fix: dict) -> str:
     """Why a suggestion is, or is not, written into the AI version: "eligible"
     (a chord or lyric the model is sure enough of), "low_confidence", or
-    "notes" (a pitch or duration, shown to the user only)."""
+    "notes" (a pitch, duration or whole melody: shown to the user, who may
+    take it into a version from the review screen)."""
     if fix.get("field") not in ("chords", "lyrics"):
         return "notes"
     try:

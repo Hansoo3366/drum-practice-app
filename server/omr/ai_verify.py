@@ -42,6 +42,15 @@ Rules:
   "잊어버리고-앞에". Never repeat the syllable instead.
 - Notes: report only clear pitch or duration errors, by note position (1-based
   within the measure).
+- Melody: when a measure's notes are missing or mostly wrong (several notes
+  off, or the measure is empty or far too short or long), give the whole
+  measure once under field "melody" instead of note by note: every note and
+  rest left to right as "pitch duration" tokens separated by commas, in the
+  notation of RECOGNIZED (pitch like C5, F#4, Bb3, or rest; duration w, h,
+  q, 8, 16, 32, a dot for dotted). Example: "G4 q, A4 8, B4 8., C5 16, rest q".
+  It must fill the measure exactly for its time signature. Only when every
+  note is clearly readable; tuplets and chords cannot be written this way,
+  so leave such measures alone.
 - confidence is your probability (0-1) that the suggested value is exactly
   what the original shows.
 - If everything you can see matches, return an empty corrections list."""
@@ -60,7 +69,7 @@ SCHEMA = {
                 "required": ["measure", "field", "verse", "note", "current", "suggested", "confidence"],
                 "properties": {
                     "measure": {"type": "string", "description": "measure number as given"},
-                    "field": {"type": "string", "enum": ["chords", "lyrics", "pitch", "duration", "other"]},
+                    "field": {"type": "string", "enum": ["chords", "lyrics", "pitch", "duration", "melody", "other"]},
                     "verse": {"type": ["string", "null"], "description": "lyric verse number, else null"},
                     "note": {"type": ["integer", "null"], "description": "1-based note position for pitch/duration, else null"},
                     "current": {"type": "string"},

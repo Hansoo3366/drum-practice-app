@@ -1081,6 +1081,9 @@ class AiApplyTest(unittest.TestCase):
         self.assertFalse(omr_ai._same_as_recognized(measure, {"field": "lyrics", "verse": "1", "suggested": "예수님"}))
         self.assertFalse(omr_ai._same_as_recognized(measure, {"field": "chords", "suggested": "G, D"}))
         self.assertFalse(omr_ai._same_as_recognized(measure, {"field": "pitch", "note": 1, "suggested": "A4"}))
+        self.assertEqual(omr_ai._status({"field": "melody", "suggested": "G4 q, A4 q", "confidence": 0.99}), "notes")
+        import ai_verify
+        self.assertIn("melody", ai_verify.SCHEMA["properties"]["corrections"]["items"]["properties"]["field"]["enum"])
 
     def test_several_chords_on_one_note_keep_their_order(self):
         measure = ET.fromstring("""<measure number="8">

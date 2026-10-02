@@ -648,6 +648,41 @@ void main() {
       expect(measures.map(newLine), [false, true, true, true]);
     });
 
+    test('skipping ahead inside a written line does not start a line', () {
+      // Bars 1-4 on one line, 5-6 on the next; bar 3 is a first ending the
+      // last time through leaves out.
+      String bar(int n, {bool line = false}) =>
+          '<measure number="$n">${line ? '<print new-system="yes"/>' : ''}'
+          '<note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note></measure>';
+      final xml =
+          '<score-partwise version="3.1"><part-list><score-part id="P1"><part-name>V</part-name></score-part></part-list>'
+          '<part id="P1"><measure number="1"><attributes><divisions>1</divisions></attributes>'
+          '<note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type></note></measure>'
+          '${bar(2)}${bar(3)}${bar(4)}${bar(5, line: true)}${bar(6)}</part></score-partwise>';
+      List<bool> lines(List<int> map) =>
+          XmlDocument.parse(expandMusicXml(xml, map))
+              .findAllElements('measure')
+              .map(
+                (m) => m
+                    .findElements('print')
+                    .any((p) => p.getAttribute('new-system') == 'yes'),
+              )
+              .toList();
+      // 1 2 4 | 5 6: the skip from 2 to 4 stays on the line.
+      expect(lines([0, 1, 3, 4, 5]), [false, false, false, true, false]);
+      // Skipping into the middle of another line still starts one.
+      expect(lines([0, 1, 5]), [false, false, true]);
+      // Going back always starts one.
+      expect(lines([0, 1, 2, 3, 1, 2]), [
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+      ]);
+    });
+
     test('a bar with two attributes keeps the state the last one sets', () {
       // A converter left a stale <attributes> (key 0, divisions 1) before
       // the real one (key 1, divisions 4) in bar 2.
@@ -1065,6 +1100,179 @@ void main() {
       ]);
 
       expect(() => _editor.removeText(xml, _ref(0), 0), throwsFormatException);
+    });
+  });
+
+  group('melody suggestions', () {
+    test('reads the suggestion notation', () {
+      final tokens = parseMelodyTokens('G4 q, A#4 8, Bb3 8., rest 16, C5 h');
+      expect(tokens.map((t) => t.type), [
+        'quarter',
+        'eighth',
+        'eighth',
+        '16th',
+        'half',
+      ]);
+      expect(
+        (
+          tokens[1].pitch?.step,
+          tokens[1].pitch?.octave,
+          tokens[1].pitch?.alter,
+        ),
+        (PitchStep.a, 4, 1),
+      );
+      expect(tokens[2].pitch?.alter, -1);
+      expect(tokens[2].dots, 1);
+      expect(tokens[3].pitch, isNull);
+      expect(() => parseMelodyTokens('G4 x'), throwsFormatException);
+      expect(() => parseMelodyTokens('H4 q'), throwsFormatException);
+      final sharp = parseSpelledPitch('F#4');
+      expect((sharp?.step, sharp?.octave, sharp?.alter), (PitchStep.f, 4, 1));
+      expect(parseSpelledPitch('rest'), isNull);
+    });
+
+    test('writes a melody over the bar, keeping chords and lyrics', () {
+      final xml =
+          _score(
+                [
+                  '<harmony><root><root-step>C</root-step></root><kind>major</kind></harmony>'
+                      '${_note('C', 5, duration: 2, type: 'half', extra: '', accidental: '')}'
+                      '<harmony><root><root-step>G</root-step></root><kind>major</kind></harmony>'
+                      '${_note('D', 5, duration: 2, type: 'half')}',
+                  '${_note('E', 5, duration: 4, type: 'whole')}',
+                ],
+                staves: 1,
+                fifths: 0,
+              )
+              .replaceFirst(
+                '<voice>1</voice><type>half</type><staff>1</staff></note>',
+                '<voice>1</voice><type>half</type><staff>1</staff><lyric number="1"><text>예</text></lyric></note>',
+              )
+              .replaceFirst(
+                '<step>D</step><octave>5</octave></pitch><duration>2</duration><voice>1</voice><type>half</type><staff>1</staff></note>',
+                '<step>D</step><octave>5</octave></pitch><duration>2</duration><voice>1</voice><type>half</type><staff>1</staff><lyric number="1"><text>수</text></lyric></note>',
+              );
+      // divisions 1: quarters and halves only.
+      final result = _editor.replaceMelody(
+        xml,
+        0,
+        0,
+        'E4 q, F#4 q, rest q, G4 q',
+      );
+
+      final score = _codec.decodeXml(result.xml);
+      final bar = score.parts.first.measures.first;
+      final notes = bar.notes.toList();
+      expect(notes.map((n) => n.pitch?.step), [
+        PitchStep.e,
+        PitchStep.f,
+        null,
+        PitchStep.g,
+      ]);
+      expect(notes[1].pitch?.alter, 1);
+      expect(result.selection.measureIndex, 0);
+      final measure = XmlDocument.parse(
+        result.xml,
+      ).findAllElements('measure').first;
+      // The sharp is written: it is not in the key.
+      expect(measure.findAllElements('accidental').single.innerText, 'sharp');
+      // Chords: C before the first note, G where the third beat starts.
+      final order = [
+        for (final e in measure.childElements)
+          e.name.local == 'harmony'
+              ? 'h:${e.findAllElements('root-step').single.innerText}'
+              : e.name.local == 'note'
+              ? (e.getElement('rest') != null
+                    ? 'rest'
+                    : e.findAllElements('step').single.innerText)
+              : e.name.local,
+      ];
+      expect(order, ['attributes', 'h:C', 'E', 'F', 'h:G', 'rest', 'G']);
+      // Lyrics follow the sung notes in order.
+      final texts = [
+        for (final n in measure.findElements('note'))
+          n.findAllElements('text').map((t) => t.innerText).join(),
+      ];
+      expect(texts, ['예', '수', '', '']);
+      // The bar after is untouched.
+      expect(
+        score.parts.first.measures[1].notes.first.pitch?.step,
+        PitchStep.e,
+      );
+    });
+
+    test(
+      'refuses a melody that does not fill the bar or cannot be written',
+      () {
+        final xml = _score([
+          '${_note('C', 5, duration: 4, type: 'whole')}',
+        ], staves: 1);
+        expect(
+          () => _editor.replaceMelody(xml, 0, 0, 'C5 h, D5 q'),
+          throwsFormatException,
+        );
+        // divisions 1: no eighths.
+        expect(
+          () => _editor.replaceMelody(xml, 0, 0, 'C5 8, D5 8, E5 h, F5 q'),
+          throwsFormatException,
+        );
+        expect(
+          () => _editor.replaceMelody(xml, 0, 0, ''),
+          throwsFormatException,
+        );
+        // Two staves are left alone.
+        final grand = _score([
+          '${_note('C', 5, duration: 4, type: 'whole')}$_bass',
+        ]);
+        expect(
+          () => _editor.replaceMelody(grand, 0, 0, 'C5 w'),
+          throwsFormatException,
+        );
+      },
+    );
+
+    test('fills an empty bar', () {
+      final xml = _score([
+        '',
+        '${_note('C', 5, duration: 4, type: 'whole')}',
+      ], staves: 1);
+      final result = _editor.replaceMelody(xml, 0, 0, 'D5 h, E5 h');
+      final bar = _codec.decodeXml(result.xml).parts.first.measures.first;
+      expect(bar.notes.map((n) => n.pitch?.step), [PitchStep.d, PitchStep.e]);
+    });
+
+    test('sets one note to a spelled pitch, tie and accidental included', () {
+      final xml = _score(
+        [
+          '${_note('C', 5, duration: 2, type: 'half', extra: '<tie type="start"/>')}'
+              '${_note('C', 5, duration: 2, type: 'half', extra: '<tie type="stop"/>')}',
+        ],
+        staves: 1,
+        fifths: 0,
+      );
+      final result = _editor.setNotePitch(xml, _ref(0), 'Bb4');
+      final notes = _codec
+          .decodeXml(result.xml)
+          .parts
+          .first
+          .measures
+          .first
+          .notes
+          .toList();
+      expect(notes.map((n) => (n.pitch?.step, n.pitch?.alter)), [
+        (PitchStep.b, -1),
+        (PitchStep.b, -1),
+      ]);
+      expect(
+        XmlDocument.parse(
+          result.xml,
+        ).findAllElements('accidental').first.innerText,
+        'flat',
+      );
+      expect(
+        () => _editor.setNotePitch(xml, _ref(0), 'nope'),
+        throwsFormatException,
+      );
     });
   });
 
