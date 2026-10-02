@@ -8,6 +8,7 @@ import 'package:page_a_diddle/core/storage/song_file_storage.dart';
 import 'package:page_a_diddle/features/digital_score/data/digital_score_editor_service.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
+import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/three_staff_arrangement.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_proofread_screen.dart';
@@ -58,6 +59,24 @@ class _MemoryStorage extends SongFileStorage {
   Future<List<int>?> loadScoreVersionBytes(String id, String versionId) async =>
       versions[versionId];
 
+  /// Playback sequences by version id ('' for the original's).
+  final sequences = <String, String>{};
+
+  @override
+  Future<String?> loadPlaybackSequence(
+    String songId, {
+    String? versionId,
+  }) async => sequences[versionId ?? ''];
+
+  @override
+  Future<void> savePlaybackSequence(
+    String songId,
+    String jsonContent, {
+    String? versionId,
+  }) async {
+    sequences[versionId ?? ''] = jsonContent;
+  }
+
   @override
   Future<void> replaceFile(String relativePath, List<int> bytes) async {
     throw StateError('The source score must not be overwritten');
@@ -68,6 +87,7 @@ Future<List<bool?>> _open(
   WidgetTester tester,
   _MemoryStorage storage, {
   String musicXml = _xml,
+  PlaybackSequence? sequence,
 }) async {
   tester.view.physicalSize = const Size(900, 1600);
   tester.view.devicePixelRatio = 1;
@@ -91,6 +111,7 @@ Future<List<bool?>> _open(
                       songId: 'song',
                       musicXml: musicXml,
                       catalog: ScoreVersionCatalog.empty,
+                      sequence: sequence,
                     ),
                   ),
                 ),
@@ -310,4 +331,144 @@ void main() {
     expect(find.byType(SnackBar), findsNothing);
     await _close(tester);
   });
+
+  testWidgets('removes a misread text of the bar', (tester) async {
+    final storage = _MemoryStorage();
+    await _open(
+      tester,
+      storage,
+      musicXml: _xml.replaceFirst(
+        '<direction>',
+        '<direction placement="above"><direction-type><words>rn?</words></direction-type></direction><direction>',
+      ),
+    );
+
+    await _tapTool(tester, '이 마디의 글자');
+    expect(find.text('rn?'), findsOneWidget);
+    await tester.tap(find.byTooltip('제거'));
+    await _settle(tester);
+    // Nothing left to remove: the tool is off.
+    final tool = tester.widget<InkWell>(
+      find.descendant(
+        of: find.byTooltip('이 마디의 글자'),
+        matching: find.byType(InkWell),
+      ),
+    );
+    expect(tool.onTap, isNull);
+
+    await tester.tap(find.widgetWithText(FilledButton, '저장'));
+    await _settle(tester);
+    await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+    await _settle(tester);
+
+    final saved = utf8.decode(storage.versions.values.single);
+    expect(saved, isNot(contains('rn?')));
+    expect(saved, contains('<mf/>'));
+    await _close(tester);
+  });
+
+  testWidgets('adds, copies and removes bars, with undo', (tester) async {
+    final storage = _MemoryStorage();
+    await _open(tester, storage);
+
+    await _tapTool(tester, '다음 마디 추가');
+    expect(find.text('2 / 3마디'), findsOneWidget);
+    await _tapTool(tester, '이전 마디');
+    await _tapTool(tester, '마디 복제');
+    expect(find.text('2 / 4마디'), findsOneWidget);
+    await _tapTool(tester, '마디 삭제');
+    expect(find.text('2 / 3마디'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('실행 취소'));
+    await _settle(tester);
+    expect(find.text('2 / 4마디'), findsOneWidget);
+    await tester.tap(find.byTooltip('실행 취소'));
+    await _settle(tester);
+    expect(find.text('1 / 3마디'), findsOneWidget);
+    await tester.tap(find.byTooltip('다시 실행'));
+    await _settle(tester);
+    expect(find.text('2 / 4마디'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, '저장'));
+    await _settle(tester);
+    await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+    await _settle(tester);
+
+    final saved = const MusicXmlCodec().decodeXml(
+      utf8.decode(storage.versions.values.single),
+    );
+    // Bar 1, its copy, the added empty bar, bar 2.
+    final measures = saved.parts.first.measures;
+    expect(measures, hasLength(4));
+    expect(measures[0].notes.first.pitch?.step, PitchStep.c);
+    expect(measures[1].notes.first.pitch?.step, PitchStep.c);
+    expect(measures[2].notes.every((note) => note.pitch == null), isTrue);
+    expect(tester.takeException(), isNull);
+    await _close(tester);
+  });
+
+  testWidgets('sections move with their bars when a bar is added', (
+    tester,
+  ) async {
+    final storage = _MemoryStorage();
+    await _open(
+      tester,
+      storage,
+      sequence: PlaybackSequence(
+        marks: [
+          SectionMark(startMeasureIndex: 0, name: 'INTRO'),
+          SectionMark(startMeasureIndex: 1, name: 'VERSE'),
+        ],
+        steps: [
+          PlaybackStep(sectionId: sectionIdAt(1), repeats: 2),
+          PlaybackStep(sectionId: sectionIdAt(0)),
+        ],
+      ),
+    );
+
+    await _tapTool(tester, '다음 마디 추가');
+    await tester.tap(find.widgetWithText(FilledButton, '저장'));
+    await _settle(tester);
+    await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+    await _settle(tester);
+
+    final versionId = storage.versions.keys.single;
+    final sequence = PlaybackSequence.fromJson(
+      jsonDecode(storage.sequences[versionId]!),
+    );
+    // The verse still starts at the old second bar, now the third.
+    expect(sequence.marks.map((m) => (m.startMeasureIndex, m.name)), [
+      (0, 'INTRO'),
+      (2, 'VERSE'),
+    ]);
+    expect(sequence.steps.map((s) => (s.sectionId, s.repeats)), [
+      (sectionIdAt(2), 2),
+      (sectionIdAt(0), 1),
+    ]);
+    await _close(tester);
+  });
+
+  testWidgets(
+    'a version with the same bars keeps the playback order as it is',
+    (tester) async {
+      final storage = _MemoryStorage();
+      final order = PlaybackSequence(
+        marks: [SectionMark(startMeasureIndex: 1, name: 'VERSE')],
+        steps: [PlaybackStep(sectionId: sectionIdAt(1))],
+      );
+      storage.sequences[''] = jsonEncode(order.toJson());
+      // No sequence handed in: the stored one of the edited version is used.
+      await _open(tester, storage);
+
+      await _tapTool(tester, '한 칸 위');
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await _settle(tester);
+      await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+      await _settle(tester);
+
+      final versionId = storage.versions.keys.single;
+      expect(jsonDecode(storage.sequences[versionId]!), order.toJson());
+      await _close(tester);
+    },
+  );
 }

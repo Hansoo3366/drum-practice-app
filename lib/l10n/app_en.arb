@@ -1019,6 +1019,8 @@
   "rest": "Rest",
   "@rest": {"description": "Musical rest"},
   "chordSymbol": "Chord",
+  "barTexts": "Text in this bar",
+  "barTextsHint": "Text read from the page that is not a chord, a lyric or a note. Remove what was misread.",
   "@chordSymbol": {"description": "Harmony chord symbol"},
   "addNote": "Add note",
   "@addNote": {"description": "Add a musical note"},

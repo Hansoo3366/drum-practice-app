@@ -214,6 +214,16 @@ class OmrConvertClient {
     return response == null ? null : utf8.decode(response.bodyBytes);
   }
 
+  /// The original crop around one suspect measure, named in the validation
+  /// report, or null.
+  Future<Uint8List?> jobSuspectImage(String jobId, String name) async {
+    final response = await _optional(
+      '/jobs/$jobId/suspects/${Uri.encodeComponent(name)}',
+    );
+    if (response == null || response.bodyBytes.isEmpty) return null;
+    return response.bodyBytes;
+  }
+
   /// The server's AI version (chord and lyric suggestions applied), or null
   /// when the server made none.
   Future<Uint8List?> jobAiResult(String jobId) async {

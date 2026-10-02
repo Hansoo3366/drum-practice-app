@@ -131,6 +131,12 @@ class SongFileStorage {
   String omrCorrectionsPathFor(String songId) =>
       path.join('omr_corrections', '$songId.json');
 
+  String omrSuspectImagePathFor(String songId, String name) =>
+      path.join('omr_suspects', songId, path.basename(name));
+
+  String omrReviewStatePathFor(String songId) =>
+      path.join('omr_review', '$songId.json');
+
   String omrSourcePathFor(String songId, String extension) =>
       path.join('omr_sources', '$songId$extension');
 
@@ -219,6 +225,30 @@ class SongFileStorage {
 
   Future<String?> loadOmrAnnotations(String songId) async {
     return _loadSidecar(omrAnnotationsPathFor(songId));
+  }
+
+  /// The original crop around one suspect measure, as the server cut it.
+  Future<void> saveOmrSuspectImage(
+    String songId,
+    String name,
+    List<int> bytes,
+  ) async {
+    await replaceFile(omrSuspectImagePathFor(songId, name), bytes);
+  }
+
+  Future<List<int>?> loadOmrSuspectImage(String songId, String name) async {
+    final file = await resolve(omrSuspectImagePathFor(songId, name));
+    if (!await file.exists() || await file.length() == 0) return null;
+    return file.readAsBytes();
+  }
+
+  /// Which suspect measures the user has looked at and accepted.
+  Future<void> saveOmrReviewState(String songId, String jsonContent) async {
+    await _saveSidecar(omrReviewStatePathFor(songId), jsonContent);
+  }
+
+  Future<String?> loadOmrReviewState(String songId) async {
+    return _loadSidecar(omrReviewStatePathFor(songId));
   }
 
   Future<void> saveOmrSource({

@@ -791,6 +791,168 @@ class XmlMeasureEditor {
     return XmlEditResult(doc.toXml(), ref);
   }
 
+  /// Adds an empty bar (a whole-bar rest) after the selected note's bar, in
+  /// every part. The selection moves to the new bar.
+  XmlEditResult insertMeasureAfter(String xml, XmlNoteRef ref) {
+    final doc = _ScoreDoc(xml);
+    doc.measureAt(ref.partIndex, ref.measureIndex);
+    final numbered = _numberedInOrder(doc);
+    final origins = _readOrigins(doc, ref.partIndex);
+    for (final (partIndex, part) in doc.parts.indexed) {
+      final measures = doc._measures(partIndex);
+      if (ref.measureIndex >= measures.length) continue;
+      final source = measures[ref.measureIndex];
+      final bar = _emptyMeasure(
+        doc._contextBefore(measures, ref.measureIndex + 1),
+        number: source.getAttribute('number') ?? '${ref.measureIndex + 1}',
+      );
+      part.children.insert(part.children.indexOf(source) + 1, bar);
+      if (ref.measureIndex == measures.length - 1) {
+        _moveBarline(from: source, to: bar, right: true);
+      }
+      _mendTies(source, bar);
+      if (ref.measureIndex + 1 < measures.length) {
+        _mendTies(bar, measures[ref.measureIndex + 1]);
+      }
+    }
+    if (numbered) _renumber(doc);
+    _writeOrigins(doc, origins..insert(ref.measureIndex + 1, -1));
+    return XmlEditResult(
+      doc.toXml(),
+      XmlNoteRef(
+        partIndex: ref.partIndex,
+        measureIndex: ref.measureIndex + 1,
+        noteIndex: 0,
+      ),
+    );
+  }
+
+  /// Copies the selected note's bar after itself, in every part: notes,
+  /// chords and lyrics. Signs that belong to the place rather than the music
+  /// (repeat and ending barlines, section boxes, segno, coda, jumps, clef,
+  /// key and time) are not repeated. The selection moves to the copy.
+  XmlEditResult duplicateMeasure(String xml, XmlNoteRef ref) {
+    final doc = _ScoreDoc(xml);
+    doc.measureAt(ref.partIndex, ref.measureIndex);
+    final numbered = _numberedInOrder(doc);
+    final origins = _readOrigins(doc, ref.partIndex);
+    for (final (partIndex, part) in doc.parts.indexed) {
+      final measures = doc._measures(partIndex);
+      if (ref.measureIndex >= measures.length) continue;
+      final source = measures[ref.measureIndex];
+      final copy = source.copy();
+      _stripPlaceSigns(copy);
+      part.children.insert(part.children.indexOf(source) + 1, copy);
+      if (ref.measureIndex == measures.length - 1) {
+        _moveBarline(from: source, to: copy, right: true);
+      }
+      _mendTies(source, copy);
+      if (ref.measureIndex + 1 < measures.length) {
+        _mendTies(copy, measures[ref.measureIndex + 1]);
+      }
+    }
+    if (numbered) _renumber(doc);
+    _writeOrigins(doc, origins..insert(ref.measureIndex + 1, -1));
+    return XmlEditResult(
+      doc.toXml(),
+      XmlNoteRef(
+        partIndex: ref.partIndex,
+        measureIndex: ref.measureIndex + 1,
+        noteIndex: ref.noteIndex,
+      ),
+    );
+  }
+
+  /// Removes the selected note's bar from every part. Its clef, key and time
+  /// go to the next bar, a repeat or ending sign to the neighbour on that
+  /// side. The selection moves to the bar that takes its place.
+  XmlEditResult deleteMeasure(String xml, XmlNoteRef ref) {
+    final doc = _ScoreDoc(xml);
+    doc.measureAt(ref.partIndex, ref.measureIndex);
+    final count = doc.measureCount(ref.partIndex);
+    if (count <= 1) {
+      throw const FormatException('마지막 남은 마디는 지울 수 없습니다.');
+    }
+    final numbered = _numberedInOrder(doc);
+    final origins = _readOrigins(doc, ref.partIndex);
+    for (final partIndex in [for (var i = 0; i < doc.parts.length; i++) i]) {
+      final measures = doc._measures(partIndex);
+      final index = ref.measureIndex;
+      if (index >= measures.length || measures.length <= 1) continue;
+      final target = measures[index];
+      final previous = index > 0 ? measures[index - 1] : null;
+      final next = index + 1 < measures.length ? measures[index + 1] : null;
+      if (next != null) {
+        final carried = target.findElements('attributes').toList();
+        carried.forEach(_remove);
+        next.children.insertAll(0, carried);
+        _dropRestated(
+          next,
+          index == 0
+              // The first bar states everything: nothing is "already known".
+              ? const _Context(
+                  divisions: -1,
+                  fifths: 99,
+                  beats: -1,
+                  beatType: -1,
+                  staves: -1,
+                )
+              : doc._contextBefore(measures, index),
+        );
+        _moveBarline(from: target, to: next, right: false);
+      }
+      if (previous != null) {
+        _moveBarline(from: target, to: previous, right: true);
+      }
+      _remove(target);
+      if (previous != null && next != null) _mendTies(previous, next);
+      if (previous == null && next != null) _dropTies(next, 'stop');
+      if (next == null && previous != null) _dropTies(previous, 'start');
+    }
+    if (numbered) _renumber(doc);
+    _writeOrigins(doc, origins..removeAt(ref.measureIndex));
+    return XmlEditResult(
+      doc.toXml(),
+      XmlNoteRef(
+        partIndex: ref.partIndex,
+        measureIndex: ref.measureIndex.clamp(0, count - 2),
+        noteIndex: 0,
+      ),
+    );
+  }
+
+  /// The texts written in a measure (`<words>`: instructions such as "rit.",
+  /// or what a recogniser left of a chord or lyric it could not read), in
+  /// document order.
+  List<String> measureTexts(String xml, int partIndex, int measureIndex) => [
+    for (final direction in _textDirections(
+      _ScoreDoc(xml).measureAt(partIndex, measureIndex).element,
+    ))
+      _directionText(direction),
+  ];
+
+  /// Removes the [textIndex]-th text of the selected note's measure, as
+  /// [measureTexts] lists them. Notes, chords and lyrics stay.
+  XmlEditResult removeText(String xml, XmlNoteRef ref, int textIndex) {
+    final doc = _ScoreDoc(xml);
+    final directions = _textDirections(doc.measure(ref).element).toList();
+    if (textIndex < 0 || textIndex >= directions.length) {
+      throw const FormatException('지울 글자가 없습니다.');
+    }
+    final direction = directions[textIndex];
+    final types = direction.findElements('direction-type').toList();
+    final worded = types
+        .where((type) => type.findElements('words').isNotEmpty)
+        .toList();
+    if (worded.length == types.length) {
+      _remove(direction);
+    } else {
+      // The direction also carries a sign (a dynamic, a segno): that stays.
+      worded.forEach(_remove);
+    }
+    return XmlEditResult(doc.toXml(), ref);
+  }
+
   XmlEditResult _editPitch(
     String xml,
     XmlNoteRef ref,
@@ -1035,6 +1197,9 @@ class _ScoreDoc {
   final XmlDocument document;
 
   String toXml() => document.toXmlString();
+
+  List<XmlElement> get parts =>
+      document.rootElement.findElements('part').toList();
 
   List<XmlElement> _measures(int partIndex) {
     final parts = document.rootElement.findElements('part').toList();
@@ -2104,6 +2269,17 @@ List<_Spelled> _spellGap(int start, int length, _MeasureView measure) {
 
 void _remove(XmlNode node) => node.parent?.children.remove(node);
 
+Iterable<XmlElement> _textDirections(XmlElement measure) => measure
+    .findElements('direction')
+    .where((direction) => _directionText(direction).isNotEmpty);
+
+String _directionText(XmlElement direction) => direction
+    .findElements('direction-type')
+    .expand((type) => type.findElements('words'))
+    .map((words) => words.innerText.trim())
+    .where((text) => text.isNotEmpty)
+    .join(' ');
+
 void _setChild(
   XmlElement parent,
   String name,
@@ -2137,4 +2313,246 @@ void _insertOrdered(
     }
   }
   children.insert(insertAt, child);
+}
+
+// --- Whole bars -------------------------------------------------------------
+
+const _originsField = 'page-a-diddle:bar-origins';
+
+/// For each bar of [xml], the index it had before bars were added or removed
+/// (-1 for an added bar), or null when the score still has its first bars.
+/// Whatever was recorded against the bars as first read (a conversion's
+/// suspect measures) finds its bar by this.
+List<int>? barOrigins(String xml) {
+  final XmlDocument document;
+  try {
+    document = XmlDocument.parse(xml);
+  } on XmlException {
+    return null;
+  }
+  return _originsOf(document);
+}
+
+List<int>? _originsOf(XmlDocument document) {
+  for (final field in document.rootElement.findAllElements(
+    'miscellaneous-field',
+  )) {
+    if (field.getAttribute('name') != _originsField) continue;
+    final values = [
+      for (final value in field.innerText.split(','))
+        int.tryParse(value.trim()),
+    ];
+    return values.contains(null) ? null : values.cast<int>();
+  }
+  return null;
+}
+
+List<int> _readOrigins(_ScoreDoc doc, int partIndex) {
+  final count = doc.measureCount(partIndex);
+  final stored = _originsOf(doc.document);
+  return stored != null && stored.length == count
+      ? stored
+      : [for (var i = 0; i < count; i++) i];
+}
+
+void _writeOrigins(_ScoreDoc doc, List<int> origins) {
+  final root = doc.document.rootElement;
+  var identification = root.getElement('identification');
+  if (identification == null) {
+    identification = XmlElement(XmlName('identification'));
+    // The schema wants it before defaults, credits and the part list.
+    final at = root.children.indexWhere(
+      (node) =>
+          node is XmlElement &&
+          ['defaults', 'credit', 'part-list'].contains(node.name.local),
+    );
+    root.children.insert(at < 0 ? 0 : at, identification);
+  }
+  var miscellaneous = identification.getElement('miscellaneous');
+  if (miscellaneous == null) {
+    miscellaneous = XmlElement(XmlName('miscellaneous'));
+    identification.children.add(miscellaneous);
+  }
+  miscellaneous
+      .findElements('miscellaneous-field')
+      .where((field) => field.getAttribute('name') == _originsField)
+      .toList()
+      .forEach(_remove);
+  miscellaneous.children.add(
+    XmlElement(
+      XmlName('miscellaneous-field'),
+      [XmlAttribute(XmlName('name'), _originsField)],
+      [XmlText(origins.join(','))],
+    ),
+  );
+}
+
+/// A bar holding only a whole-bar rest on every staff, in [context].
+XmlElement _emptyMeasure(_Context context, {required String number}) {
+  XmlElement leaf(String name, String value) =>
+      XmlElement(XmlName(name), [], [XmlText(value)]);
+  final length = context.divisions * 4 * context.beats ~/ context.beatType;
+  final staves = context.staves < 1 ? 1 : context.staves;
+  return XmlElement(
+    XmlName('measure'),
+    [XmlAttribute(XmlName('number'), number)],
+    [
+      for (var staff = 1; staff <= staves; staff++) ...[
+        if (staff > 1)
+          XmlElement(XmlName('backup'), [], [leaf('duration', '$length')]),
+        XmlElement(XmlName('note'), [], [
+          XmlElement(XmlName('rest'), [
+            XmlAttribute(XmlName('measure'), 'yes'),
+          ]),
+          leaf('duration', '$length'),
+          // Voices 1-4 belong to the first staff, 5-8 to the second.
+          leaf('voice', '${(staff - 1) * 4 + 1}'),
+          if (staves > 1) leaf('staff', '$staff'),
+        ]),
+      ],
+    ],
+  );
+}
+
+bool _isRightBarline(XmlElement barline) =>
+    (barline.getAttribute('location') ?? 'right') == 'right';
+
+/// Moves the barline on one side of [from] to that side of [to], unless
+/// [to] has its own.
+void _moveBarline({
+  required XmlElement from,
+  required XmlElement to,
+  required bool right,
+}) {
+  bool onSide(XmlElement barline) => right
+      ? _isRightBarline(barline)
+      : barline.getAttribute('location') == 'left';
+  final moving = from.findElements('barline').where(onSide).toList();
+  if (moving.isEmpty) return;
+  moving.forEach(_remove);
+  if (to.findElements('barline').any(onSide)) return;
+  if (right) {
+    to.children.addAll(moving);
+  } else {
+    final at = to.children.indexWhere(
+      (node) =>
+          node is XmlElement &&
+          node.name.local != 'print' &&
+          node.name.local != 'attributes',
+    );
+    to.children.insertAll(at < 0 ? to.children.length : at, moving);
+  }
+}
+
+/// Removes from a copied bar what marks its place in the score.
+void _stripPlaceSigns(XmlElement measure) {
+  for (final name in ['attributes', 'print', 'barline']) {
+    measure.findElements(name).toList().forEach(_remove);
+  }
+  const placed = ['rehearsal', 'segno', 'coda'];
+  for (final direction in measure.findElements('direction').toList()) {
+    for (final type in direction.findElements('direction-type').toList()) {
+      if (type.childElements.any((e) => placed.contains(e.name.local))) {
+        _remove(type);
+      }
+    }
+    if (direction.findElements('direction-type').isEmpty) _remove(direction);
+  }
+  bool jumps(XmlElement sound) => sound.attributes.any(
+    (a) => [..._jumpSounds, 'segno', 'coda'].contains(a.name.local),
+  );
+  for (final sound in measure.findAllElements('sound').toList()) {
+    if (jumps(sound)) _remove(sound);
+  }
+  for (final element in measure.descendantElements) {
+    element.removeAttribute('id');
+    element.removeAttribute('xml:id');
+  }
+}
+
+String _pitchKey(XmlElement note) {
+  final pitch = note.getElement('pitch');
+  if (pitch == null) return '';
+  String text(String name) => pitch.getElement(name)?.innerText.trim() ?? '';
+  return '${text('step')}${text('alter')}/${text('octave')}';
+}
+
+/// The notes of [measure] whose tie leaves the bar ([type] `start`) or comes
+/// into it (`stop`), by pitch.
+Map<String, List<XmlElement>> _openTies(XmlElement measure, String type) {
+  final notes = measure.findElements('note').toList();
+  final open = <String, List<XmlElement>>{};
+  for (var i = 0; i < notes.length; i++) {
+    final note = notes[i];
+    if (!_hasTie(note, type)) continue;
+    final key = _pitchKey(note);
+    // A tie within the bar has its other end on the same pitch, later (for
+    // a start) or earlier (for a stop).
+    final others = type == 'start' ? notes.skip(i + 1) : notes.take(i);
+    final closing = type == 'start' ? 'stop' : 'start';
+    if (others.any((n) => _pitchKey(n) == key && _hasTie(n, closing))) continue;
+    open.putIfAbsent(key, () => []).add(note);
+  }
+  return open;
+}
+
+/// After bars were put next to each other: a tie out of [left] needs the
+/// same pitch tied in at [right], and the other way round. Ties without
+/// their other end are removed.
+void _mendTies(XmlElement left, XmlElement right) {
+  final leaving = _openTies(left, 'start');
+  final arriving = _openTies(right, 'stop');
+  for (final MapEntry(:key, value: notes) in leaving.entries) {
+    if (!arriving.containsKey(key)) {
+      for (final note in notes) {
+        _removeTieMarks(note, 'start');
+      }
+    }
+  }
+  for (final MapEntry(:key, value: notes) in arriving.entries) {
+    if (!leaving.containsKey(key)) {
+      for (final note in notes) {
+        _removeTieMarks(note, 'stop');
+      }
+    }
+  }
+}
+
+/// Removes the ties of [measure] that leave (`start`) or enter (`stop`) it.
+void _dropTies(XmlElement measure, String type) {
+  for (final notes in _openTies(measure, type).values) {
+    for (final note in notes) {
+      _removeTieMarks(note, type);
+    }
+  }
+}
+
+/// Whether every part numbers its bars 1, 2, 3… (or from 0 with a pickup),
+/// so the numbers can be written again after bars were added or removed.
+bool _numberedInOrder(_ScoreDoc doc) {
+  for (final part in doc.parts) {
+    final numbers = [
+      for (final measure in part.findElements('measure'))
+        int.tryParse(measure.getAttribute('number') ?? ''),
+    ];
+    if (numbers.isEmpty || numbers.first == null) return false;
+    for (var i = 0; i < numbers.length; i++) {
+      if (numbers[i] != numbers.first! + i) return false;
+    }
+  }
+  return true;
+}
+
+void _renumber(_ScoreDoc doc) {
+  for (final part in doc.parts) {
+    final measures = part.findElements('measure').toList();
+    if (measures.isEmpty) continue;
+    final first = int.tryParse(measures.first.getAttribute('number') ?? '');
+    // After the first bar was removed, the next one carries the old second
+    // number: a score starts at 1 unless it has a pickup bar numbered 0.
+    final start = first == null || first > 1 ? 1 : first;
+    for (var i = 0; i < measures.length; i++) {
+      measures[i].setAttribute('number', '${start + i}');
+    }
+  }
 }

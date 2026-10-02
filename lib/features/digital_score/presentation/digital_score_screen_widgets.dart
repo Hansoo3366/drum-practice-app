@@ -114,6 +114,7 @@ class _OmrQualitySheet extends ConsumerStatefulWidget {
     required this.onJump,
     required this.onReviewed,
     required this.onCorrect,
+    required this.onReview,
   });
 
   final DigitalScoreData data;
@@ -121,6 +122,9 @@ class _OmrQualitySheet extends ConsumerStatefulWidget {
   final void Function(int index) onJump;
   final Future<void> Function(OmrQualityReport updated) onReviewed;
   final VoidCallback onCorrect;
+
+  /// Opens the suspect measures of the server conversion, one at a time.
+  final VoidCallback onReview;
 
   @override
   ConsumerState<_OmrQualitySheet> createState() => _OmrQualitySheetState();
@@ -193,6 +197,14 @@ class _OmrQualitySheetState extends ConsumerState<_OmrQualitySheet> {
             ),
           ],
           const SizedBox(height: 12),
+          if (widget.data.omrJobId != null) ...[
+            FilledButton.icon(
+              onPressed: _busy ? null : widget.onReview,
+              icon: const Icon(Icons.fact_check_outlined),
+              label: const Text('의심 마디 검토'),
+            ),
+            const SizedBox(height: 8),
+          ],
           OutlinedButton.icon(
             onPressed: _busy ? null : widget.onCorrect,
             icon: const Icon(Icons.compare_outlined),

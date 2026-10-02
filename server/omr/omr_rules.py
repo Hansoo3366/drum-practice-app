@@ -691,12 +691,12 @@ def _clamp_backups(root: ET.Element) -> int:
 _MAX_SUSPECT_IMAGES = 200
 # Words that are instructions, not leftovers of misread chords or lyrics.
 _CLEAN_WORDS = re.compile(
-    r"(?:[A-Za-z가-힣]+\.?(?:\s+[A-Za-z가-힣]+\.?)*|[xX]\s?\d+|\d+\s?[xX])"
+    r"(?:[A-Za-z가-힣]+(?:\.[A-Za-z]+)*\.?(?:\s+[A-Za-z가-힣]+(?:\.[A-Za-z]+)*\.?)*|[xX]\s?\d+|\d+\s?[xX])"
 )
 
 
 _INSTRUCTION_WORDS = {
     "all", "bass", "break", "bridge", "chorus", "coda", "ending", "fade", "fill", "fine",
     "inst", "intro", "key", "men", "outro", "pad", "rit", "solo", "tag", "unison", "up",
-    "verse", "women", "drums", "end", "a", "tempo",
+    "verse", "women", "drums", "end", "a", "tempo", "d.s", "d.c", "al", "to",
 }

@@ -989,4 +989,304 @@ void main() {
       expect(parseChordSymbol('Cb').rootAlter, -1);
     });
   });
+
+  group('texts', () {
+    const words =
+        '<direction placement="above"><direction-type><words>rn?</words></direction-type></direction>';
+    const marked =
+        '<direction><direction-type><dynamics><mf/></dynamics></direction-type>'
+        '<direction-type><words>Solo</words></direction-type></direction>';
+
+    test('lists the texts of a bar and removes the chosen one', () {
+      final xml = _score([
+        '$words${_note('C', 5)}$marked${_note('D', 5)}${_note('E', 5)}${_note('F', 5)}$_bass',
+        '${_note('C', 5, duration: 4, type: 'whole')}$_bass',
+      ]);
+
+      expect(_editor.measureTexts(xml, 0, 0), ['rn?', 'Solo']);
+      expect(_editor.measureTexts(xml, 0, 1), isEmpty);
+
+      final result = _editor.removeText(xml, _ref(2), 0);
+
+      expect(_editor.measureTexts(result.xml, 0, 0), ['Solo']);
+      expect(result.selection.noteIndex, 2);
+      // Notes are untouched.
+      expect(
+        _codec.decodeXml(result.xml).noteCount,
+        _codec.decodeXml(xml).noteCount,
+      );
+    });
+
+    test('keeps a sign that shares the direction with the text', () {
+      final xml = _score([
+        '$marked${_note('C', 5)}${_note('D', 5)}${_note('E', 5)}${_note('F', 5)}$_bass',
+      ]);
+
+      final result = _editor.removeText(xml, _ref(0), 0);
+
+      expect(_editor.measureTexts(result.xml, 0, 0), isEmpty);
+      expect(result.xml, contains('<mf/>'));
+    });
+
+    test('refuses a text that is not there', () {
+      final xml = _score([
+        '${_note('C', 5, duration: 4, type: 'whole')}$_bass',
+      ]);
+
+      expect(() => _editor.removeText(xml, _ref(0), 0), throwsFormatException);
+    });
+  });
+
+  group('whole bars', () {
+    const tieOut =
+        '<tie type="start"/><notations><tied type="start"/></notations>';
+    const tieIn =
+        '<tie type="stop"/><notations><tied type="stop"/></notations>';
+    const whole = (duration: 4, type: 'whole');
+
+    String melody(String step, {String extra = ''}) => _note(
+      step,
+      5,
+      duration: whole.duration,
+      type: whole.type,
+      extra: extra,
+    );
+
+    List<XmlElement> bars(String xml, [int part = 0]) => XmlDocument.parse(
+      xml,
+    ).findAllElements('part').elementAt(part).findElements('measure').toList();
+
+    List<String> steps(String xml) => [
+      for (final bar in bars(xml))
+        bar.findElements('note').first.getElement('pitch') == null
+            ? '-'
+            : bar.findAllElements('step').first.innerText,
+    ];
+
+    test('adds an empty bar after the selected one, in every staff', () {
+      final xml = _score(['${melody('C')}$_bass', '${melody('D')}$_bass']);
+
+      final result = _editor.insertMeasureAfter(xml, _ref(0));
+
+      expect(steps(result.xml), ['C', '-', 'D']);
+      expect(result.selection.measureIndex, 1);
+      expect(result.selection.noteIndex, 0);
+      final added = bars(result.xml)[1];
+      expect(added.findElements('note'), hasLength(2));
+      expect(added.findAllElements('duration').map((d) => d.innerText), [
+        '4',
+        '4',
+        '4',
+      ]);
+      expect(added.findAllElements('staff').map((d) => d.innerText), [
+        '1',
+        '2',
+      ]);
+      expect(bars(result.xml).map((b) => b.getAttribute('number')), [
+        '1',
+        '2',
+        '3',
+      ]);
+      // The score still reads, and the new bar can be edited.
+      final score = _codec.decodeXml(result.xml);
+      expect(score.parts.first.measures, hasLength(3));
+      final made = _editor.restToNote(result.xml, result.selection);
+      expect(_codec.decodeXml(made.xml).parts.first.measures, hasLength(3));
+    });
+
+    test('an added bar is as long as the time signature in force', () {
+      final xml = _score(
+        [
+          '<attributes><time><beats>6</beats><beat-type>8</beat-type></time></attributes>'
+              '${_note('C', 5, duration: 12, type: 'half')}',
+        ],
+        divisions: 4,
+        staves: 1,
+      );
+
+      final result = _editor.insertMeasureAfter(xml, _ref(0));
+
+      expect(
+        bars(result.xml)[1].findAllElements('duration').single.innerText,
+        '12',
+      );
+    });
+
+    test('the final barline stays at the end', () {
+      const end =
+          '<barline location="right"><bar-style>light-heavy</bar-style></barline>';
+      final xml = _score(['${melody('C')}$_bass', '${melody('D')}$_bass$end']);
+
+      for (final edit in [
+        _editor.insertMeasureAfter,
+        _editor.duplicateMeasure,
+      ]) {
+        final result = edit(xml, _ref(0, measureIndex: 1));
+        final after = bars(result.xml);
+        expect(after, hasLength(3));
+        expect(after[1].findElements('barline'), isEmpty);
+        expect(after[2].findElements('barline'), hasLength(1));
+      }
+    });
+
+    test('copies a bar without the signs that belong to its place', () {
+      const signs =
+          '<barline location="left"><repeat direction="forward"/></barline>'
+          '<direction><direction-type><rehearsal>A</rehearsal></direction-type></direction>'
+          '<direction><direction-type><words>rit.</words></direction-type></direction>';
+      const back =
+          '<barline location="right"><repeat direction="backward"/></barline>';
+      final xml = _score([
+        '$signs${melody('C')}$_bass$back',
+        '${melody('D')}$_bass',
+      ]);
+
+      final result = _editor.duplicateMeasure(xml, _ref(0));
+
+      expect(steps(result.xml), ['C', 'C', 'D']);
+      expect(result.selection.measureIndex, 1);
+      final [source, copy, _] = bars(result.xml);
+      expect(source.findElements('barline'), hasLength(2));
+      expect(source.findElements('attributes'), hasLength(1));
+      expect(copy.findElements('barline'), isEmpty);
+      expect(copy.findElements('attributes'), isEmpty);
+      expect(copy.findAllElements('rehearsal'), isEmpty);
+      expect(copy.findAllElements('words').single.innerText, 'rit.');
+      expect(copy.findElements('note'), hasLength(2));
+      expect(_codec.decodeXml(result.xml).parts.first.measures, hasLength(3));
+    });
+
+    test('removes a bar and hands its signs to the neighbours', () {
+      const key = '<attributes><key><fifths>-2</fifths></key></attributes>';
+      const open =
+          '<barline location="left"><repeat direction="forward"/></barline>';
+      const close =
+          '<barline location="right"><repeat direction="backward"/></barline>';
+      final xml = _score([
+        '${melody('C')}$_bass',
+        '$key$open${melody('D')}$_bass$close',
+        '${melody('E')}$_bass',
+      ]);
+
+      final result = _editor.deleteMeasure(xml, _ref(0, measureIndex: 1));
+
+      expect(steps(result.xml), ['C', 'E']);
+      expect(result.selection.measureIndex, 1);
+      final [first, last] = bars(result.xml);
+      expect(last.getAttribute('number'), '2');
+      expect(last.findAllElements('fifths').single.innerText, '-2');
+      expect(
+        last.findAllElements('repeat').single.getAttribute('direction'),
+        'forward',
+      );
+      expect(
+        first.findAllElements('repeat').single.getAttribute('direction'),
+        'backward',
+      );
+    });
+
+    test('removing the first bar keeps clef, key and time', () {
+      final xml = _score(['${melody('C')}$_bass', '${melody('D')}$_bass']);
+
+      final result = _editor.deleteMeasure(xml, _ref(0));
+
+      final only = bars(result.xml).single;
+      expect(only.getAttribute('number'), '1');
+      expect(only.findAllElements('fifths').single.innerText, '1');
+      expect(only.findAllElements('beats').single.innerText, '4');
+      expect(only.findAllElements('clef'), hasLength(2));
+      expect(_codec.decodeXml(result.xml).parts.first.measures, hasLength(1));
+      expect(
+        () => _editor.deleteMeasure(result.xml, _ref(0)),
+        throwsFormatException,
+      );
+    });
+
+    test('ties cut by a bar change are removed, ties that still meet stay', () {
+      final xml = _score([
+        '${melody('C', extra: tieOut)}$_bass',
+        '${melody('C', extra: '$tieIn$tieOut')}$_bass',
+        '${melody('C', extra: tieIn)}$_bass',
+      ]);
+      int ties(String xml) =>
+          XmlDocument.parse(xml).findAllElements('tie').length;
+      expect(ties(xml), 4);
+
+      // Bar 1 and bar 3 hold the same pitch: the tie now joins them.
+      expect(ties(_editor.deleteMeasure(xml, _ref(0, measureIndex: 1)).xml), 2);
+      // A copy of the middle bar is tied on both sides like the bar itself.
+      expect(
+        ties(_editor.duplicateMeasure(xml, _ref(0, measureIndex: 1)).xml),
+        6,
+      );
+      // An empty bar in between ends the ties on both sides of it.
+      final apart = _editor.insertMeasureAfter(xml, _ref(0)).xml;
+      expect(ties(apart), 2);
+      expect(bars(apart)[0].findAllElements('tie'), isEmpty);
+      expect(
+        bars(apart)[2].findAllElements('tie').single.getAttribute('type'),
+        'start',
+      );
+      // Without the last bar nothing is left to tie to.
+      final cut = _editor.deleteMeasure(xml, _ref(0, measureIndex: 2)).xml;
+      expect(
+        bars(cut)[1].findAllElements('tie').single.getAttribute('type'),
+        'stop',
+      );
+    });
+
+    test('the score remembers where each bar came from', () {
+      final xml = _score([
+        for (final step in ['C', 'D', 'E', 'F']) '${melody(step)}$_bass',
+      ]);
+      expect(barOrigins(xml), isNull);
+
+      // Bars C D E F: remove D, copy E, add an empty bar after the first.
+      var result = _editor.deleteMeasure(xml, _ref(0, measureIndex: 1));
+      expect(barOrigins(result.xml), [0, 2, 3]);
+      result = _editor.duplicateMeasure(result.xml, _ref(0, measureIndex: 1));
+      expect(barOrigins(result.xml), [0, 2, -1, 3]);
+      result = _editor.insertMeasureAfter(result.xml, _ref(0));
+      expect(barOrigins(result.xml), [0, -1, 2, -1, 3]);
+      expect(steps(result.xml), ['C', '-', 'E', 'E', 'F']);
+      // One record, where the schema allows it, and the file still reads.
+      final document = XmlDocument.parse(result.xml);
+      expect(document.findAllElements('miscellaneous-field'), hasLength(1));
+      final top = document.rootElement.childElements
+          .map((e) => e.name.local)
+          .toList();
+      expect(top.indexOf('identification'), lessThan(top.indexOf('part-list')));
+      expect(_codec.decodeXml(result.xml).parts.first.measures, hasLength(5));
+      // Other edits leave it alone.
+      final moved = _editor.moveDiatonic(result.xml, _ref(0), 1);
+      expect(barOrigins(moved.xml), [0, -1, 2, -1, 3]);
+    });
+
+    test('every part gets or loses the bar', () {
+      final xml = _score(['${melody('C')}$_bass', '${melody('D')}$_bass'])
+          .replaceFirst(
+            '</part-list>',
+            '<score-part id="P2"><part-name>Organ</part-name></score-part></part-list>',
+          )
+          .replaceFirst(
+            '</part></score-partwise>',
+            '</part><part id="P2">'
+                '<measure number="1"><attributes><divisions>1</divisions></attributes>${melody('G')}</measure>'
+                '<measure number="2">${melody('A')}</measure>'
+                '</part></score-partwise>',
+          );
+
+      final added = _editor.insertMeasureAfter(xml, _ref(0)).xml;
+      expect(bars(added, 0), hasLength(3));
+      expect(bars(added, 1), hasLength(3));
+      expect(bars(added, 1)[1].findElements('note'), hasLength(1));
+      final removed = _editor.deleteMeasure(xml, _ref(0)).xml;
+      expect(bars(removed, 0), hasLength(1));
+      expect(bars(removed, 1), hasLength(1));
+      expect(
+        bars(removed, 1).single.findAllElements('divisions'),
+        hasLength(1),
+      );
+    });
+  });
 }

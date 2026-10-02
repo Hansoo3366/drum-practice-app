@@ -548,10 +548,16 @@ def _drop_chord_junk(parts) -> int:
     noise such as "G7F", "87", "6717", "0/58m?" or "D/a", or a chord such as
     "G/B C" that the chord line already carries: short, no Hangul, starting
     like a chord or a digit, and holding a digit, slash or "?" or reading as
-    a chord. Words such as "Solo", "rit.", "Fine" or "x2" stay.
+    a chord. Also the end of a chord read on its own ("m7" as "rn?", "m?",
+    "sus4"), and a slash chord whose slash came out as a letter ("D/E" as
+    "DIE"). Words such as "Solo", "rit.", "Fine" or "x2" stay.
     """
     removed = 0
     junk = re.compile(r"[A-G0-9][A-Za-z0-9#/?'\".,:|+()\-]{0,7}")
+    # "m" is often read as "rn"; the figure after it as "?".
+    # A bare "m" is the end of a minor chord; "dim" alone is an instruction.
+    suffix = re.compile(r"(?:rn|m)[0-9?]{0,2}|(?:M|maj|sus|dim|aug|add)[0-9?]{1,2}")
+    slash = re.compile(r"([A-G][#b]?(?:m7?|7|M7|maj7|sus4)?)[Il1|]([A-G][#b]?)")
     for part in parts:
         for measure in part.findall("measure"):
             for direction in measure.findall("direction"):
@@ -562,6 +568,7 @@ def _drop_chord_junk(parts) -> int:
                     continue
                 tokens = (types[0][0].text or "").split()
                 if tokens and all(
+                    suffix.fullmatch(token) or slash.fullmatch(token) or
                     junk.fullmatch(token) and (
                         any(c in "/?(" or c.isdigit() for c in token)
                         # A chord the chord line already carries.

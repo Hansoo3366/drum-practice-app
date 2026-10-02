@@ -9,6 +9,7 @@ import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_import_service.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_client.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_quality_analyzer.dart';
+import 'package:page_a_diddle/features/digital_score/domain/omr_review.dart';
 import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
 
 /// Name of the version holding the server's automatic OMR corrections.
@@ -115,6 +116,25 @@ class OmrConvertService {
     }
   }
 
+  /// The original crop around a suspect measure: the stored one, or fetched
+  /// from the server while it still has the job (songs converted earlier).
+  Future<Uint8List?> suspectImage(String songId, String name) async {
+    if (await _storage.loadOmrSuspectImage(songId, name) case final stored?) {
+      return Uint8List.fromList(stored);
+    }
+    final jobId = await _storage.loadOmrJobId(songId);
+    if (jobId == null) return null;
+    try {
+      final image = await _client.jobSuspectImage(jobId, name);
+      if (image != null) {
+        await _storage.saveOmrSuspectImage(songId, name, image);
+      }
+      return image;
+    } on Object {
+      return null;
+    }
+  }
+
   Future<String> importResult({
     required String jobId,
     required String title,
@@ -170,6 +190,12 @@ class OmrConvertService {
     await _storage.saveOmrJobId(songId, jobId);
     if (validation != null) {
       await _storage.saveOmrValidation(songId, validation);
+      // The crops go with the song: the server forgets a job after a while.
+      for (final name in omrSuspectImageNames(validation)) {
+        if (await _client.jobSuspectImage(jobId, name) case final image?) {
+          await _storage.saveOmrSuspectImage(songId, name, image);
+        }
+      }
     }
     // What the server took out of the upload (pen, highlighter) stays with
     // the song: the original keeps it, the score no longer has it.

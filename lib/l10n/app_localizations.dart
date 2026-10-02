@@ -3056,6 +3056,18 @@ abstract class AppLocalizations {
   /// **'Chord'**
   String get chordSymbol;
 
+  /// No description provided for @barTexts.
+  ///
+  /// In en, this message translates to:
+  /// **'Text in this bar'**
+  String get barTexts;
+
+  /// No description provided for @barTextsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Text read from the page that is not a chord, a lyric or a note. Remove what was misread.'**
+  String get barTextsHint;
+
   /// Add a musical note
   ///
   /// In en, this message translates to:

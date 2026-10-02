@@ -622,6 +622,26 @@ class ChordJunkTest(unittest.TestCase):
         self.assertEqual(omr_text._drop_chord_junk(root.findall("part")), 7)
         self.assertEqual([w.text for w in root.iter("words")], ["Solo", "rit.", "Fine", "x2", "나 여전히"])
 
+    def test_chord_endings_and_slash_chords_read_as_words_go(self):
+        # "F#m7" leaves its "m7" behind as "rn?" or "m?"; "D/E" is read "DIE".
+        measure = "".join(_words(t) for t in (
+            "rn?", "m?", "m7", "sus4", "DIE", "Al1G", "m", "Uerse'", "D.S. al Fine", "men", "more", "dim",
+        ))
+        root = ET.fromstring(_lead_sheet([measure]))
+        self.assertEqual(omr_text._drop_chord_junk(root.findall("part")), 7)
+        self.assertEqual(
+            [w.text for w in root.iter("words")], ["Uerse'", "D.S. al Fine", "men", "more", "dim"],
+        )
+
+    def test_jump_instructions_are_not_leftover_text(self):
+        for text in ("D.S. al Fine", "D.C.", "To Coda", "D.S. al Coda", "rit.", "x2"):
+            self.assertIsNotNone(omr_rules._CLEAN_WORDS.fullmatch(text), text)
+            self.assertFalse(omr_validate._garbled_chord(text), text)
+        for text in ("rn?", "Uerse'", "DWF"):
+            self.assertTrue(
+                omr_rules._CLEAN_WORDS.fullmatch(text) is None or omr_validate._garbled_chord(text), text,
+            )
+
     def test_lyric_words_repeating_recent_lyrics_are_removed(self):
         root = ET.fromstring(_lead_sheet([
             _sung(10, "나") + _sung(40, "가") + _sung(70, "난") + _sung(100, "함"),

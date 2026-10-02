@@ -25,6 +25,7 @@ import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/note_input.dart';
 import 'package:page_a_diddle/features/digital_score/domain/note_input_feature.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_quality.dart';
+import 'package:page_a_diddle/features/digital_score/domain/omr_review.dart';
 import 'package:page_a_diddle/features/digital_score/domain/performance_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_editor.dart';
@@ -38,6 +39,7 @@ import 'package:page_a_diddle/features/digital_score/domain/xml_transpose.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/arrangement_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/midi_duration.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/omr_correction_screen.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/omr_review_screen.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_part_sheet.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_score_view.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/playback_sequence_panel.dart';
@@ -1685,6 +1687,10 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
             Navigator.of(context).pop();
             unawaited(_showOmrCorrection(data));
           },
+          onReview: () {
+            Navigator.of(context).pop();
+            unawaited(_showOmrReview(data));
+          },
           onJump: (index) {
             setState(() {
               _measureIndex = index;
@@ -1722,23 +1728,81 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
             musicXml: xml,
             catalog: _versionCatalog,
             measureIndex: _reviewMeasureIndex ?? 0,
+            sequence: _sequence,
           ),
         ),
       );
       if (saved != true || !mounted) return;
-      final catalog = await service.loadVersionCatalog(data.song.id);
-      // A proofread copy keeps the bars, so it keeps the sections and order.
-      if (catalog.activeId != _activeVersionId) {
-        await service.saveSequence(
-          songId: data.song.id,
-          versionId: catalog.activeId,
-          sequence: _sequence,
-        );
+      await _openProofreadVersion(data);
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
       }
+    }
+  }
+
+  /// Opens the version the proofreading editor just saved.
+  Future<void> _openProofreadVersion(DigitalScoreData data) async {
+    final service = ref.read(digitalScoreEditorServiceProvider);
+    // The editor saved the sections and order with the version, moved along
+    // where bars were added or removed.
+    final catalog = await service.loadVersionCatalog(data.song.id);
+    if (!mounted) return;
+    setState(() => _versionCatalog = catalog);
+    await _switchVersion(versionId: catalog.activeId, data: data);
+    ref.invalidate(digitalScoreDataProvider(widget.songId));
+  }
+
+  /// The measures the conversion server doubts, with the original beside
+  /// what was recognised.
+  Future<void> _showOmrReview(DigitalScoreData data) async {
+    if (_isDirty || _editing) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.saveBeforeProofread)));
+      return;
+    }
+    final service = ref.read(digitalScoreEditorServiceProvider);
+    final storage = ref.read(songFileStorageProvider);
+    try {
+      final songId = data.song.id;
+      final bars = omrReviewBars(
+        validationJson: await storage.loadOmrValidation(songId),
+        aiReviewJson: await storage.loadOmrAiReview(songId),
+      );
       if (!mounted) return;
-      setState(() => _versionCatalog = catalog);
-      await _switchVersion(versionId: catalog.activeId, data: data);
-      ref.invalidate(digitalScoreDataProvider(widget.songId));
+      if (bars.isEmpty) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('검토할 의심 마디가 없습니다.')));
+        return;
+      }
+      final checked = omrReviewChecked(
+        await storage.loadOmrReviewState(songId),
+      );
+      final annotations = omrAnnotations(
+        await storage.loadOmrAnnotations(songId),
+      );
+      final xml = _activeVersionId == scoreVersionOriginalId
+          ? data.sourceXml
+          : await service.loadVersionXml(songId, _activeVersionId);
+      if (!mounted || xml == null) return;
+      final saved = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          builder: (_) => OmrReviewScreen(
+            songId: songId,
+            musicXml: xml,
+            catalog: _versionCatalog,
+            bars: bars,
+            checked: checked,
+            annotations: annotations,
+          ),
+        ),
+      );
+      if (saved != true || !mounted) return;
+      await _openProofreadVersion(data);
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
