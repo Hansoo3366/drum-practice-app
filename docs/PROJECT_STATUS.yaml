@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-02T16:39:00+09:00"
+last_updated: "2026-10-02T17:57:00+09:00"
 current_phase:
   id: "M8-11"
   name: "모바일 1마디 교정 에디터 (raw MusicXML)"
@@ -342,6 +342,9 @@ in_progress:
     action: "모바일 1마디 교정 에디터의 남은 범위(M8-11f 물리 기기 확인, M8-11g의 AI 제안 연결)를 진행한다. M8-11g의 원본 마디 대조는 완료. M8-11e(마디 추가·복제·삭제·이동)는 완료. F-07은 코드 심벌 인식과 정답률 검증이 남은 상태로 [~]를 유지한다."
 
 next_actions:
+  - order: -1
+    roadmap_id: "RELEASE"
+    action: "docs/RELEASE_READINESS.md의 0단계부터: 빌드 2054 설치해 만든 악보의 Verse 1/2 표시·줄바꿈 확인, 조판 마디 번호를 색인+1로 맞추기, 구간 패널 남은 시나리오(아래쪽 줄·쪽 경계·재시작 뒤 유지·재생 중 하이라이트), 멜로디 보완 넣기 기기 확인. 그다음 1단계(서버 HTTPS·인증, 릴리스 서명)."
   - order: 0
     roadmap_id: "F-07i"
     action: "에뮬레이터·실기기에서 새로 변환한 악보가 원본 OMR(원본)과 '자동 보정' 버전으로 나뉘어 저장되고 원본으로 되돌릴 수 있는지 확인한다. 수정 이력(`omr_corrections`) 표시는 F-07n 검토 화면에서 쓴다."
@@ -1191,6 +1194,10 @@ decisions:
     date: "2026-09-29"
     status: "active"
     decision: "사용자 결정(\"qwen 도 제외, 조를 잘 못읽네\")으로 Qwen 3.8 Flash도 비교 대상에서 뺀다. 남은 후보는 GPT-5.6 Terra와 Gemini 3.8 Flash다. 두 모델이 같은 코드로 고친 마디는 나의 약함은 67마디 중 18개다."
+  - id: "D-208"
+    date: "2026-10-02"
+    status: "active"
+    decision: "출시 준비 상태와 순서는 docs/RELEASE_READINESS.md를 기준으로 한다. 순서: 0 방금 고친 것 기기 확인 → 1 서버 HTTPS·인증과 릴리스 서명 → 2 실기기 릴리스 빌드 핵심 흐름 → 3 구간 패널과 같은 강도의 QA를 나머지 화면에 → 4 10곡 이상 변환 정확도. 항목을 닫을 때 그 문서를 함께 고친다."
   - id: "D-207"
     date: "2026-10-02"
     status: "active"
@@ -1292,6 +1299,9 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-09-28T10:26:44+09:00"
   checks:
+    - name: "release_readiness_20261002"
+      result: "passed_with_known_gaps"
+      detail: "전체 테스트 639 통과·1 실패(옛 alphaTab), analyze 오류·경고 0. 판정은 알파 수준: release 서명 debug 키, OMR 서버 평문 HTTP·소스 기본 토큰, MVP 8 실기기 smoke 없음, 앱 재생 청취 없음, 정확도 표본 1곡. 상세는 docs/RELEASE_READINESS.md."
     - name: "made_score_lines_20261002"
       result: "passed_with_known_gaps"
       detail: "순서 바꾼·반복한 악보의 줄바꿈을 실제 샘플 4가지 순서로 검증(원본 줄 유지, 패스마다 새 줄, 빈 줄 없음). 같은 줄 안 엔딩 건너뜀의 불필요한 줄바꿈과 반복 패스의 구간 표시 누락을 고침(테스트 통과, 기기 미확인). 미수정: 못갖춘마디 0번 악보의 조판 마디 번호가 앱 셈과 1 어긋남."
