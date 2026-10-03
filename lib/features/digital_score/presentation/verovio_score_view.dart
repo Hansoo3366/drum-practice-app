@@ -275,8 +275,10 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     _playbackTimer?.cancel();
     widget.playback.detach();
     _transform.dispose();
-    unawaited(_audio.stop());
-    unawaited(_audio.dispose());
+    // A view that never opened its player has no backend to stop; the
+    // backend answers that with an error.
+    unawaited(_audio.stop().then((_) {}, onError: (Object _) {}));
+    unawaited(_audio.dispose().then((_) {}, onError: (Object _) {}));
     final service = _service;
     if (service != null) unawaited(service.dispose());
     super.dispose();
@@ -439,7 +441,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
             }),
           )
           .timeout(timeout);
-      await service.loadData(xml).timeout(timeout);
+      // Bar numbers as the app counts them (position, from 1).
+      await service.loadData(withPositionMeasureNumbers(xml)).timeout(timeout);
       final pageCount = await service.pageCount.timeout(timeout);
       if (pageCount <= 0) throw StateError('Verovio returned no pages.');
 
@@ -529,7 +532,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
             }),
           )
           .timeout(timeout);
-      await service.loadData(xml).timeout(timeout);
+      await service.loadData(withPositionMeasureNumbers(xml)).timeout(timeout);
       final pageCount = await service.pageCount.timeout(timeout);
       final pages = <EngravedPage>[];
       for (var pageIndex = 0; pageIndex < pageCount; pageIndex++) {

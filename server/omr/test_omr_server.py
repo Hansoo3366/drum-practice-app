@@ -1319,6 +1319,7 @@ class JobPersistenceTest(unittest.TestCase):
         self._done_job("a1", ai="error")
         omr_server._restore_jobs()
         with patch.object(omr_server, "_authorized", return_value=True), \
+                patch.object(omr_server, "_spend", return_value=None), \
                 patch.object(omr_server, "_ai_enabled", return_value=True), \
                 patch.object(omr_server, "_run_ai_review", return_value=({}, "done")), \
                 patch.object(omr_server.threading, "Thread") as thread:
@@ -1390,6 +1391,7 @@ class ArrangeAdviceTest(unittest.TestCase):
         request = types.SimpleNamespace(get_json=lambda silent=False: payload)
         with patch.object(omr_server, "request", request), \
                 patch.object(omr_server, "_authorized", return_value=authorized), \
+                patch.object(omr_server, "_spend", return_value=None), \
                 patch.object(omr_server, "_ai_enabled", return_value=enabled):
             return omr_server.arrange_advice()
 
@@ -1729,6 +1731,133 @@ class AnnotationTest(unittest.TestCase):
         self.assertEqual([(issue["rule"], issue["measure"], issue["severity"]) for issue in issues],
                          [("A001", "2", "medium")])
         self.assertEqual(omr_validate._annotation_checks(root, book, None), [])
+
+
+class ClientLimitTest(unittest.TestCase):
+    """Installs register, are told apart, and can only spend so much a day."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        self.patches = [
+            patch.object(omr_server, "JOBS_DIR", self.root / "jobs"),
+            patch.object(omr_server, "CLIENTS", omr_server.Clients(self.root / "clients.json")),
+            patch.object(omr_server, "QUOTA", omr_server.Quota(self.root / "quota.json")),
+            patch.object(omr_server, "TOKEN", "app-key"),
+            patch.object(omr_server, "_jobs", {}),
+            patch.object(omr_server.threading, "Thread"),
+        ]
+        for item in self.patches:
+            item.start()
+            self.addCleanup(item.stop)
+
+    def _call(self, handler, *args, secret=None, key=None, address="203.0.113.5", forwarded=None, **more):
+        headers = {}
+        if secret:
+            headers["Authorization"] = f"Bearer {secret}"
+        if key:
+            headers["X-Omr-Token"] = key
+        if forwarded:
+            headers["X-Forwarded-For"] = forwarded
+        request = types.SimpleNamespace(headers=headers, remote_addr=address, **more)
+        with patch.object(omr_server, "request", request):
+            return handler(*args)
+
+    def _register(self, **where):
+        payload, status = self._call(omr_server.register_client, key="app-key", **where)
+        self.assertEqual(status, 201)
+        return payload["client"], payload["secret"]
+
+    def _convert(self, **who):
+        upload = types.SimpleNamespace(filename="score.pdf", save=lambda path: Path(path).write_bytes(b"%PDF"))
+        return self._call(omr_server.convert, files={"file": upload}, form={"profile": "standard"}, **who)
+
+    def test_an_install_registers_with_the_app_key_and_is_known_by_its_secret(self):
+        denied = self._call(omr_server.register_client, key="wrong")
+        client, secret = self._register()
+
+        self.assertEqual(denied[1], 401)
+        self.assertEqual(omr_server.CLIENTS.find(secret), client)
+        self.assertIsNone(omr_server.CLIENTS.find("something else"))
+        # Only a hash is kept, and it outlives a restart.
+        saved = (self.root / "clients.json").read_text(encoding="utf-8")
+        self.assertNotIn(secret, saved)
+        self.assertEqual(omr_server.Clients(self.root / "clients.json").find(secret), client)
+
+    def test_one_address_can_only_register_so_many_installs_a_day(self):
+        with patch.dict(omr_server.LIMITS, {"register": {"address": 2, "all": 100}}):
+            self._register()
+            self._register()
+            third = self._call(omr_server.register_client, key="app-key")
+            elsewhere = self._call(omr_server.register_client, key="app-key", address="198.51.100.7")
+
+        self.assertEqual(third[1], 429)
+        self.assertEqual(elsewhere[1], 201)
+
+    def test_conversions_are_counted_per_install_per_address_and_in_total(self):
+        _, first = self._register()
+        _, second = self._register()
+        _, third = self._register()
+        with patch.dict(omr_server.LIMITS, {"convert": {"client": 2, "address": 3, "all": 4}}):
+            answers = [self._convert(secret=first)[1] for _ in range(3)]
+            same_address = [self._convert(secret=second)[1] for _ in range(2)]
+            elsewhere = [self._convert(secret=third, address="198.51.100.7") for _ in range(2)]
+
+        self.assertEqual(answers, [202, 202, 429])
+        # The address had one conversion left; then another address, until the day's total.
+        self.assertEqual(same_address, [202, 429])
+        self.assertEqual([status for _, status in elsewhere], [202, 429])
+        self.assertEqual(elsewhere[1][0]["scope"], "all")
+        self.assertEqual(len(omr_server._jobs), 4)
+
+    def test_counts_start_again_the_next_day(self):
+        quota = omr_server.Quota(self.root / "q.json")
+        day = 86400.0
+        self.assertIsNone(quota.spend("convert", {"client:a": 1}, now=10 * day))
+        self.assertEqual(quota.spend("convert", {"client:a": 1}, now=10 * day + 60), "client:a")
+        # The counts are on disk, so a restart does not hand out a second day's worth.
+        self.assertEqual(omr_server.Quota(self.root / "q.json").spend("convert", {"client:a": 1}, now=10 * day + 90),
+                         "client:a")
+        self.assertIsNone(quota.spend("convert", {"client:a": 1}, now=11 * day))
+
+    def test_an_install_only_sees_the_jobs_it_uploaded(self):
+        _, mine = self._register()
+        _, other = self._register()
+        job, _ = self._convert(secret=mine)
+
+        self.assertEqual(self._call(omr_server.job_status, job["id"], secret=mine)["id"], job["id"])
+        self.assertEqual(self._call(omr_server.job_status, job["id"], secret=other)[1], 404)
+        self.assertEqual(self._call(omr_server.job_status, job["id"], secret="made up")[1], 401)
+
+    def test_builds_with_only_the_app_key_work_until_they_are_turned_away(self):
+        self.assertEqual(self._convert(key="app-key")[1], 202)
+        # They share the key, so they are counted by address and in total.
+        with patch.dict(omr_server.LIMITS, {"convert": {"client": 0, "address": 5, "all": 5}}):
+            self.assertEqual(self._convert(key="app-key")[1], 202)
+        with patch.object(omr_server, "LEGACY_TOKEN", False):
+            self.assertEqual(self._convert(key="app-key")[1], 401)
+
+    def test_only_the_local_proxy_is_believed_about_the_address(self):
+        def address(**request):
+            return self._call(omr_server._address, **request)
+
+        self.assertEqual(address(address="127.0.0.1", forwarded="198.51.100.9"), "198.51.100.9")
+        self.assertEqual(address(address="127.0.0.1", forwarded="10.0.0.1, 198.51.100.9"), "198.51.100.9")
+        # A caller from outside cannot name someone else's address.
+        self.assertEqual(address(address="203.0.113.5", forwarded="198.51.100.9"), "203.0.113.5")
+
+    def test_ai_advice_is_counted_too(self):
+        _, secret = self._register()
+        answer = {"base": {"pattern": "beats", "register": "middle"}, "sections": [], "chords": [], "note": ""}
+        body = {"brief": "bars: 4", "bars": 4}
+        with patch.dict(omr_server.LIMITS, {"ai": {"client": 1, "address": 9, "all": 9}}),                 patch.object(omr_server, "_ai_enabled", return_value=True),                 patch.object(omr_server, "_arrange_advice", return_value=answer) as ask:
+            first = self._call(omr_server.arrange_advice, secret=secret, get_json=lambda silent=False: body)
+            second = self._call(omr_server.arrange_advice, secret=secret, get_json=lambda silent=False: body)
+
+        self.assertEqual(first, answer)
+        self.assertEqual(second[1], 429)
+        self.assertEqual(ask.call_count, 1)
 
 
 if __name__ == "__main__":

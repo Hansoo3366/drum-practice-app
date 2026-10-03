@@ -1513,6 +1513,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       final request = await showPianoPartSheet(
         context,
         advise: () => _arrangementAdvice(source, score),
+        firstBarNumber: score.firstBarNumber,
         initial: earlier?.setup ?? const AccompanimentSetup(),
         roles: {
           for (final section in scoreSections(score, _sequence))
@@ -2265,6 +2266,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                       builder: (context, _) {
                         return ScorePlaybackBar(
                           state: _playback.state,
+                          firstBarNumber: score.firstBarNumber,
                           padBottomSafeArea: !_editing,
                           onPlayPause: () => _playback.playPause(),
                           onStop: () => _playback.stop(),
@@ -2292,6 +2294,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                           setState(() => _structureTab = tab),
                       sequence: _sequence,
                       sections: sections,
+                      firstBarNumber: score.firstBarNumber,
                       selectedBar: _structure.pickStart,
                       selectedEnd: pickedEnd,
                       picking: selectedSection == null && _structure.pickingEnd,

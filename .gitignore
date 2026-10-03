@@ -50,3 +50,6 @@ app.*.map.json
 
 # NDK build cache of the vendored plugin
 third_party/**/.cxx/
+
+# The conversion server app key for builds (see docs/OMR_SERVER_ACCESS.md).
+dart_defines.local.json

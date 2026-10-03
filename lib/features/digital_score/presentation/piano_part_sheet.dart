@@ -65,13 +65,18 @@ Future<PianoPartRequest?> showPianoPartSheet(
   required Future<ArrangementAdvice> Function() advise,
   AccompanimentSetup initial = const AccompanimentSetup(),
   Map<int, SectionRole> roles = const {},
+  int firstBarNumber = 1,
 }) {
   return showModalBottomSheet<PianoPartRequest>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (context) =>
-        _PianoPartSheet(advise: advise, initial: initial, roles: roles),
+    builder: (context) => _PianoPartSheet(
+      advise: advise,
+      initial: initial,
+      roles: roles,
+      firstBarNumber: firstBarNumber,
+    ),
   );
 }
 
@@ -109,11 +114,15 @@ class _PianoPartSheet extends StatefulWidget {
     required this.advise,
     required this.initial,
     required this.roles,
+    required this.firstBarNumber,
   });
 
   final Future<ArrangementAdvice> Function() advise;
   final AccompanimentSetup initial;
   final Map<int, SectionRole> roles;
+
+  /// The number of the score's first bar ([MusicScore.firstBarNumber]).
+  final int firstBarNumber;
 
   @override
   State<_PianoPartSheet> createState() => _PianoPartSheetState();
@@ -357,7 +366,7 @@ class _PianoPartSheetState extends State<_PianoPartSheet> {
                   padding: const EdgeInsets.symmetric(vertical: 2),
                   child: Text(
                     l10n.pianoSectionStyle(
-                      start + 1,
+                      start + widget.firstBarNumber,
                       accompanimentPatternLabel(
                         l10n,
                         _sections[start]!.pattern,
@@ -393,7 +402,7 @@ class _PianoPartSheetState extends State<_PianoPartSheet> {
                   }),
                   title: Text(
                     l10n.pianoChordFix(
-                      correction.measureIndex + 1,
+                      correction.measureIndex + widget.firstBarNumber,
                       correction.current,
                       correction.suggested,
                     ),

@@ -3,11 +3,13 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:page_a_diddle/core/storage/song_file_storage.dart';
 import 'package:page_a_diddle/features/digital_score/data/digital_score_editor_service.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_import_service.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_client.dart';
+import 'package:page_a_diddle/features/digital_score/data/omr_convert_config.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_quality_analyzer.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_review.dart';
 import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
@@ -309,8 +311,45 @@ class OmrConvertService {
   }
 }
 
+/// This install's secret for the conversion server, with the device's other
+/// credentials. One per server address.
+class _SecureOmrSecretStore implements OmrClientSecretStore {
+  const _SecureOmrSecretStore();
+
+  static const _storage = FlutterSecureStorage();
+  static const _key = 'omr_client_secret:${OmrConvertConfig.defaultBaseUrl}';
+
+  @override
+  Future<String?> read() async {
+    try {
+      return await _storage.read(key: _key);
+    } on Object {
+      // A store that cannot be read: register again.
+      return null;
+    }
+  }
+
+  @override
+  Future<void> write(String secret) async {
+    try {
+      await _storage.write(key: _key, value: secret);
+    } on Object {
+      // Kept for this run only.
+    }
+  }
+
+  @override
+  Future<void> clear() async {
+    try {
+      await _storage.delete(key: _key);
+    } on Object {
+      // Overwritten by the next registration.
+    }
+  }
+}
+
 final omrConvertClientProvider = Provider<OmrConvertClient>((ref) {
-  return OmrConvertClient();
+  return OmrConvertClient(secrets: const _SecureOmrSecretStore());
 });
 
 final omrConvertServiceProvider = Provider<OmrConvertService>((ref) {

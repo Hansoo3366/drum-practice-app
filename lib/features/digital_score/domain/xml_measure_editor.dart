@@ -265,6 +265,49 @@ String withSectionRehearsals(
   return document.toXmlString();
 }
 
+final _partOrMeasureTag = RegExp(r'<(?:part|measure)(?=[\s/>])[^>]*>');
+final _numberAttribute = RegExp(r'''\snumber\s*=\s*(?:"[^"]*"|'[^']*')''');
+final _pickupAttribute = RegExp(
+  r'''\s(?:implicit\s*=\s*["']yes["']|number\s*=\s*["']0["'])''',
+);
+
+/// The number the first bar of [xml] is called by, as
+/// [MusicScore.firstBarNumber] reads it from a decoded score: 0 when the
+/// first part opens with a pickup bar, else 1.
+int xmlFirstBarNumber(String xml) {
+  for (final match in _partOrMeasureTag.allMatches(xml)) {
+    final tag = match.group(0)!;
+    if (tag.startsWith('<measure')) {
+      return _pickupAttribute.hasMatch(tag) ? 0 : 1;
+    }
+  }
+  return 1;
+}
+
+/// A copy of [xml] whose bars are numbered by position in each part, the
+/// way every screen counts them and a printed score numbers them: from 1,
+/// or from 0 when the score opens with a pickup bar. Files that were edited
+/// or made in playing order carry numbers that no longer say that. For
+/// display only; the source string is never changed. Works on the text,
+/// since the engraver's caller must not parse a long score.
+String withPositionMeasureNumbers(String xml) {
+  final first = xmlFirstBarNumber(xml);
+  var number = first;
+  return xml.replaceAllMapped(_partOrMeasureTag, (match) {
+    final tag = match.group(0)!;
+    if (tag.startsWith('<part')) {
+      number = first;
+      return tag;
+    }
+    final written = _numberAttribute.firstMatch(tag);
+    final numbered = written == null
+        ? tag.replaceFirst('<measure', '<measure number="$number"')
+        : tag.replaceRange(written.start, written.end, ' number="$number"');
+    number++;
+    return numbered;
+  });
+}
+
 String expandMusicXml(String xml, List<int> measureMap) {
   if (measureMap.isEmpty) {
     throw const FormatException('연주할 마디가 없습니다.');
@@ -849,6 +892,128 @@ class XmlMeasureEditor {
         .notes
         .indexWhere((n) => identical(n.element, target.element));
     return XmlEditResult(doc.toXml(), ref.withNote(index));
+  }
+
+  /// Gives notes of one measure new lengths (by note index) and closes the
+  /// bar up behind them: what follows a changed note follows it directly,
+  /// as when the lengths were misread and not the rhythm. ([setDuration]
+  /// keeps every other note in its place and leaves rests instead.)
+  ///
+  /// A bar that was full is filled up at its end with rests. A bar that was
+  /// short already, such as a pickup, only becomes shorter. The bar may not
+  /// come out longer than its time signature, unless it was too long before
+  /// and does not grow. Only for a bar with one voice and no tuplets.
+  XmlEditResult setNoteLengths(
+    String xml,
+    int partIndex,
+    int measureIndex,
+    Map<int, ({String type, int dots})> lengths,
+  ) {
+    if (lengths.isEmpty) throw const FormatException('바꿀 음표가 없습니다.');
+    final doc = _ScoreDoc(xml);
+    var measure = doc.measureAt(partIndex, measureIndex);
+    double quarters(({String type, int dots}) length) {
+      final value = _typeQuarters[length.type];
+      if (value == null || length.dots < 0 || length.dots > 2) {
+        throw const FormatException('지원하지 않는 음가입니다.');
+      }
+      return value * (2 - 1 / math.pow(2, length.dots));
+    }
+
+    var multiplier = 1;
+    for (final length in lengths.values) {
+      final exact = measure.divisions * quarters(length);
+      while (exact * multiplier != (exact * multiplier).roundToDouble()) {
+        multiplier *= 2;
+        if (multiplier > 64) {
+          throw const FormatException('지원하지 않는 음가입니다.');
+        }
+      }
+    }
+    if (multiplier > 1) {
+      doc.scaleDivisions(partIndex, measureIndex, multiplier);
+      measure = doc.measureAt(partIndex, measureIndex);
+    }
+    final targets = {
+      for (final index in lengths.keys) measure.note(index): lengths[index]!,
+    };
+    final voice = targets.keys.first.voice;
+    final groups = measure.voiceGroups(voice);
+    final timed = measure.notes.where((note) => !note.isGrace);
+    if (timed.any((note) => note.voice != voice) ||
+        measure.element.childElements.any(
+          (child) => const {'backup', 'forward'}.contains(child.name.local),
+        )) {
+      throw const FormatException('여러 성부가 섞인 마디라 음가를 바꿀 수 없습니다.');
+    }
+    if (timed.any(
+      (note) => note.element.getElement('time-modification') != null,
+    )) {
+      throw const FormatException('잇단음표가 있는 마디는 음가를 바꿀 수 없습니다.');
+    }
+    int total() => doc
+        .measureAt(partIndex, measureIndex)
+        .voiceGroups(voice)
+        .fold(0, (sum, group) => sum + group.first.duration);
+    final before = total();
+    for (final MapEntry(key: note, value: length) in targets.entries) {
+      if (note.isGrace || note.isCue) {
+        throw const FormatException('꾸밈음은 음가를 바꿀 수 없습니다.');
+      }
+      final duration = (measure.divisions * quarters(length)).round();
+      for (final member in measure.groupOf(note)) {
+        _setChild(member.element, 'duration', '$duration', _noteOrder);
+        _setChild(member.element, 'type', length.type, _noteOrder);
+        member.element.findElements('dot').toList().forEach(_remove);
+        for (var i = 0; i < length.dots; i++) {
+          _insertOrdered(
+            member.element,
+            XmlElement(XmlName('dot')),
+            _noteOrder,
+          );
+        }
+        member.element.getElement('rest')?.removeAttribute('measure');
+      }
+    }
+    final after = total();
+    final capacity = measure.capacity;
+    if (after > capacity && after > before) {
+      throw const FormatException('마디 길이를 넘습니다.');
+    }
+    if (before >= capacity && after < capacity) {
+      final head = groups.last.first.element;
+      var anchor = groups.last.last.element;
+      for (final spelled in _spellGap(
+        after,
+        capacity - after,
+        doc.measureAt(partIndex, measureIndex),
+      )) {
+        final rest = _restElement(
+          duration: spelled.duration,
+          type: spelled.type,
+          dots: spelled.dots,
+          voice: head.getElement('voice')?.innerText,
+          staff: head.getElement('staff')?.innerText,
+        );
+        anchor.parent!.children.insert(
+          anchor.parent!.children.indexOf(anchor) + 1,
+          rest,
+        );
+        anchor = rest;
+      }
+    }
+    doc
+        .measureAt(partIndex, measureIndex)
+        .rebeamRange(voice, 0, math.max(capacity, after));
+    doc.measureAt(partIndex, measureIndex).fixOrphanBeams(voice);
+    return XmlEditResult(
+      doc.toXml(),
+      XmlNoteRef(
+        partIndex: partIndex,
+        measureIndex: measureIndex,
+        noteIndex: lengths.keys.reduce(math.min),
+      ),
+    );
   }
 
   /// Sets, replaces or (with an empty [text]) removes the chord symbol at the

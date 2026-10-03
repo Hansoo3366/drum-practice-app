@@ -43,6 +43,10 @@ const _leipzigChordGlyphs = <int, String>{
 /// the first system ("Voice", "Piano") only takes room on a phone.
 const _hiddenTextGroups = {'label', 'labelAbbr'};
 
+/// Groups whose texts are single words: a space inside a chord symbol or a
+/// lyric syllable is the converter's ("B ♭", "예 수"), not written.
+const _compactTextGroups = {'harm', 'verse'};
+
 /// Reads every text of a raw Verovio page before text is stripped: chord
 /// symbols, lyrics, bar numbers, ending numbers, tempo, rehearsal marks,
 /// tuplet numbers and written directions.
@@ -58,7 +62,7 @@ List<VerovioTextLabel> extractVerovioTextLabels(String svg) {
   if (rootSize == null) return const [];
 
   final labels = <VerovioTextLabel>[];
-  void visit(XmlElement element, _Affine transform) {
+  void visit(XmlElement element, _Affine transform, bool compact) {
     var current = transform;
     if (element.name.local == 'svg' && element != root) {
       final size = _viewBoxSize(element.getAttribute('viewBox'));
@@ -79,12 +83,16 @@ List<VerovioTextLabel> extractVerovioTextLabels(String svg) {
       return;
     }
     if (element.name.local == 'text') {
-      final label = _chordLabel(element, current);
+      final label = _chordLabel(element, current, compact: compact);
       if (label != null) labels.add(label);
       return;
     }
+    final compactBelow =
+        compact ||
+        (element.name.local == 'g' &&
+            _compactTextGroups.any((name) => _hasClass(element, name)));
     for (final child in element.childElements) {
-      visit(child, current);
+      visit(child, current, compactBelow);
     }
   }
 
@@ -95,11 +103,15 @@ List<VerovioTextLabel> extractVerovioTextLabels(String svg) {
       .map(double.parse)
       .toList();
   // Labels are relative to the page's top-left corner, like the HitMap.
-  visit(root, _Affine.translate(-rootValues[0], -rootValues[1]));
+  visit(root, _Affine.translate(-rootValues[0], -rootValues[1]), false);
   return labels;
 }
 
-VerovioTextLabel? _chordLabel(XmlElement text, _Affine parent) {
+VerovioTextLabel? _chordLabel(
+  XmlElement text,
+  _Affine parent, {
+  required bool compact,
+}) {
   final transform = parent.multiply(
     _parseTransform(text.getAttribute('transform')),
   );
@@ -109,8 +121,12 @@ VerovioTextLabel? _chordLabel(XmlElement text, _Affine parent) {
   double? fontSize;
   void collect(XmlNode node, double? inheritedSize, bool inheritedGlyphFont) {
     if (node is XmlText) {
-      final value = node.value.trim();
-      if (value.isEmpty) return;
+      if (node.value.trim().isEmpty) return;
+      // Line breaks and indentation are the file's layout; a space within a
+      // line is written ("Verse 1", "D.S. al Fine", "♩ = 115").
+      final value = node.value
+          .replaceAll(RegExp(r'\s*\n\s*'), '')
+          .replaceAll(RegExp(r'\s+'), ' ');
       for (final rune in value.runes) {
         final glyph = _leipzigChordGlyphs[rune];
         if (glyph != null) {
@@ -138,7 +154,10 @@ VerovioTextLabel? _chordLabel(XmlElement text, _Affine parent) {
   }
 
   collect(text, null, false);
-  final value = buffer.toString().replaceAll(RegExp(r'\s+'), '');
+  final value = buffer
+      .toString()
+      .replaceAll(RegExp(' +'), compact ? '' : ' ')
+      .trim();
   final size = fontSize;
   if (value.isEmpty || size == null) return null;
   final origin = transform.apply(x, y);

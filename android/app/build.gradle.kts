@@ -1,9 +1,20 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// The upload key: android/key.properties (not in the repository) names the
+// keystore and its passwords. Without it a release build is signed with the
+// debug key and is for testing only.
+val keyProperties = Properties().apply {
+    val file = rootProject.file("key.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val hasUploadKey = keyProperties.getProperty("storeFile") != null
 
 android {
     namespace = "com.hansookim.pageadiddle"
@@ -54,10 +65,22 @@ android {
         }
     }
 
+    signingConfigs {
+        if (hasUploadKey) {
+            create("upload") {
+                storeFile = rootProject.file(keyProperties.getProperty("storeFile"))
+                storePassword = keyProperties.getProperty("storePassword")
+                keyAlias = keyProperties.getProperty("keyAlias")
+                keyPassword = keyProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // Replace with a release keystore before Play Store upload.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(
+                if (hasUploadKey) "upload" else "debug",
+            )
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

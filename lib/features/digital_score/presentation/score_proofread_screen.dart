@@ -90,6 +90,9 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   var _savedCursor = 0;
   late int _measureIndex = widget.measureIndex;
   int get _measureCount => _bars[_cursor].length;
+
+  /// The number of the first bar, as printed scores count: a pickup is 0.
+  int get _firstBarNumber => xmlFirstBarNumber(_xml);
   int? _noteIndex;
   late String _preview;
   late MusicScore _previewScore;
@@ -302,10 +305,13 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   Future<void> _askBar() async {
     final number = await showDialog<int>(
       context: context,
-      builder: (_) =>
-          _BarNumberDialog(current: _measureIndex + 1, count: _measureCount),
+      builder: (_) => _BarNumberDialog(
+        current: _measureIndex + _firstBarNumber,
+        first: _firstBarNumber,
+        last: _measureCount - 1 + _firstBarNumber,
+      ),
     );
-    if (number != null && mounted) _goToMeasure(number - 1);
+    if (number != null && mounted) _goToMeasure(number - _firstBarNumber);
   }
 
   Future<void> _editChordSymbol() async {
@@ -456,7 +462,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         score: _previewScore,
         engravingXml: _preview,
         engravingPageSize: _pageSizeFor(constraints.maxWidth),
-        semanticsLabel: l10n.proofreadBar(_measureIndex + 1, _measureCount),
+        semanticsLabel: l10n.proofreadBar(
+          _measureIndex + _firstBarNumber,
+          _measureCount - 1 + _firstBarNumber,
+        ),
         playback: _playback,
         inputMode: 'select',
         oneFingerPan: true,
@@ -576,7 +585,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                             ? () => unawaited(_askBar())
                             : null,
                         child: Text(
-                          l10n.proofreadBar(_measureIndex + 1, _measureCount),
+                          l10n.proofreadBar(
+                            _measureIndex + _firstBarNumber,
+                            _measureCount - 1 + _firstBarNumber,
+                          ),
                         ),
                       ),
                       _ToolButton(
@@ -1170,10 +1182,15 @@ class _VersionNameDialogState extends State<_VersionNameDialog> {
 }
 
 class _BarNumberDialog extends StatefulWidget {
-  const _BarNumberDialog({required this.current, required this.count});
+  const _BarNumberDialog({
+    required this.current,
+    required this.first,
+    required this.last,
+  });
 
   final int current;
-  final int count;
+  final int first;
+  final int last;
 
   @override
   State<_BarNumberDialog> createState() => _BarNumberDialogState();
@@ -1191,7 +1208,7 @@ class _BarNumberDialogState extends State<_BarNumberDialog> {
 
   void _submit() {
     final value = int.tryParse(_controller.text.trim());
-    if (value == null || value < 1 || value > widget.count) {
+    if (value == null || value < widget.first || value > widget.last) {
       setState(() => _invalid = true);
       return;
     }
@@ -1208,8 +1225,8 @@ class _BarNumberDialogState extends State<_BarNumberDialog> {
         autofocus: true,
         keyboardType: TextInputType.number,
         decoration: InputDecoration(
-          hintText: '1–${widget.count}',
-          errorText: _invalid ? '1–${widget.count}' : null,
+          hintText: '${widget.first}–${widget.last}',
+          errorText: _invalid ? '${widget.first}–${widget.last}' : null,
         ),
         onSubmitted: (_) => _submit(),
       ),

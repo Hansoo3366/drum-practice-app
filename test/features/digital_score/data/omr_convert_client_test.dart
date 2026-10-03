@@ -6,7 +6,136 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_client.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_config.dart';
 
+class _MemorySecrets implements OmrClientSecretStore {
+  _MemorySecrets([this.secret]);
+
+  String? secret;
+
+  @override
+  Future<String?> read() async => secret;
+
+  @override
+  Future<void> write(String secret) async => this.secret = secret;
+
+  @override
+  Future<void> clear() async => secret = null;
+}
+
+/// A server that registers installs and answers job status to those it knows.
+Future<({HttpServer server, List<String> log, Set<String> known})> _registry({
+  bool registers = true,
+  bool limited = false,
+}) async {
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  final log = <String>[];
+  final known = <String>{};
+  var next = 0;
+  server.listen((request) async {
+    final bearer = request.headers.value('authorization') ?? '';
+    final appKey = request.headers.value('x-omr-token') == 'app-key';
+    log.add('${request.method} ${request.uri.path}');
+    final response = request.response..headers.contentType = ContentType.json;
+    if (request.uri.path == '/clients') {
+      if (!registers) {
+        response.statusCode = 404;
+      } else if (!appKey) {
+        response.statusCode = 401;
+      } else {
+        final secret = 'secret-${++next}';
+        known.add(secret);
+        response
+          ..statusCode = 201
+          ..write(jsonEncode({'client': 'c$next', 'secret': secret}));
+      }
+    } else if (limited) {
+      response
+        ..statusCode = 429
+        ..write(jsonEncode({'error': 'rate limited', 'scope': 'client'}));
+    } else if (known.contains(bearer.replaceFirst('Bearer ', '')) ||
+        (!registers && appKey)) {
+      response.write(
+        jsonEncode({'id': 'j1', 'status': 'done', 'progress': 100}),
+      );
+    } else {
+      response
+        ..statusCode = 401
+        ..write(jsonEncode({'error': 'unauthorized'}));
+    }
+    await response.close();
+  });
+  return (server: server, log: log, known: known);
+}
+
 void main() {
+  OmrConvertClient clientOf(HttpServer server, _MemorySecrets secrets) =>
+      OmrConvertClient(
+        config: OmrConvertConfig(
+          baseUrl: 'http://127.0.0.1:${server.port}',
+          token: 'app-key',
+        ),
+        secrets: secrets,
+      );
+
+  test('an install registers once and then asks with its own secret', () async {
+    final registry = await _registry();
+    addTearDown(registry.server.close);
+    final secrets = _MemorySecrets();
+    final client = clientOf(registry.server, secrets);
+
+    expect((await client.jobStatus('j1')).isDone, isTrue);
+    expect((await client.jobStatus('j1')).isDone, isTrue);
+
+    expect(secrets.secret, 'secret-1');
+    expect(registry.log, ['POST /clients', 'GET /jobs/j1', 'GET /jobs/j1']);
+    // The next run of the app has the secret already.
+    final again = clientOf(registry.server, secrets);
+    expect((await again.jobStatus('j1')).isDone, isTrue);
+    expect(registry.log.where((line) => line == 'POST /clients'), hasLength(1));
+  });
+
+  test('registers again when the server no longer knows the secret', () async {
+    final registry = await _registry();
+    addTearDown(registry.server.close);
+    final secrets = _MemorySecrets('from-before');
+    final client = clientOf(registry.server, secrets);
+
+    expect((await client.jobStatus('j1')).isDone, isTrue);
+
+    expect(secrets.secret, 'secret-1');
+    expect(registry.log, ['GET /jobs/j1', 'POST /clients', 'GET /jobs/j1']);
+  });
+
+  test('a server without registration is asked with the app key', () async {
+    final registry = await _registry(registers: false);
+    addTearDown(registry.server.close);
+    final secrets = _MemorySecrets();
+    final client = clientOf(registry.server, secrets);
+
+    expect((await client.jobStatus('j1')).isDone, isTrue);
+    expect((await client.jobStatus('j1')).isDone, isTrue);
+
+    expect(secrets.secret, isNull);
+    // Asked about registration once, not before every request.
+    expect(registry.log, ['POST /clients', 'GET /jobs/j1', 'GET /jobs/j1']);
+  });
+
+  test('says so when the uses of the day are spent', () async {
+    final registry = await _registry(limited: true);
+    addTearDown(registry.server.close);
+    final client = clientOf(registry.server, _MemorySecrets());
+
+    await expectLater(
+      client.jobStatus('j1'),
+      throwsA(
+        isA<OmrRateLimitedException>().having(
+          (error) => error.message,
+          'message',
+          contains('내일'),
+        ),
+      ),
+    );
+  });
+
   test('fetches the annotations the server separated, or nothing', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);

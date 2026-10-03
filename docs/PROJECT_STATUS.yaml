@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-02T17:57:00+09:00"
+last_updated: "2026-10-03T18:25:00+09:00"
 current_phase:
   id: "M8-11"
   name: "모바일 1마디 교정 에디터 (raw MusicXML)"
@@ -344,7 +344,7 @@ in_progress:
 next_actions:
   - order: -1
     roadmap_id: "RELEASE"
-    action: "docs/RELEASE_READINESS.md의 0단계부터: 빌드 2054 설치해 만든 악보의 Verse 1/2 표시·줄바꿈 확인, 조판 마디 번호를 색인+1로 맞추기, 구간 패널 남은 시나리오(아래쪽 줄·쪽 경계·재시작 뒤 유지·재생 중 하이라이트), 멜로디 보완 넣기 기기 확인. 그다음 1단계(서버 HTTPS·인증, 릴리스 서명)."
+    action: "docs/RELEASE_READINESS.md: 0·1단계는 닫혔다(R-1 서명, R-2 서버 HTTPS·등록·한도 2026-10-03 배포). 빌드에는 dart_defines.local.json이 필요하다(docs/OMR_SERVER_ACCESS.md '빌드용 앱 키 파일'). release는 빌드 전 build/app/intermediates의 merged_jni_libs·merged_native_libs·stripped_native_libs/pianoRelease를 지우고 빌드 뒤 APK의 libapp.so를 확인한다. 다음: R-6(16 KB 페이지: Lomse bridge를 -Wl,-z,max-page-size=16384로 다시 빌드, 플러그인 라이브러리 확인), 2단계 실기기(release APK, 소리), 3단계 화면별 QA(변환 검토부터, tool/qa/), 4단계 10곡 정확도(악보는 사용자가 준비), N-12(변환 실패 문구)."
   - order: 0
     roadmap_id: "F-07i"
     action: "에뮬레이터·실기기에서 새로 변환한 악보가 원본 OMR(원본)과 '자동 보정' 버전으로 나뉘어 저장되고 원본으로 되돌릴 수 있는지 확인한다. 수정 이력(`omr_corrections`) 표시는 F-07n 검토 화면에서 쓴다."
@@ -424,8 +424,8 @@ blockers:
     detail: "2026-08-26에는 Native Digital Score를 범위에서 제거했으나 2026-09-19 사용자 결정으로 로컬 피아노 전자악보 MVP 8을 재활성화했다. 기존 제외 결정 D-081은 D-112로 대체됐다."
     blocks: []
   - id: "B-015"
-    status: "open"
-    detail: "android/app/build.gradle.kts의 release signingConfig가 debug 키를 사용한다. release APK는 테스트용으로만 허용하고, Play Store 배포 전 별도 release keystore·비밀값 주입 설정이 필요하다."
+    status: "resolved"
+    detail: "2026-10-03: android/key.properties(저장소 밖, gitignore)가 있으면 release를 업로드 키로 서명하고 없으면 debug 키로 서명한다. 이 PC에 키스토어 C:/Users/awaol/.android-keys/pageadiddle-upload.jks(별칭 upload, 인증서 SHA-256 65:F6:EC:54:2D:B2:F0:68:B3:5D:C7:AC:84:B2:99:E3:B2:28:FA:35:6A:F3:F5:C6:61:84:38:06:07:2A:1D:E1)를 만들었고 release APK 서명을 apksigner로 확인했다. 키스토어와 key.properties의 백업은 사용자 몫이다."
     blocks:
       - "Android 스토어 배포"
   - id: "B-016"
@@ -1194,6 +1194,18 @@ decisions:
     date: "2026-09-29"
     status: "active"
     decision: "사용자 결정(\"qwen 도 제외, 조를 잘 못읽네\")으로 Qwen 3.8 Flash도 비교 대상에서 뺀다. 남은 후보는 GPT-5.6 Terra와 Gemini 3.8 Flash다. 두 모델이 같은 코드로 고친 마디는 나의 약함은 67마디 중 18개다."
+  - id: "D-211"
+    date: "2026-10-03"
+    status: "active"
+    decision: "R-2(사용자 지시 '순서대로 진행')의 인증은 로그인 없이 설치본 등록으로 한다: 앱 키로 POST /clients → 설치본 비밀값(Bearer, 서버는 해시만 저장) → 설치본·주소·전체의 하루 한도(변환 30/60/500, AI 60/120/1000, 등록 주소당 10)와 작업 소유 확인. 근거: 앱에 계정이 없고 사용자가 편한 쪽을 원함. 한계: 앱 키는 APK에서 꺼낼 수 있어 남용량을 하루 한도로 묶는 것이며, 기기 증명(Play Integrity)은 하지 않았다. HTTPS는 VM의 Caddy(enable_https.sh)로, 도메인이 없으면 <a-b-c-d>.sslip.io를 쓴다. 2026-10-03 18:20 배포: https://34-10-15-222.sslip.io(인증서 발급됨), 앱 키 교체(저장소 밖 dart_defines.local.json), OMR_LEGACY_TOKEN=0, 8080은 VM 안에서만."
+  - id: "D-210"
+    date: "2026-10-03"
+    status: "active"
+    decision: "사용자 결정 '종이와 맞춰줘': 마디 번호는 인쇄 악보처럼 센다 — 못갖춘마디로 시작하면(첫 마디 implicit=yes 또는 번호 0) 그 마디가 0, 아니면 1부터. 조판, 구간 패널, 재생 막대, 교정 화면, 반주 시트가 MusicScore.firstBarNumber / xmlFirstBarNumber를 쓴다(D-209의 '색인+1'을 대체). 사용자 결정 '사용하기 편한 쪽으로': 변환 검토의 음 길이 제안은 마디의 제안을 한꺼번에 XmlMeasureEditor.setNoteLengths로 넣어 뒤 음을 당겨 붙인다(꽉 찬 마디는 끝에 쉼표, 짧던 마디는 짧아지기만, 박자표보다 길어지면 거절). 교정 에디터의 음가 바꾸기(Replace)는 그대로다."
+  - id: "D-209"
+    date: "2026-10-03"
+    status: "active"
+    decision: "조판에 넘기는 MusicXML의 마디 번호를 파트별 위치(색인+1)로 다시 매긴다(withPositionMeasureNumbers, 화면과 PDF 내보내기 조판에만, 파일은 그대로). 10-02 작업 로그의 '조판 시 번호를 색인+1로' 방침을 따른 것이며, 못갖춘마디가 0번인 종이 악보의 번호와는 1 어긋난다(N-1, 사용자 확인 대기). 조판 글자는 코드 기호·가사 음절만 공백을 없애고 구간 이름·지시어·템포는 적힌 띄어쓰기를 둔다. 변환 검토에서 넣는 음표 제안은 뒤 음부터 쓰고, 저장한 버전을 다음 제안의 기준으로 삼으며, 음 길이 제안은 그 음의 지금 길이가 제안이 본 길이와 같을 때만 쓴다."
   - id: "D-208"
     date: "2026-10-02"
     status: "active"
@@ -1299,6 +1311,15 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-09-28T10:26:44+09:00"
   checks:
+    - name: "release_server_deploy_20261003"
+      result: "passed_with_known_gaps"
+      detail: "사용자가 이 PC용 SSH 키를 콘솔에 등록. 배포 전 /opt/omr의 파일이 커밋 846c21d와 같음을 sha256으로 확인하고 ~/omr_backup_20261003에 백업. update.sh → health OK, enable_https.sh → 인증서 발급, 앱 키 교체·OMR_LEGACY_TOKEN=0·OMR_HOST=127.0.0.1. 밖에서 확인: https health 200(인증서 검증 통과), http→https 308, 8080 접속 불가, 예전 키 401, 새 키 등록 201, 새 키만으로 조회 401. release 2065(업로드 키, dart_defines.local.json)를 에뮬레이터에 설치해 사진 변환 완료: 서버 기록 POST /clients 201 → POST /convert 202 → GET result 200, quota.json에 convert|client 1. 발견: release 2063·2064는 Gradle이 예전 libapp.so를 병합해 2062의 Dart 코드였다(중간 산출물을 지우고 2065로 해결). 공백: 실제 서버의 429 미확인, 인증서 갱신 미확인, VM 재부팅 안내(새 커널) 미처리."
+    - name: "release_stage1_20261003"
+      result: "passed_with_known_gaps"
+      detail: "N-1·N-3 반영 빌드 2061을 에뮬레이터에서 확인(줄 머리 9, 'Verse · 5–12마디', '0마디 1박', '0 / 16마디', 음 길이 제안 2개 → 붙은 16분음표 2개, 'AI 승인 4' 저장). R-1: 업로드 키 서명 release APK 2062·2063, apksigner로 인증서 확인. R-2: 서버 테스트 119개 중 115 통과(실패 4는 이 Windows PC의 임시 파일 잠금·cp949로 변경 전에도 같음), 새 테스트 8개 통과, 실제 Flask로 로컬 실행해 등록 201·한도 429·모르는 비밀값 401 확인. 앱: 전체 테스트는 Dart 646 통과·2 건너뜀·1 실패(옛 alphaTab) — 클라이언트 등록 테스트 4개 포함. release 2063(minify)을 에뮬레이터에 새로 설치해 지금 서버(등록 없음)로 변환 → 검토 → 교정 → 재생 하이라이트 → PDF 내보내기 통과. 공백: 서버 미배포(HTTPS 스크립트는 VM에서 실행해 본 적 없음), 16 KB 경고(R-6), 실기기·소리 없음."
+    - name: "release_stage0_20261003"
+      result: "passed_with_known_gaps"
+      detail: "빌드 2060(piano debug, android-x64)을 Pixel_10_Pro_XL API 37 에뮬레이터에서 확인: 조판 마디 번호 색인+1(6·10·14), 만든 악보의 Verse 1/Verse 2와 같은 줄 안 엔딩 건너뜀, 구간 패널 5번째 줄·쪽 경계 선택, 강제 종료 뒤 구간·순서 유지, 재생 하이라이트가 순서(반복·1번 엔딩 건너뜀)를 따라 44초, 실제 사진(내가 주인 삼은) 변환 → 변환 검토의 음 길이·멜로디 제안 넣기 → 'AI 승인 3' 저장. 찾아 고친 버그 5개(조판 글자 띄어쓰기, 화면 닫을 때 native_not_ready, 음 길이 제안 2개의 순서, 저장 뒤 기준 버전, 바뀐 마디에 제안 다시 넣기). 전체 테스트 642 통과·2 건너뜀·1 실패(옛 alphaTab), analyze 오류 0(Flutter 3.44.4에서 경고 4·info 13, 바꾼 파일에는 없음). 공백: 소리 미청취, 음높이 제안 넣기 미확인, N-1~N-10 미수정(docs/RELEASE_READINESS.md)."
     - name: "release_readiness_20261002"
       result: "passed_with_known_gaps"
       detail: "전체 테스트 639 통과·1 실패(옛 alphaTab), analyze 오류·경고 0. 판정은 알파 수준: release 서명 debug 키, OMR 서버 평문 HTTP·소스 기본 토큰, MVP 8 실기기 smoke 없음, 앱 재생 청취 없음, 정확도 표본 1곡. 상세는 docs/RELEASE_READINESS.md."

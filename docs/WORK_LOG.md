@@ -1,5 +1,57 @@
 # 작업 로그
 
+## 2026-10-03 18:25 KST — R-2 서버 배포: HTTPS, 설치본 등록, 앱 키 교체
+
+- 작업자: Claude (Opus 5.5)
+- 사용자: "이 pc용을 별도로 새로 등록하자" → 사용자가 `~/.ssh/omr_deploy_ed25519`를 만들고 콘솔에 공개키 등록, 방화벽 HTTP·HTTPS 허용 → "등록했어".
+- 배포 전 확인: VM Ubuntu 24.04, 서비스 사용자 hanso3366, `/opt/omr`의 `.py` 11개가 커밋 `846c21d`와 sha256 동일(서버에만 있는 변경 없음). `~/omr_backup_20261003/`에 백업.
+- 배포: 작업 폴더 파일을 LF로 걸러 `~/omr_upload/`에 올리고 `sudo bash update.sh ~/omr_upload` → health OK, `/opt/omr/state` 생성. 밖에서 `/clients` 등록 201, 키 없이 401.
+- HTTPS: `sudo KEEP_HTTP=1 bash enable_https.sh 34-10-15-222.sslip.io` → Caddy 2.6.2 설치, 첫 요청은 인증서 발급 중이라 실패하고 재시도에 200. 이 PC에서 인증서 검증 통과, http는 308로 https. 프록시 뒤에서도 서버가 실제 주소로 센다(`register|address:211.241…`).
+- 앱 키 교체: VM에서 `openssl rand -hex 24`로 만들어 `/etc/default/omr`에 `OMR_TOKEN`, `OMR_LEGACY_TOKEN=0`, `OMR_HOST=127.0.0.1` 추가(백업 `/etc/default/omr.bak-20261003`, 둘 다 600). 값은 화면에 찍지 않고 이 PC의 `dart_defines.local.json`(gitignore 추가)에 받음. 확인: 예전 키 401, 8080 밖에서 닫힘, 새 키 등록 201, 새 키만으로 조회 401.
+- 앱: `OmrConvertConfig` 기본 주소를 https로, 기본 키를 자리 표시로. `network_security_config.xml`에서 `34.10.15.222` 평문 허용 삭제.
+- release 빌드 문제: 2064를 설치했더니 옛 주소(`http://34.10.15.222:8080`)로 접속. 원인은 `build/app/intermediates/merged_jni_libs/pianoRelease`에 2062의 `libapp.so`가 남아 다시 쓰인 것(새 스냅샷 `.dart_tool/flutter_build/…/app.so`에는 새 주소가 있었다). 따라서 2063 smoke도 2062의 Dart 코드로 한 것이다(등록 코드가 없는 빌드). 병합·strip 중간 폴더 세 개를 지우고 2065 빌드 → APK의 `libapp.so`에 새 주소 5곳·옛 주소 0곳 확인. `flutter clean`은 Lomse bridge를 지우므로 쓰지 않음.
+- 기기 확인(release 2065, 에뮬레이터): 사진 변환 완료. 서버 기록 `POST /clients 201` → `POST /convert 202` → `GET /jobs/…/result 200`, `quota.json`에 `convert|client:eab9…: 1`.
+- 발견: 서버에 닿지 못하면 변환 카드에 예외 원문이 그대로 보인다(N-12). VM에 새 커널 재부팅 안내가 떠 있다(재부팅하지 않음). 시험하느라 curl로 만든 등록 3건이 `clients.json`에 남아 있다(쓸 수 없는 것은 아니나 해가 없다).
+- 검증: 앱 코드는 설정 두 줄만 바뀜 — Dart 전체 테스트는 17:55 기록(646 통과·1 실패) 이후 다시 돌리지 않았고, 데이터 계층 테스트 69개는 통과.
+- 커밋하지 않음.
+
+## 2026-10-03 17:55 KST — 사용자 결정 반영(종이 번호·음 길이 제안), 1단계: 릴리스 서명, 서버 인증·한도
+
+- 작업자: Claude (Opus 5.5)
+- 사용자 지시: "0단계부터 순서대로 진행해줘, 종이와 맞춰줘, 음길이 제안 넣는거 … 사용하기 편한쪽으로".
+- N-1 종이 기준 번호(D-210): 못갖춘마디로 시작하는 악보(첫 마디 `implicit="yes"` 또는 번호 0)는 0부터, 아니면 1부터. `MusicScore.firstBarNumber`, `xmlFirstBarNumber`, `withPositionMeasureNumbers`(조판). 구간 패널(`ScoreStructurePanel.firstBarNumber`), 재생 막대, 교정 화면("0 / 16마디", 마디 이동 입력 범위), 반주 시트에 전달. 서버에 보내는 편곡 요약의 마디 번호(1부터)는 그대로.
+- N-3 음 길이 제안(D-210): `XmlMeasureEditor.setNoteLengths` — 한 마디의 여러 음 길이를 한 번에 바꾸고 뒤 음을 붙인다. 한 성부·잇단음표 없는 마디만. 꽉 찬 마디는 끝을 쉼표로 채우고, 짧던 마디는 짧아지기만 하며, 박자표보다 길어지면(이미 길던 마디가 더 길어지지 않는 경우 제외) 거절. 변환 검토는 멜로디 → 음높이 → 음 길이(한꺼번에) 순서로 넣는다. 앞서 만든 `OmrReviewBar.writingOrder`는 필요 없어 지움.
+- 기기 확인(빌드 2061): Pickup QA 줄 머리 9, "Verse · 5–12마디", 순서 탭 0–4 / 5–12 / 13–16, "0마디 1박", 교정 "0 / 16마디". naega_juin 자동 보정 버전에서 음 길이 제안 1개 → 16분+4분(쉼표 없음), 2개 → 빔으로 묶인 16분 2개(원본과 같음), "AI 승인 4" 저장. 로그 오류 0.
+- R-1 릴리스 서명: `android/app/build.gradle.kts`가 `android/key.properties`를 읽어 `upload` 서명 설정을 만들고, 없으면 debug 키. 키스토어 `C:/Users/awaol/.android-keys/pageadiddle-upload.jks`(RSA 2048, 10000일, 별칭 upload, CN=Hansoo Kim), 비밀번호는 무작위로 만들어 `android/key.properties`에만 있음(gitignore). release APK를 apksigner로 확인: SHA-256 `65f6ec54…2a1de1`.
+- R-2 서버(D-211): `server/omr/omr_clients.py`(`Clients`: 등록·해시 저장, `Quota`: 하루 카운터, 파일에 남김). `omr_server.py`: `POST /clients`, `_caller`·`_spend`·`_own_job`·`_address`(자기 프록시의 X-Forwarded-For만 믿음), `/convert`·`/arrange/advice`·AI 검수 다시에 한도, 작업에 `client` 기록. `update.sh`·`install.sh`에 새 모듈과 `/opt/omr/state`. `enable_https.sh`(Caddy) 신설 — VM에서 실행해 보지 않음. `.gitattributes`에 `*.sh eol=lf`(Windows 체크아웃에서 CRLF로 올라가면 서버에서 깨짐).
+- R-2 앱: `OmrConvertClient`가 `OmrClientSecretStore`(기기 보안 저장소)에 비밀값을 두고 Bearer로 보낸다. 처음 요청 때 등록, 서버가 비밀값을 모르면(401) 다시 등록, 등록이 없는 서버(404)는 앱 키만으로. 429는 `OmrRateLimitedException`("오늘 쓸 수 있는 횟수를 모두 썼습니다. 내일 다시 시도하세요.").
+- 검증: Dart 전체 646 통과·2 건너뜀·1 실패(옛 alphaTab). 서버 `python -m unittest test_omr_server` 119개 중 115 통과 — 실패 4개(AiLineTest 2, AnnotationTest 2)는 이 Windows PC의 임시 파일 잠금·cp949 문제로 변경 전에도 같다. 가상환경의 실제 Flask로 서버를 띄워 등록 201, 키 없이 401, 세 번째 변환 429(`OMR_CONVERT_PER_CLIENT=2`), 모르는 비밀값 401 확인.
+- release smoke(에뮬레이터, 2063, 업로드 키, minify): 디버그 앱은 서명이 달라 지우고 설치(앱 데이터는 스크래치패드에 tar로 받아 둠). 처음 실행에 "This app isn't 16 KB compatible" 경고(R-6: `libpage_lomse_bridge.so` LOAD 정렬 실패, 나머지는 확인 불가 표시). 사진 변환(지금 서버, 등록 404 → 앱 키) → 변환 검토 → 교정 → 재생 하이라이트 → PDF 내보내기(18 KB, 열어 확인) 통과. release를 `--no-pub`으로 빌드하면 `GeneratedPluginRegistrant`의 flutter_native_splash 때문에 실패한다 — `--no-pub` 없이 빌드하고 `pubspec.lock`은 되돌린다.
+- 못 한 것: 서버 배포(이 PC에 SSH 키가 없고, 새 키를 만드는 것은 권한 정책으로 막혀 사용자에게 넘김). 실기기·소리. 3단계 화면별 QA, 4단계 정확도는 시작하지 않음.
+- 커밋하지 않음.
+
+## 2026-10-03 17:25 KST — 출시 준비 0단계: 에뮬레이터 확인, 조판 마디 번호, 변환 검토 버그 수정
+
+- 작업자: Claude (Opus 5.5)
+- 사용자 요청: "에뮬레이터 켜서 0단계부터 시작" (`docs/RELEASE_READINESS.md`).
+- 환경(이 PC, Windows): AVD는 Pixel_10_Pro_XL(API 37, x86_64) 하나. `flutter config --jdk-dir`가 지워진 임시 폴더를 가리켜 빌드가 실패 → Temurin 21.0.12를 `C:/Users/awaol/.jdks/jdk-21.0.12.1+1`에 받고 그 경로로 설정. 이 PC의 Flutter는 3.44.4라 `flutter pub get`이 `pubspec.lock`을 바꾼다(test 1.31 등) — 커밋하지 않고 되돌림. 에뮬레이터에는 9월 26일 빌드(versionCode 2)가 있었고 그 위에 설치(데이터 유지, DB 마이그레이션 정상).
+- 빌드: `flutter build apk --debug --flavor piano -t lib/piano_main.dart --no-pub --dart-define-from-file=dart_defines.json --target-platform android-x64 --build-number=<n>` 2054~2060. 마지막 설치본 2060.
+- 0단계 1 (만든 악보): 검증용 악보(못갖춘마디 0번, 4줄, 6마디 도돌이, 같은 줄 안의 1번·2번 엔딩)를 가져와 Intro·Verse·Outro, "적힌 순서로 시작"(Verse ×2, 22마디) → "이 순서로 새 악보 만들기". 줄: 1–5 | 6–9 | 10·11 | 6–9 | 10·12·13 | 14–17, 구간 상자 Intro / Verse 1 / Verse 2 / Outro. 통과.
+- 0단계 2 (조판 마디 번호): `withPositionMeasureNumbers`(xml_measure_editor.dart)로 조판에 넘기는 XML의 마디 번호를 파트별 위치(1부터)로 바꾼다. 화면 조판과 `engravePages`(PDF)에만, 글자 치환이라 긴 악보를 파싱하지 않는다. 기기에서 줄 머리 6·10·14. 테스트 1개.
+- 0단계 3 (구간 패널): Claire de lune에서 5번째 줄 선택, 1쪽 마지막 줄에서 2쪽 줄로 늘리기(18–28), Chorus 이름, 실행 취소. 강제 종료 뒤 구간·순서 유지. 재생 하이라이트는 화면을 연속 캡처해 강조 상자의 위치와 시각을 기록(`tool/qa/play_trace.py`): 순서대로 22마디, 마디당 약 2.1초, 44.3초에 끝. 소리는 듣지 못함.
+- 0단계 4 (멜로디 보완): `KakaoTalk_20260919_121726098.jpg`(내가 주인 삼은)를 "코드·가사 악보"로 변환(약 1분 30초, 18마디, AI 적용 11건, 의심 11마디). 마디 0에 음 길이 제안 2건, 마디 9·17에 `melody` 제안. 마디 17 멜로디 넣기 → 미리보기 → "AI 승인 3" 저장 → 악보 화면의 활성 버전. 마디 9의 제안(3.5박)은 거절 문구.
+- 찾아 고친 버그:
+  1. 조판 글자의 공백을 모두 지워 "Verse1", "Andanteespressivo", "consordina"로 보임 → `verovio_text_labels.dart`: `harm`·`verse` 안의 글자만 붙이고 나머지는 한 칸 띄어쓰기를 둠(줄바꿈·들여쓰기는 버림). 테스트 1개 추가, 템포 기대값 "♩ = 115"로.
+  2. 재생을 열지 않은 악보 화면을 닫으면 `PlatformException(native_not_ready)` 미처리 예외 → `VerovioScoreView.dispose`의 정지·해제 호출 오류를 받음.
+  3. 변환 검토에서 한 마디의 음 길이 제안 2개를 넣으면 첫 제안이 남긴 쉼표가 둘째 제안의 "2번째 음"이 되어 쉼표가 바뀌고 화면은 "넣음" → `OmrReviewBar.writingOrder`: 멜로디 먼저, 음표 제안은 뒤 음부터. 테스트 1개.
+  4. 변환 검토의 기준 XML(`_baseXml`)이 화면을 연 때의 버전으로 고정되어, 저장 뒤 또는 교정 뒤에 넣은 제안이 앞선 수정을 뺀 버전을 만듦 → 저장·교정 뒤 기준을 그 버전으로. 화면 테스트 1개(두 번 저장).
+  5. 이미 바뀐 마디에 음 길이 제안을 넣으면 다른 음이 바뀔 수 있음 → 그 음의 지금 길이가 제안의 `current`와 다르면 거절. 기기에서 문구 확인.
+- 미수정으로 기록(N-1~N-10, RELEASE_READINESS): 종이 번호와의 1 차이, 변환 검토의 "마디 0", 음 길이 제안의 쉼표(Replace 방식), 변환 악보의 줄 머리 번호 없음, 템포 음표 글자 빠짐, 영어 "읽지 못함" 이유, 빈 코드 제안 표시, 조 배지와 구간 상자 겹침, "B ♭" 벌어짐, 제목·작곡가 인식.
+- QA 드라이버를 `tool/qa/`로 옮김(`ui.py`, `play_trace.py`, `make_pickup_sample.py`). 화면 캡처는 `QA_OUT` 아래 `shots/`.
+- 검증: 전체 테스트 642 통과·2 건너뜀·1 실패(옛 `alphatab_asset_test`). `flutter analyze` 오류 0, 경고 4(`score_viewer_screen.dart`의 안 쓰는 함수, 기존)·info 13 — 10-02 기록과 다른 것은 Flutter 버전 차이로 본다(확인하지 않음). 기기 로그: 2057부터 flutter 오류 0.
+- 남은 것: 1단계(서버 HTTPS·인증, 릴리스 서명). 사용자 결정 N-1, N-3. 음높이 제안 넣기와 교정 뒤 제안 넣기의 기기 확인. 에뮬레이터에는 Pickup QA(원본·연주용 1), naega_juin(원본·자동 보정·AI 보정·AI 승인 3)이 남아 있다.
+- 커밋하지 않음.
+
 ## 2026-10-02 17:57 KST — 출시 준비 상태와 진행 순서 문서화
 
 - 작업자: Claude (Opus 5.5)

@@ -34,11 +34,15 @@ String formatPlaybackLength(double seconds) {
 enum StructureTab { sections, order }
 
 /// "Verse 2", or the bars ("8–10") of a section with no name.
-String sectionDisplayName(AppLocalizations l10n, ScoreSection section) {
+String sectionDisplayName(
+  AppLocalizations l10n,
+  ScoreSection section, {
+  int firstBarNumber = 1,
+}) {
   return section.name.isEmpty
       ? l10n.sectionBarRange(
-          section.startMeasureIndex + 1,
-          section.endMeasureIndex + 1,
+          section.startMeasureIndex + firstBarNumber,
+          section.endMeasureIndex + firstBarNumber,
         )
       : scoreSectionLabel(l10n, section);
 }
@@ -99,8 +103,12 @@ class ScoreStructurePanel extends StatelessWidget {
     this.onBuildFromScore,
     this.madeScoreExists = false,
     this.onMakeScore,
+    this.firstBarNumber = 1,
     super.key,
   });
+
+  /// The number of the score's first bar ([MusicScore.firstBarNumber]).
+  final int firstBarNumber;
 
   final StructureTab tab;
   final ValueChanged<StructureTab> onTabChanged;
@@ -242,15 +250,18 @@ class ScoreStructurePanel extends StatelessWidget {
                 bar == null
                     ? l10n.sectionStartHint
                     : selectedEnd != null
-                    ? l10n.sectionRange(bar + 1, selectedEnd! + 1)
+                    ? l10n.sectionRange(
+                        bar + firstBarNumber,
+                        selectedEnd! + firstBarNumber,
+                      )
                     : picking || current == null
-                    ? l10n.sectionBarPickEnd(bar + 1)
+                    ? l10n.sectionBarPickEnd(bar + firstBarNumber)
                     : l10n.sectionInfo(
                         current.name.isEmpty
                             ? l10n.sectionUnnamed
                             : scoreSectionLabel(l10n, current),
-                        current.startMeasureIndex + 1,
-                        current.endMeasureIndex + 1,
+                        current.startMeasureIndex + firstBarNumber,
+                        current.endMeasureIndex + firstBarNumber,
                       ),
                 style: bar == null ? muted : theme.textTheme.titleSmall,
               ),
@@ -344,12 +355,16 @@ class ScoreStructurePanel extends StatelessWidget {
                     index > 0 &&
                     byId[steps[index - 1].sectionId]?.endMeasureIndex ==
                         section.startMeasureIndex - 1,
-                label: sectionDisplayName(l10n, section),
+                label: sectionDisplayName(
+                  l10n,
+                  section,
+                  firstBarNumber: firstBarNumber,
+                ),
                 bars: [
                   if (section.name.isNotEmpty || section.continued)
                     l10n.sectionBarRange(
-                      section.startMeasureIndex + 1,
-                      section.endMeasureIndex + 1,
+                      section.startMeasureIndex + firstBarNumber,
+                      section.endMeasureIndex + firstBarNumber,
                     ),
                   if (steps[index] case PlaybackStep(
                     repeats: 1,
@@ -380,7 +395,13 @@ class ScoreStructurePanel extends StatelessWidget {
               for (final group in namedSections(sections))
                 ActionChip(
                   avatar: const Icon(Icons.add_rounded, size: 18),
-                  label: Text(sectionDisplayName(l10n, group.first)),
+                  label: Text(
+                    sectionDisplayName(
+                      l10n,
+                      group.first,
+                      firstBarNumber: firstBarNumber,
+                    ),
+                  ),
                   onPressed: () => onStepsChanged([
                     ...steps,
                     for (final piece in group)

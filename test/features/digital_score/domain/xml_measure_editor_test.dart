@@ -734,6 +734,136 @@ void main() {
       expect(xml, contains('>프</rehearsal>'));
     });
 
+    test('new note lengths close the bar up behind them', () {
+      String bar(String attributes, List<String> notes) =>
+          '<score-partwise version="4.0"><part-list><score-part id="P1">'
+          '<part-name>V</part-name></score-part></part-list><part id="P1">'
+          '<measure number="1"$attributes><attributes>'
+          '<divisions>2</divisions><time><beats>4</beats>'
+          '<beat-type>4</beat-type></time></attributes>'
+          '${notes.join()}</measure></part></score-partwise>';
+      String note(String step, int duration, String type) =>
+          '<note><pitch><step>$step</step><octave>4</octave></pitch>'
+          '<duration>$duration</duration><voice>1</voice>'
+          '<type>$type</type></note>';
+      List<String> written(String xml) => [
+        for (final note in XmlDocument.parse(xml).findAllElements('note'))
+          '${note.getElement('rest') != null ? 'r' : note.getElement('pitch')!.getElement('step')!.innerText}'
+              ':${note.getElement('type')!.innerText}',
+      ];
+      const sixteenth = (type: '16th', dots: 0);
+      const eighth = (type: 'eighth', dots: 0);
+
+      // A pickup read as two quarters: both become sixteenths, next to each
+      // other, and the short bar gets no rests.
+      final pickup = bar(' implicit="yes"', [
+        note('C', 2, 'quarter'),
+        note('D', 2, 'quarter'),
+      ]);
+      final shortened = _editor.setNoteLengths(pickup, 0, 0, {
+        0: sixteenth,
+        1: sixteenth,
+      }).xml;
+      expect(written(shortened), ['C:16th', 'D:16th']);
+      final decoded = _codec.decodeXml(shortened).parts.single.measures.single;
+      expect(decoded.notes.map((n) => n.duration), [1, 1]);
+      expect(decoded.attributes.divisions, 4);
+
+      // A bar read a beat too long: the misread quarter becomes an eighth
+      // and the notes after it move up.
+      final long = bar('', [
+        note('C', 2, 'quarter'),
+        note('D', 2, 'quarter'),
+        note('E', 2, 'quarter'),
+        note('F', 2, 'quarter'),
+        note('G', 1, 'eighth'),
+        note('A', 1, 'eighth'),
+      ]);
+      expect(
+        written(_editor.setNoteLengths(long, 0, 0, {1: eighth, 2: eighth}).xml),
+        [
+          'C:quarter',
+          'D:eighth',
+          'E:eighth',
+          'F:quarter',
+          'G:eighth',
+          'A:eighth',
+        ],
+      );
+
+      // A full bar stays full: the rest goes to its end.
+      final full = bar('', [
+        note('C', 4, 'half'),
+        note('D', 2, 'quarter'),
+        note('E', 2, 'quarter'),
+      ]);
+      expect(written(_editor.setNoteLengths(full, 0, 0, {1: eighth}).xml), [
+        'C:half',
+        'D:eighth',
+        'E:quarter',
+        'r:eighth',
+      ]);
+
+      // It may not grow past the time signature.
+      expect(
+        () => _editor.setNoteLengths(full, 0, 0, {1: (type: 'half', dots: 0)}),
+        throwsFormatException,
+      );
+    });
+
+    test('engraved bar numbers follow position, a pickup bar being 0', () {
+      const xml =
+          '''<score-partwise version="3.1"><part-list><score-part id="P1"><part-name>V</part-name></score-part><score-part id="P2"><part-name>P</part-name></score-part></part-list>
+<part id="P1">
+<measure number="0" implicit="yes"><attributes><divisions>1</divisions><measure-style><multiple-rest>1</multiple-rest></measure-style></attributes><note><rest/><duration>1</duration></note></measure>
+<measure implicit="no" number='1' width="200"><note><rest/><duration>4</duration></note></measure>
+<measure number="X1"><note><rest/><duration>4</duration></note></measure>
+</part>
+<part id="P2">
+<measure number="0"><note><rest/><duration>1</duration></note></measure>
+<measure><note><rest/><duration>4</duration></note></measure>
+<measure number="7"/>
+</part></score-partwise>''';
+      List<List<String?>> numbers(String xml) => [
+        for (final part in XmlDocument.parse(xml).findAllElements('part'))
+          [
+            for (final measure in part.findElements('measure'))
+              measure.getAttribute('number'),
+          ],
+      ];
+      // As the printed score counts: the pickup is 0, the first full bar 1.
+      expect(xmlFirstBarNumber(xml), 0);
+      final shown = withPositionMeasureNumbers(xml);
+      expect(numbers(shown), [
+        ['0', '1', '2'],
+        ['0', '1', '2'],
+      ]);
+      // Everything else is as written.
+      final document = XmlDocument.parse(shown);
+      final first = document.findAllElements('measure').first;
+      expect(first.getAttribute('implicit'), 'yes');
+      expect(document.findAllElements('measure-style'), hasLength(1));
+      expect(
+        document.findAllElements('measure').elementAt(1).getAttribute('width'),
+        '200',
+      );
+      expect(xml, contains('number="X1"'));
+
+      // Without a pickup the count starts at 1, whatever the file says
+      // after bars were added or put in playing order.
+      final plain = xml
+          .replaceFirst(' implicit="yes"', '')
+          .replaceFirst('number="0"', 'number="5"');
+      expect(xmlFirstBarNumber(plain), 1);
+      expect(numbers(withPositionMeasureNumbers(plain)), [
+        ['1', '2', '3'],
+        ['1', '2', '3'],
+      ]);
+      // The decoded score agrees.
+      expect(_codec.decodeXml(xml).firstBarNumber, 0);
+      expect(_codec.decodeXml(plain).firstBarNumber, 1);
+    });
+
     test('an expanded copy drops jumps it has already followed', () {
       const xml =
           '''<score-partwise version="3.1"><part-list><score-part id="P1"><part-name>V</part-name></score-part></part-list>

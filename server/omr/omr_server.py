@@ -29,8 +29,29 @@ from omr_text import _attach_stray_accidentals, _drop_chord_junk, _ocr_chord_lin
 from omr_validate import _corrections, _validate
 from omr_ai import ARRANGE_MAX_BRIEF, _ai_enabled, _ai_review, _arrange_advice
 from omr_annotations import _separate_upload
+from omr_clients import Clients, Quota
 
+# The app key: every build of the app carries it, so it only says "this is the app".
 TOKEN = os.environ.get("OMR_TOKEN", "piano-omr-dev")
+# Builds from before installs registered send the app key with every request. "0" turns
+# them away once they are no longer in use.
+LEGACY_TOKEN = os.environ.get("OMR_LEGACY_TOKEN", "1") != "0"
+CLIENTS = Clients(Path(os.environ.get("OMR_CLIENTS", "/opt/omr/state/clients.json")))
+QUOTA = Quota(Path(os.environ.get("OMR_QUOTA", "/opt/omr/state/quota.json")))
+
+
+def _most(name: str, default: int) -> int:
+    return max(0, int(os.environ.get(name, str(default))))
+
+
+# Most per day (UTC): for one install, one network address, and everyone together.
+LIMITS = {
+    "register": {"address": _most("OMR_REGISTER_PER_ADDRESS", 10), "all": _most("OMR_REGISTER_PER_DAY", 500)},
+    "convert": {"client": _most("OMR_CONVERT_PER_CLIENT", 30), "address": _most("OMR_CONVERT_PER_ADDRESS", 60),
+                "all": _most("OMR_CONVERT_PER_DAY", 500)},
+    "ai": {"client": _most("OMR_AI_PER_CLIENT", 60), "address": _most("OMR_AI_PER_ADDRESS", 120),
+           "all": _most("OMR_AI_PER_DAY", 1000)},
+}
 JOBS_DIR = Path(os.environ.get("OMR_JOBS", "/opt/omr/jobs"))
 HOST = os.environ.get("OMR_HOST", "0.0.0.0")
 PORT = int(os.environ.get("OMR_PORT", "8080"))
@@ -101,11 +122,57 @@ _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
 
 
-def _authorized() -> bool:
+def _sent_keys() -> tuple[str, str]:
+    """The app key header and the bearer secret of the request."""
     header = request.headers.get("X-Omr-Token", "")
     auth = request.headers.get("Authorization", "")
-    bearer = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
-    return header == TOKEN or bearer == TOKEN
+    return header, auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+
+
+def _caller() -> str | None:
+    """The install that sent the request: its id, "legacy" for a build that only has the
+    app key, or None."""
+    header, bearer = _sent_keys()
+    client = CLIENTS.find(bearer)
+    if client:
+        return client
+    return "legacy" if LEGACY_TOKEN and TOKEN in (header, bearer) else None
+
+
+def _authorized() -> bool:
+    return _caller() is not None
+
+
+def _address() -> str:
+    """Where the request came from. Only our own proxy on this machine is believed about
+    whom it forwards for."""
+    remote = request.remote_addr or ""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded and remote in ("127.0.0.1", "::1"):
+        return forwarded.split(",")[-1].strip()
+    return remote
+
+
+def _spend(kind: str):
+    """Count one [kind] for the caller. Returns the 429 answer when a daily limit is used
+    up, else None. Builds that share the app key are counted by address and in total."""
+    caller, most = _caller(), LIMITS[kind]
+    limits = {f"address:{_address()}": most["address"], "all": most["all"]}
+    if caller and caller != "legacy" and "client" in most:
+        limits = {f"client:{caller}": most["client"], **limits}
+    used_up = QUOTA.spend(kind, limits)
+    if used_up is None:
+        return None
+    return jsonify(error="rate limited", scope=used_up.split(":")[0]), 429
+
+
+def _own_job(job_id: str) -> dict | None:
+    """The job, when the caller may see it: an install only sees what it uploaded."""
+    job = _jobs.get(job_id)
+    if job is None:
+        return None
+    owner = job.get("client")
+    return job if not owner or owner == _caller() else None
 
 
 def _public(job: dict) -> dict:
@@ -122,7 +189,7 @@ def _public(job: dict) -> dict:
 
 
 _SAVED_FIELDS = ("id", "status", "progress", "step", "error", "result", "created", "finished",
-                 "profile", "book", "ai")
+                 "profile", "book", "ai", "client")
 
 
 def _save_job(job: dict) -> None:
@@ -158,6 +225,20 @@ def health():
     return jsonify(ok=True, pipeline=PIPELINE)
 
 
+@app.post("/clients")
+def register_client():
+    """An install registers once and keeps the secret it gets."""
+    header, bearer = _sent_keys()
+    if TOKEN not in (header, bearer):
+        return jsonify(error="unauthorized"), 401
+    address = _address()
+    most = LIMITS["register"]
+    if QUOTA.spend("register", {f"address:{address}": most["address"], "all": most["all"]}) is not None:
+        return jsonify(error="rate limited", scope="address"), 429
+    client, secret = CLIENTS.register(address)
+    return jsonify(client=client, secret=secret), 201
+
+
 @app.post("/convert")
 def convert():
     if not _authorized():
@@ -171,6 +252,9 @@ def convert():
     profile = request.form.get("profile", "standard")
     if profile not in PROFILES:
         return jsonify(error="unsupported recognition profile"), 400
+    limited = _spend("convert")
+    if limited is not None:
+        return limited
 
     job_id = uuid.uuid4().hex
     root = JOBS_DIR / job_id
@@ -192,6 +276,7 @@ def convert():
         "finished": None,
         "tracker": _SheetProgress(),
         "profile": profile,
+        "client": _caller(),
     }
     with _lock:
         _jobs[job_id] = job
@@ -208,7 +293,7 @@ def job_status(job_id: str):
     if not _authorized():
         return jsonify(error="unauthorized"), 401
     with _lock:
-        job = _jobs.get(job_id)
+        job = _own_job(job_id)
         if job is None:
             return jsonify(error="not found"), 404
         payload = _public(job)
@@ -220,7 +305,7 @@ def job_result(job_id: str):
     if not _authorized():
         return jsonify(error="unauthorized"), 401
     with _lock:
-        job = _jobs.get(job_id)
+        job = _own_job(job_id)
         if job is None:
             return jsonify(error="not found"), 404
         if job["status"] != "done" or not job.get("result"):
@@ -239,7 +324,7 @@ def job_diagnostics(job_id: str):
     if not _authorized():
         return jsonify(error="unauthorized"), 401
     with _lock:
-        job = _jobs.get(job_id)
+        job = _own_job(job_id)
         if job is None:
             return jsonify(error="not found"), 404
         report = Path(job["root"]) / "out" / "recognition.json"
@@ -321,7 +406,7 @@ def _job_file(job_id: str, name: str, mimetype: str):
     if not _authorized():
         return jsonify(error="unauthorized"), 401
     with _lock:
-        job = _jobs.get(job_id)
+        job = _own_job(job_id)
         if job is None:
             return jsonify(error="not found"), 404
         if job["status"] != "done":
@@ -479,7 +564,7 @@ def job_ai_retry(job_id: str):
     if not _authorized():
         return jsonify(error="unauthorized"), 401
     with _lock:
-        job = _jobs.get(job_id)
+        job = _own_job(job_id)
         if job is None:
             return jsonify(error="not found"), 404
         if job["status"] != "done":
@@ -491,6 +576,9 @@ def job_ai_retry(job_id: str):
             return jsonify(error="not available"), 404
         if not _ai_enabled():
             return jsonify(error="ai unavailable"), 503
+        limited = _spend("ai")
+        if limited is not None:
+            return limited
         job["ai"] = "running"
         _save_job(job)
         payload = _public(job)
@@ -517,6 +605,9 @@ def arrange_advice():
         return jsonify(error="bad request"), 400
     if not _ai_enabled():
         return jsonify(error="ai unavailable"), 503
+    limited = _spend("ai")
+    if limited is not None:
+        return limited
     try:
         return jsonify(_arrange_advice(brief, bars))
     except Exception as error:  # noqa: BLE001 - the model call failed; the app falls back to its defaults

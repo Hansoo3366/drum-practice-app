@@ -17,6 +17,20 @@ class OmrJobNotFoundException extends OmrConvertException {
   const OmrJobNotFoundException() : super('변환 작업을 찾을 수 없습니다.');
 }
 
+/// The server counts conversions and AI calls per install and per day; this
+/// install has used up today's.
+class OmrRateLimitedException extends OmrConvertException {
+  const OmrRateLimitedException()
+    : super('오늘 쓸 수 있는 횟수를 모두 썼습니다. 내일 다시 시도하세요.');
+}
+
+/// Keeps the secret the server gave this install when it registered.
+abstract class OmrClientSecretStore {
+  Future<String?> read();
+  Future<void> write(String secret);
+  Future<void> clear();
+}
+
 enum OmrRecognitionProfile { standard, chordsLyrics }
 
 extension OmrRecognitionProfileWire on OmrRecognitionProfile {
@@ -70,20 +84,75 @@ class OmrConvertClient {
   OmrConvertClient({
     OmrConvertConfig config = const OmrConvertConfig(),
     http.Client? httpClient,
+    OmrClientSecretStore? secrets,
     this.timeout = const Duration(minutes: 12),
   }) : _config = config,
-       _http = httpClient ?? http.Client();
+       _http = httpClient ?? http.Client(),
+       _secrets = secrets;
 
   final OmrConvertConfig _config;
   final http.Client _http;
   final Duration timeout;
 
-  Map<String, String> get _headers => {'X-Omr-Token': _config.token};
+  /// Where this install's secret is kept. Without it the client only has
+  /// the app key, as builds before registration did.
+  final OmrClientSecretStore? _secrets;
+  String? _secret;
+
+  /// The server has no registration (an older one): asked once per run.
+  var _noRegistration = false;
+
+  /// The key every build carries. It only says "this is the app".
+  Map<String, String> get _appKey => {'X-Omr-Token': _config.token};
+
+  /// Sends a request as this install. The install registers the first time
+  /// and keeps its secret; a server that no longer knows the secret (it was
+  /// set up again) is registered with once more.
+  Future<http.Response> _authed(
+    Future<http.Response> Function(Map<String, String> headers) send,
+  ) async {
+    final response = await send(await _identity());
+    if (response.statusCode != 401 || _secret == null) return response;
+    _secret = null;
+    await _secrets?.clear();
+    return send(await _identity());
+  }
+
+  Future<Map<String, String>> _identity() async {
+    final store = _secrets;
+    if (store == null) return _appKey;
+    var secret = _secret ??= await store.read();
+    if (secret == null && !_noRegistration) {
+      secret = _secret = await _register();
+      if (secret != null) await store.write(secret);
+    }
+    return {..._appKey, if (secret != null) 'Authorization': 'Bearer $secret'};
+  }
+
+  /// The secret of a new registration, or null when the server gave none:
+  /// the request then goes with the app key alone, and the server decides.
+  Future<String?> _register() async {
+    try {
+      final response = await _http
+          .post(Uri.parse('${_config.baseUrl}/clients'), headers: _appKey)
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode == 404 || response.statusCode == 405) {
+        _noRegistration = true;
+        return null;
+      }
+      if (response.statusCode != 201) return null;
+      final decoded = jsonDecode(response.body);
+      final secret = decoded is Map ? decoded['secret'] : null;
+      return secret is String && secret.isNotEmpty ? secret : null;
+    } on Object {
+      return null;
+    }
+  }
 
   Future<bool> isReachable() async {
     try {
       final response = await _http
-          .get(Uri.parse('${_config.baseUrl}/health'), headers: _headers)
+          .get(Uri.parse('${_config.baseUrl}/health'), headers: _appKey)
           .timeout(const Duration(seconds: 8));
       return response.statusCode == 200;
     } on Object {
@@ -97,16 +166,18 @@ class OmrConvertClient {
     OmrRecognitionProfile profile = OmrRecognitionProfile.standard,
   }) async {
     final uri = Uri.parse('${_config.baseUrl}/convert');
-    final request = http.MultipartRequest('POST', uri)
-      ..headers.addAll(_headers)
-      ..fields['profile'] = profile.wireValue
-      ..files.add(
-        http.MultipartFile.fromBytes('file', bytes, filename: fileName),
-      );
-    final streamed = await _http.send(request).timeout(timeout);
-    final response = await http.Response.fromStream(streamed).timeout(timeout);
+    final response = await _authed((headers) async {
+      final request = http.MultipartRequest('POST', uri)
+        ..headers.addAll(headers)
+        ..fields['profile'] = profile.wireValue
+        ..files.add(
+          http.MultipartFile.fromBytes('file', bytes, filename: fileName),
+        );
+      final streamed = await _http.send(request).timeout(timeout);
+      return http.Response.fromStream(streamed).timeout(timeout);
+    });
     if (response.statusCode != 200 && response.statusCode != 202) {
-      throw OmrConvertException(_errorMessage(response));
+      throw _failure(response);
     }
     final job = _jobFromBody(response.body);
     if (job.id.isEmpty) {
@@ -119,12 +190,14 @@ class OmrConvertClient {
   }
 
   Future<OmrRemoteJob> jobStatus(String jobId) async {
-    final response = await _http
-        .get(Uri.parse('${_config.baseUrl}/jobs/$jobId'), headers: _headers)
-        .timeout(const Duration(seconds: 15));
+    final response = await _authed(
+      (headers) => _http
+          .get(Uri.parse('${_config.baseUrl}/jobs/$jobId'), headers: headers)
+          .timeout(const Duration(seconds: 15)),
+    );
     if (response.statusCode == 404) throw const OmrJobNotFoundException();
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw OmrConvertException(_errorMessage(response));
+      throw _failure(response);
     }
     return _jobFromBody(response.body);
   }
@@ -132,18 +205,20 @@ class OmrConvertClient {
   /// Runs the job's AI review again (it failed, e.g. for lack of API credit)
   /// and returns the job with `ai == 'running'`.
   Future<OmrRemoteJob> retryAiReview(String jobId) async {
-    final response = await _http
-        .post(
-          Uri.parse('${_config.baseUrl}/jobs/$jobId/ai-review'),
-          headers: _headers,
-        )
-        .timeout(const Duration(seconds: 15));
+    final response = await _authed(
+      (headers) => _http
+          .post(
+            Uri.parse('${_config.baseUrl}/jobs/$jobId/ai-review'),
+            headers: headers,
+          )
+          .timeout(const Duration(seconds: 15)),
+    );
     // "not available": the job has no book to review (not a lead sheet).
     if (response.statusCode == 404 && _errorMessage(response) == 'not found') {
       throw const OmrJobNotFoundException();
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw OmrConvertException(_errorMessage(response));
+      throw _failure(response);
     }
     return _jobFromBody(response.body);
   }
@@ -154,15 +229,17 @@ class OmrConvertClient {
     required String brief,
     required int bars,
   }) async {
-    final response = await _http
-        .post(
-          Uri.parse('${_config.baseUrl}/arrange/advice'),
-          headers: {..._headers, 'Content-Type': 'application/json'},
-          body: jsonEncode({'brief': brief, 'bars': bars}),
-        )
-        .timeout(const Duration(seconds: 90));
+    final response = await _authed(
+      (headers) => _http
+          .post(
+            Uri.parse('${_config.baseUrl}/arrange/advice'),
+            headers: {...headers, 'Content-Type': 'application/json'},
+            body: jsonEncode({'brief': brief, 'bars': bars}),
+          )
+          .timeout(const Duration(seconds: 90)),
+    );
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw OmrConvertException(_errorMessage(response));
+      throw _failure(response);
     }
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
     if (decoded is! Map) {
@@ -172,14 +249,16 @@ class OmrConvertClient {
   }
 
   Future<Uint8List> jobResult(String jobId) async {
-    final response = await _http
-        .get(
-          Uri.parse('${_config.baseUrl}/jobs/$jobId/result'),
-          headers: _headers,
-        )
-        .timeout(timeout);
+    final response = await _authed(
+      (headers) => _http
+          .get(
+            Uri.parse('${_config.baseUrl}/jobs/$jobId/result'),
+            headers: headers,
+          )
+          .timeout(timeout),
+    );
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw OmrConvertException(_errorMessage(response));
+      throw _failure(response);
     }
     if (response.bodyBytes.isEmpty) {
       throw const OmrConvertException('변환 결과가 비어 있습니다.');
@@ -256,9 +335,11 @@ class OmrConvertClient {
 
   Future<http.Response?> _optional(String path) async {
     try {
-      final response = await _http
-          .get(Uri.parse('${_config.baseUrl}$path'), headers: _headers)
-          .timeout(timeout);
+      final response = await _authed(
+        (headers) => _http
+            .get(Uri.parse('${_config.baseUrl}$path'), headers: headers)
+            .timeout(timeout),
+      );
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
       return response;
     } on Object {
@@ -274,6 +355,11 @@ class OmrConvertClient {
     }
     return OmrRemoteJob.fromJson(Map<String, Object?>.from(decoded));
   }
+
+  OmrConvertException _failure(http.Response response) =>
+      response.statusCode == 429
+      ? const OmrRateLimitedException()
+      : OmrConvertException(_errorMessage(response));
 
   String _errorMessage(http.Response response) {
     try {

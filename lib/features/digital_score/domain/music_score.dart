@@ -65,6 +65,16 @@ class MusicScore {
     );
   }
 
+  /// The number the first bar is called by: 0 when the score opens with a
+  /// pickup bar, as printed scores count from the first full bar, else 1.
+  /// Bar `index` is number `firstBarNumber + index` wherever a number shows.
+  int get firstBarNumber {
+    final first = parts.firstOrNull?.measures.firstOrNull;
+    return first != null && (first.implicit || first.number.trim() == '0')
+        ? 0
+        : 1;
+  }
+
   int get measureCount => parts.fold<int>(
     0,
     (maximum, part) =>

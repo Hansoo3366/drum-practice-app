@@ -6,9 +6,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/core/storage/song_file_storage.dart';
+import 'package:page_a_diddle/features/digital_score/data/digital_score_editor_service.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_service.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_quality.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_review.dart';
+import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/omr_original_crop.dart';
@@ -141,6 +143,33 @@ class _Crops implements OmrConvertService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// Keeps the versions saved from the screen instead of writing files.
+class _Versions implements DigitalScoreEditorService {
+  final saved = <String>[];
+
+  @override
+  Future<PlaybackSequence> loadSequence(
+    String songId, {
+    String versionId = scoreVersionOriginalId,
+  }) async => PlaybackSequence.empty;
+
+  @override
+  Future<ScoreVersionCatalog> addXmlVersion({
+    required String songId,
+    required String musicXml,
+    required ScoreVersionCatalog catalog,
+    required String name,
+    String? origin,
+    PlaybackSequence? sequence,
+  }) async {
+    saved.add(musicXml);
+    return catalog;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 Future<List<bool?>> _open(
   WidgetTester tester,
   _MemoryStorage storage,
@@ -148,6 +177,8 @@ Future<List<bool?>> _open(
   Set<String> checked = const {},
   List<OmrAnnotation> annotations = const [],
   String musicXml = _xml,
+  List<OmrReviewBar> bars = _bars,
+  _Versions? versions,
 }) async {
   tester.view.physicalSize = const Size(900, 1600);
   tester.view.devicePixelRatio = 1;
@@ -159,6 +190,8 @@ Future<List<bool?>> _open(
       overrides: [
         songFileStorageProvider.overrideWithValue(storage),
         omrConvertServiceProvider.overrideWithValue(crops),
+        if (versions != null)
+          digitalScoreEditorServiceProvider.overrideWithValue(versions),
       ],
       child: MaterialApp(
         locale: const Locale('ko'),
@@ -174,7 +207,7 @@ Future<List<bool?>> _open(
                       songId: 'song',
                       musicXml: musicXml,
                       catalog: ScoreVersionCatalog.empty,
-                      bars: _bars,
+                      bars: bars,
                       checked: checked,
                       annotations: annotations,
                     ),
@@ -256,6 +289,61 @@ void main() {
     await _settle(tester);
     expect(omrReviewChecked(storage.reviewState), isEmpty);
     expect(find.text('마디 2'), findsOneWidget);
+
+    await _close(tester);
+  });
+
+  testWidgets('a suggestion taken in after a save is added to what was saved', (
+    tester,
+  ) async {
+    OmrReviewBar bar(int index, String pitch) => OmrReviewBar(
+      partIndex: 0,
+      measureIndex: index,
+      measure: '${index + 1}',
+      issues: const [],
+      suggestions: [
+        OmrReviewSuggestion(
+          field: 'pitch',
+          note: 1,
+          current: index == 0 ? 'C5' : 'D5',
+          suggested: pitch,
+          confidence: 0.9,
+          applied: false,
+          status: 'notes',
+        ),
+      ],
+      uncertain: const [],
+    );
+    final versions = _Versions();
+    await _open(
+      tester,
+      _MemoryStorage(),
+      _Crops(),
+      bars: [bar(0, 'G4'), bar(1, 'A4')],
+      versions: versions,
+    );
+
+    Future<void> takeAndSave() async {
+      await tester.tap(find.text('이 마디에 넣기'));
+      await _settle(tester);
+      await tester.tap(find.text('저장'));
+      await _settle(tester);
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await _settle(tester);
+    }
+
+    await takeAndSave();
+    await tester.tap(find.byTooltip('다음 마디'));
+    await _settle(tester);
+    await takeAndSave();
+
+    List<String> steps(String xml) => [
+      for (final match in RegExp('<step>(.)</step>').allMatches(xml))
+        match.group(1)!,
+    ];
+    expect(steps(versions.saved[0]), ['G', 'D', 'E']);
+    // The second version has the first one's note too.
+    expect(steps(versions.saved[1]), ['G', 'A', 'E']);
 
     await _close(tester);
   });

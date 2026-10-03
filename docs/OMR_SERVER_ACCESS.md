@@ -7,9 +7,10 @@
 - SSH host: `34.10.15.222`
 - SSH user: `hanso3366`
 - 기본 작업 디렉터리: `/home/hanso3366`
-- API: `http://34.10.15.222:8080`
-- API 토큰: 저장소에 기록하지 않는다. 실행 환경의 `OMR_TOKEN` 환경변수나 비밀 저장소에서 주입한다.
-- 전용 개인키 경로(이 Mac): `~/.ssh/codex_omr_ed25519`
+- API: `https://34-10-15-222.sslip.io` (2026-10-03부터. 8080은 VM 안에서만 열려 있다)
+- 앱 키(`OMR_TOKEN`): 저장소에 기록하지 않는다. 값은 VM의 `/etc/default/omr`에 있고, 빌드하는 PC는 저장소 루트의 `dart_defines.local.json`(gitignore)에 둔다 — 아래 "빌드용 앱 키 파일".
+- 전용 개인키 경로(Mac): `~/.ssh/codex_omr_ed25519`
+- 전용 개인키 경로(Windows PC, 2026-10-03 등록): `~/.ssh/omr_deploy_ed25519` (`ssh -i ~/.ssh/omr_deploy_ed25519 -o IdentitiesOnly=yes hanso3366@34.10.15.222`)
 - 공개키 fingerprint: `SHA256:dRfq0j3MyQHJSuBHvKLyc45iE2+zPFiy0DVnAs2gy0Q`
 
 서버 IP는 VM 재생성·중지 후 바뀔 수 있으므로 접속 실패 시 `OmrConvertConfig.defaultBaseUrl`과 이 문서를 함께 갱신한다. 개인키 내용·API 토큰을 새 문서나 로그에 출력하지 않는다.
@@ -125,4 +126,35 @@ OMR_OCR_LANGUAGES=eng+kor
 - 파트 합치기: 첫 줄은 `Vocal`, 다음 줄부터 `Vo.`처럼 이름이 다르면 Audiveris가 파트를 따로 만들고 없는 줄을 쉼표 마디로 채운다(날 자녀라 하시네: 3파트 × 121마디). 실제로 인쇄된 마디에만 `width`가 있으므로 마디마다 인쇄된 파트가 정확히 하나일 때만 한 파트로 합친다. 모든 프로필에 적용한다.
 - 표지 쪽: 오선이 없는 쪽(표지)이 있으면 Audiveris가 책 전체 내보내기를 거부한다(`Could not export since transcription did not complete successfully`). 저장된 `.omr`에서 유효한 쪽만 `-sheets 2-9`로 다시 내보낸다(약 18초). 건너뛴 쪽은 `skipped_sheets`에 남는다.
 - 서버 패키지: 재인식에 `tesseract-ocr`(이미 설치됨), `python3-pil`(2026-09-28 설치)을 쓴다. `install.sh`에 추가했다. 한국어 데이터가 보조 언어로 `chi_tra`를 찾는 경고가 로그에 남지만 인식에는 영향이 없다.
+
+
+## HTTPS와 설치본 등록 (R-2, 2026-10-03 배포)
+
+서버는 설치본 등록(`POST /clients`)·하루 한도·작업 소유 확인을 한다(`omr_clients.py`). 2026-10-03에 한 일과 지금 상태:
+
+- 방화벽: 사용자가 콘솔에서 HTTP·HTTPS 허용.
+- `update.sh`로 새 서버 배포. 그 전 파일은 VM `~/omr_backup_20261003/`(저장소 커밋 `846c21d`의 서버 파일과 같음).
+- `sudo KEEP_HTTP=1 bash enable_https.sh 34-10-15-222.sslip.io` → Caddy 2.6.2(Ubuntu 패키지) 설치, 인증서 발급. 이어서 `/etc/default/omr`에 `OMR_TOKEN=<새 값>`, `OMR_LEGACY_TOKEN=0`, `OMR_HOST=127.0.0.1`을 넣고 재시작(그 전 파일은 `/etc/default/omr.bak-20261003`, 권한 600).
+- 등록 정보·하루 카운터: `/opt/omr/state/clients.json`, `/opt/omr/state/quota.json`.
+- 확인: `curl https://34-10-15-222.sslip.io/health` 200, `http://34.10.15.222:8080`은 밖에서 닫힘, 예전 키 401.
+- 설치 때 "새 커널을 쓰려면 재부팅" 안내가 나왔다. 재부팅하지 않았다.
+
+VM 주소가 바뀌면 sslip.io 이름도 바뀐다: `sudo bash enable_https.sh <새 이름>`을 다시 실행하고 `dart_defines.local.json`의 `OMR_BASE_URL`과 `OmrConvertConfig.defaultBaseUrl`을 고친다. 도메인을 쓰면 이 일이 없다.
+
+### 빌드용 앱 키 파일
+
+저장소 루트에 `dart_defines.local.json`이 있어야 변환이 되는 앱이 빌드된다(없으면 자리 표시 키로 401). 값을 화면에 찍지 않고 만든다:
+
+```bash
+ssh -i ~/.ssh/<키> hanso3366@34.10.15.222 'sudo grep ^OMR_TOKEN= /etc/default/omr | cut -d= -f2' | \
+  python3 -c "import sys,json; json.dump({'OMR_BASE_URL':'https://34-10-15-222.sslip.io','OMR_TOKEN':sys.stdin.read().strip()}, open('dart_defines.local.json','w'), indent=2)"
+flutter build apk --release --flavor piano -t lib/piano_main.dart \
+  --dart-define-from-file=dart_defines.json --dart-define-from-file=dart_defines.local.json
+```
+
+### 서버 코드를 다시 올릴 때
+
+`server/omr/`의 `omr_server.py`, `omr_*.py` 전부(`omr_clients.py` 포함), `ai_verify.py`, `update.sh`를 VM의 한 폴더에 올리고 `sudo bash update.sh <그 폴더>`. Windows에서 올릴 때는 줄바꿈이 LF인지 확인한다(작업 폴더의 `.py`는 CRLF일 수 있다 — `tr -d '\r'`로 걸러 올렸다). health 주소는 VM 안에서 여전히 `http://127.0.0.1:8080/health`다.
+
+한도 조정(`/etc/default/omr`, 하루·UTC): `OMR_CONVERT_PER_CLIENT`(30), `OMR_CONVERT_PER_ADDRESS`(60), `OMR_CONVERT_PER_DAY`(500), `OMR_AI_PER_CLIENT`(60), `OMR_AI_PER_ADDRESS`(120), `OMR_AI_PER_DAY`(1000), `OMR_REGISTER_PER_ADDRESS`(10), `OMR_REGISTER_PER_DAY`(500). 바꾼 뒤 `sudo systemctl restart omr.service`.
 

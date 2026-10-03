@@ -16,8 +16,12 @@ class ScorePlaybackBar extends StatefulWidget {
     this.sequenceSelected = false,
     this.arrangementSelected = false,
     this.padBottomSafeArea = true,
+    this.firstBarNumber = 1,
     super.key,
   });
+
+  /// The number of the score's first bar ([MusicScore.firstBarNumber]).
+  final int firstBarNumber;
 
   final ScorePlaybackState state;
   final VoidCallback onPlayPause;
@@ -47,6 +51,7 @@ class _ScorePlaybackBarState extends State<ScorePlaybackBar> {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final state = widget.state;
+    final barNumber = state.measureNumber - 1 + widget.firstBarNumber;
     final duration = state.durationMs.isFinite && state.durationMs > 0
         ? state.durationMs
         : 1.0;
@@ -140,12 +145,9 @@ class _ScorePlaybackBarState extends State<ScorePlaybackBar> {
                 _ClockLabel(value: formatPlaybackClock(state.durationMs)),
                 const SizedBox(width: 8),
                 Semantics(
-                  label: l10n.measureBeat(
-                    state.measureNumber,
-                    state.displayBeat,
-                  ),
+                  label: l10n.measureBeat(barNumber, state.displayBeat),
                   child: _ClockLabel(
-                    value: '${state.measureNumber} · ${state.displayBeat}',
+                    value: '$barNumber · ${state.displayBeat}',
                     width: 52,
                   ),
                 ),

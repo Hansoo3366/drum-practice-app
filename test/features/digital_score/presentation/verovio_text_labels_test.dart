@@ -116,7 +116,35 @@ void main() {
     expect(extractVerovioTextLabels(svg).map((label) => label.text), [
       '7',
       '1.',
-      '♩=115',
+      '♩ = 115',
+    ]);
+  });
+
+  test('keeps the spaces written inside a text, not the indentation', () {
+    const svg = '''
+<svg viewBox="0 0 100 100">
+  <g class="reh"><text x="5" y="10"><tspan class="text">
+    <tspan font-size="6px">Verse 1</tspan></tspan></text></g>
+  <g class="dir"><text x="5" y="20">
+    <tspan font-size="6px">D.S.  al</tspan>
+    <tspan font-size="6px"> Fine</tspan></text></g>
+  <g class="harm"><text x="5" y="30"><tspan font-size="6px">
+    G</tspan><tspan font-size="6px">/B
+  </tspan></text></g>
+  <g class="harm"><text x="5" y="40"><tspan font-size="6px">B </tspan>
+    <tspan font-family="Leipzig" font-size="9px"> &#xEA64;</tspan></text></g>
+  <g class="verse"><g class="syl"><text x="5" y="50">
+    <tspan font-size="6px">예 수</tspan></text></g></g>
+</svg>
+''';
+
+    expect(extractVerovioTextLabels(svg).map((label) => label.text), [
+      'Verse 1',
+      'D.S. al Fine',
+      'G/B',
+      // A chord symbol or a syllable is one word.
+      'B♭',
+      '예수',
     ]);
   });
 }

@@ -10,7 +10,7 @@ SERVER_SRC="$UPLOAD_DIR/omr_server.py"
 COMPARE_SRC="$UPLOAD_DIR/compare_musicxml.py"
 AI_SRC="$UPLOAD_DIR/ai_verify.py"
 # The server's modules; every one is required.
-MODULES=(omr_score omr_rules omr_book omr_marks omr_text omr_validate omr_annotations omr_ai)
+MODULES=(omr_score omr_rules omr_book omr_marks omr_text omr_validate omr_annotations omr_ai omr_clients)
 
 if [ ! -f "$SERVER_SRC" ]; then
   echo "omr_server.py not found in upload directory: $UPLOAD_DIR" >&2
@@ -41,6 +41,9 @@ for module in "${MODULES[@]}"; do
   sudo install -m 644 "$UPLOAD_DIR/$module.py" "/opt/omr/$module.py"
 done
 sudo install -m 755 "$SERVER_SRC" /opt/omr/omr_server.py
+# Registered installs and the day's counts: the service itself writes these.
+SERVICE_USER="$(systemctl show -p User --value omr.service 2>/dev/null || true)"
+sudo install -d -m 700 -o "${SERVICE_USER:-root}" /opt/omr/state
 if [ -f "$AI_SRC" ]; then
   python3 -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))' "$AI_SRC"
   sudo install -m 644 "$AI_SRC" /opt/omr/ai_verify.py
