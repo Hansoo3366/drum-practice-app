@@ -918,8 +918,8 @@ class AiLineTest(unittest.TestCase):
             items = omr_ai._ai_dataset(root, book, Path(folder))
             self.assertEqual([i["targets"] for i in items], [["1", "2"], ["4", "5"]])
             self.assertEqual([i["measureIndex"] for i in items], [[0, 1], [3, 4]])
-            picture = Image.open(Path(folder) / items[0]["image"])
-            self.assertEqual(picture.width, 1220)
+            with Image.open(Path(folder) / items[0]["image"]) as picture:
+                self.assertEqual(picture.width, 1220)
         prompt = omr_ai._ai_prompt(items[1])
         self.assertIn("measures 4, 5", prompt)
         self.assertIn("- measure 4:", prompt)
@@ -935,7 +935,8 @@ class AiLineTest(unittest.TestCase):
                 "placements": [[("1", 0, 0, [staff])]], "unmatched": []}
         with tempfile.TemporaryDirectory() as folder:
             items = omr_ai._ai_dataset(root, book, Path(folder))
-            self.assertEqual(Image.open(Path(folder) / items[0]["image"]).width, omr_ai.AI_LINE_WIDTH)
+            with Image.open(Path(folder) / items[0]["image"]) as picture:
+                self.assertEqual(picture.width, omr_ai.AI_LINE_WIDTH)
 
     def test_answers_for_a_line_are_sorted_into_its_measures(self):
         root = self._score(range(3))
@@ -955,7 +956,8 @@ class AiLineTest(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as folder:
             summary = omr_ai._ai_apply(root, items, answers, "test-model", Path(folder))
-            report = json.loads((Path(folder) / "ai_review.json").read_text())
+            report = json.loads(
+                (Path(folder) / "ai_review.json").read_text(encoding="utf-8"))
             self.assertTrue((Path(folder) / "ai.mxl").is_file())
         self.assertEqual((summary["measures"], summary["lines"], summary["errors"]), (3, 2, 1))
         self.assertEqual((summary["input_tokens"], summary["output_tokens"]), (900, 120))
@@ -1387,6 +1389,21 @@ class ArrangeAdviceTest(unittest.TestCase):
         self.assertEqual(advice["base"], {"pattern": "held", "register": "middle"})
         self.assertEqual((advice["sections"], advice["chords"]), ([], []))
 
+    def test_bars_may_be_numbered_from_a_pickup_bar_0(self):
+        answer = {"base": {"pattern": "held", "register": "middle"},
+                  "sections": [{"bar": 0, "role": "intro", "pattern": "held", "register": "middle"},
+                               {"bar": 3, "role": "verse", "pattern": "beats", "register": "low"},
+                               {"bar": 4, "role": "verse", "pattern": "beats", "register": "low"}],
+                  "chords": [{"bar": 0, "index": 1, "suggested": "G", "reason": ""}]}
+
+        from_one = omr_ai._arrange_clean(answer, bars=4)
+        from_zero = omr_ai._arrange_clean(answer, bars=4, first=0)
+
+        self.assertEqual([item["bar"] for item in from_one["sections"]], [3, 4])
+        self.assertEqual(from_one["chords"], [])
+        self.assertEqual([item["bar"] for item in from_zero["sections"]], [0, 3])
+        self.assertEqual([item["bar"] for item in from_zero["chords"]], [0])
+
     def _post(self, payload, authorized=True, enabled=True):
         request = types.SimpleNamespace(get_json=lambda silent=False: payload)
         with patch.object(omr_server, "request", request), \
@@ -1408,6 +1425,8 @@ class ArrangeAdviceTest(unittest.TestCase):
         self.assertEqual(ask.call_count, 1)
         self.assertEqual(ask.call_args.args[1], "bars: 4")
         self.assertEqual((bad[1], denied[1]), (400, 401))
+        # The first bar's number is 1, or 0 for a pickup; nothing else.
+        self.assertEqual(self._post({"brief": "bars: 4", "bars": 4, "first": 2})[1], 400)
 
     def test_endpoint_reports_a_failed_model_call(self):
         with patch("ai_verify.complete_json", side_effect=RuntimeError("OpenAI 429: quota")):
@@ -1647,9 +1666,9 @@ class AnnotationTest(unittest.TestCase):
                   {"part": 0, "measureIndex": 1}]
         with tempfile.TemporaryDirectory() as folder:
             omr_validate._crop_suspects(book, issues, Path(folder))
-            middle = Image.open(Path(folder) / issues[0]["image"])
-            # Bars 1-3 with a margin of one interline: 90..1310, 1220 wide.
-            self.assertEqual(middle.width, 1220)
+            with Image.open(Path(folder) / issues[0]["image"]) as middle:
+                # Bars 1-3 with a margin of one interline: 90..1310, 1220 wide.
+                self.assertEqual(middle.width, 1220)
         self.assertEqual(issues[0]["focus"], [round(410 / 1220, 4), round(810 / 1220, 4)])
         # The first bar has no bar before it: its crop starts with it.
         self.assertEqual(issues[1]["focus"], [round(10 / 820, 4), 0.5])
@@ -1674,12 +1693,14 @@ class AnnotationTest(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as folder:
             omr_validate._crop_systems(book, Path(folder))
-            layout = json.loads((Path(folder) / "layout.json").read_text())["parts"][0]
-            line = Image.open(Path(folder) / "systems" / "p1-s1.jpg")
+            layout = json.loads(
+                (Path(folder) / "layout.json").read_text(encoding="utf-8"))["parts"][0]
+            with Image.open(Path(folder) / "systems" / "p1-s1.jpg") as line:
+                size = line.size
             self.assertEqual(sorted(p.name for p in (Path(folder) / "systems").iterdir()),
                              ["p1-s1.jpg", "p1-s2.jpg"])
         # The line from 90 to 1310 (one interline of margin), 1220 wide.
-        self.assertEqual(line.size, (1220, 180))
+        self.assertEqual(size, (1220, 180))
         self.assertEqual([m and m["image"] for m in layout],
                          ["p1-s1.jpg", "p1-s1.jpg", "p1-s2.jpg", "p1-s2.jpg", None])
         self.assertEqual(layout[0]["focus"], [round(10 / 1220, 4), round(410 / 1220, 4)])
@@ -1694,7 +1715,8 @@ class AnnotationTest(unittest.TestCase):
                 "placements": [[("1", 0, 0, [staff])]], "unmatched": []}
         with tempfile.TemporaryDirectory() as folder:
             omr_validate._crop_systems(book, Path(folder))
-            self.assertEqual(Image.open(Path(folder) / "systems" / "p1-s1.jpg").width, 1600)
+            with Image.open(Path(folder) / "systems" / "p1-s1.jpg") as line:
+                self.assertEqual(line.width, 1600)
 
     def test_ink_over_a_measure_marks_it_for_review(self):
         root = ET.fromstring(

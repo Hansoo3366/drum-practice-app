@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
 import 'package:page_a_diddle/app/widgets/app_empty_state.dart';
+import 'package:page_a_diddle/core/platform/screen_awake.dart';
 import 'package:page_a_diddle/core/score_engine/alphatab_bridge.dart';
 import 'package:page_a_diddle/core/storage/song_file_storage.dart';
 import 'package:page_a_diddle/features/digital_score/data/digital_score_data.dart';
@@ -50,6 +51,7 @@ import 'package:page_a_diddle/features/digital_score/presentation/score_proofrea
 import 'package:page_a_diddle/features/digital_score/presentation/score_structure_controller.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_transpose_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
+import 'package:page_a_diddle/features/library/presentation/edit_song_sheet.dart';
 
 part 'digital_score_screen_widgets.dart';
 
@@ -83,6 +85,9 @@ class DigitalScoreScreen extends ConsumerStatefulWidget {
 
 class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   final _playback = PianoScorePlaybackController();
+
+  /// The practice tempo, in percent of the written one.
+  int _tempoPercent = 100;
   final _scoreViewKey = GlobalKey<VerovioScoreViewState>();
   final Map<String, MusicScoreEditor> _versionEditors = {};
   final Map<String, String> _versionXml = {};
@@ -140,7 +145,16 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   NoteCaret? _caret;
 
   @override
+  void initState() {
+    super.initState();
+    // A score is read with the hands on the instrument: the screen stays
+    // on while it is open, as every score reader keeps it.
+    unawaited(ScreenAwake.hold(this));
+  }
+
+  @override
   void dispose() {
+    unawaited(ScreenAwake.release(this));
     _structure.dispose();
     _playback.stop();
     _playback.dispose();
@@ -415,7 +429,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         fileName: exported.fileName,
         type: FileType.custom,
         allowedExtensions: [exported.extension],
-        bytes: exported.bytes,
+        bytes: _namedAsGiven(exported.bytes),
       );
       if (!mounted || savedPath == null) return;
       messenger.showSnackBar(SnackBar(content: Text(context.l10n.done)));
@@ -425,6 +439,21 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     } finally {
       if (mounted) setState(() => _exporting = false);
     }
+  }
+
+  /// [bytes] so that the system saves them under the name the app gives.
+  ///
+  /// Android does not know the ".musicxml" extension and then goes by the
+  /// content: a file that starts with `<?xml ` is taken for XML and saved as
+  /// "….musicxml.xml". A tab after `<?xml` is the same declaration to every
+  /// XML reader, and the name stays.
+  static Uint8List _namedAsGiven(Uint8List bytes) {
+    const declaration = [0x3C, 0x3F, 0x78, 0x6D, 0x6C, 0x20]; // "<?xml "
+    if (bytes.length < declaration.length) return bytes;
+    for (var i = 0; i < declaration.length; i++) {
+      if (bytes[i] != declaration[i]) return bytes;
+    }
+    return Uint8List.fromList(bytes)..[declaration.length - 1] = 0x09;
   }
 
   /// The export made from the version's own file, so nothing the editing
@@ -1044,6 +1073,43 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     });
   }
 
+  /// Title, artist, folder and labels, from the score itself: a converted
+  /// score is named after its file and nearly always needs a better title.
+  Future<void> _editSongInfo(DigitalScoreData data) async {
+    await showEditSongSheet(context, song: data.song);
+    if (mounted) ref.invalidate(digitalScoreDataProvider(widget.songId));
+  }
+
+  Future<void> _renameActiveVersion(DigitalScoreData data) async {
+    final versionId = _activeVersionId;
+    if (versionId == scoreVersionOriginalId) return;
+    final current = _versionCatalog.versions
+        .where((version) => version.id == versionId)
+        .firstOrNull;
+    if (current == null) return;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => _ScoreVersionDialog(initialName: current.name),
+    );
+    if (!mounted || name == null || name.trim().isEmpty) return;
+    try {
+      final next = await ref
+          .read(digitalScoreEditorServiceProvider)
+          .renameVersion(
+            songId: data.song.id,
+            versionId: versionId,
+            name: name,
+            catalog: _versionCatalog,
+          );
+      if (mounted) setState(() => _versionCatalog = next);
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.l10n.saveFailed)));
+    }
+  }
+
   Future<void> _deleteActiveVersion(DigitalScoreData data) async {
     if (_activeVersionId == scoreVersionOriginalId) return;
     final confirmed = await showDialog<bool>(
@@ -1105,7 +1171,16 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
 
   void _togglePlayback() {
     setState(() => _playbackEnabled = !_playbackEnabled);
-    if (!_playbackEnabled) _playback.stop();
+    if (!_playbackEnabled) {
+      _playback.stop();
+      return;
+    }
+    // The button is a play button: one press plays. The bar it opens is
+    // where the music is paused, moved and stopped.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_playbackEnabled || _playback.state.playing) return;
+      unawaited(_playback.playPause());
+    });
   }
 
   void _toggleSequencePanel() {
@@ -1352,6 +1427,10 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         unawaited(_fetchAiVersion(data));
       case _ScoreMenuAction.deleteVersion:
         unawaited(_deleteActiveVersion(data));
+      case _ScoreMenuAction.renameVersion:
+        unawaited(_renameActiveVersion(data));
+      case _ScoreMenuAction.songInfo:
+        unawaited(_editSongInfo(data));
       case _ScoreMenuAction.transpose:
         unawaited(_transpose(data, score));
       case _ScoreMenuAction.threeStaff:
@@ -1590,14 +1669,18 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
           if (section.name.isNotEmpty && !section.continued)
             (
               name: '${section.name.toLowerCase()}${section.number ?? ''}',
-              start: section.startMeasureIndex + 1,
-              end: section.endMeasureIndex + 1,
+              start: section.startMeasureIndex + score.firstBarNumber,
+              end: section.endMeasureIndex + score.firstBarNumber,
             ),
       ],
     );
     final answer = await ref
         .read(omrConvertClientProvider)
-        .arrangementAdvice(brief: brief, bars: score.measureCount);
+        .arrangementAdvice(
+          brief: brief,
+          bars: score.measureCount,
+          firstBar: score.firstBarNumber,
+        );
     return ArrangementAdvice.fromJson(answer, source);
   }
 
@@ -1639,6 +1722,11 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       return;
     }
     final editor = _editor;
+    if (!_editing && _playbackEnabled) {
+      // With the player open a press on a bar plays from that bar.
+      unawaited(_playback.playFromMeasure(measureIndex));
+      return;
+    }
     if (!_editing || editor == null) return;
     final measures = editor.score.parts.first.measures;
     if (measureIndex < 0 || measureIndex >= measures.length) return;
@@ -1967,39 +2055,42 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                       onPressed: () => _save(value, editor),
                       icon: const Icon(Icons.save_rounded),
                     ),
-                  DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: _activeVersionId,
-                      borderRadius: BorderRadius.circular(12),
-                      selectedItemBuilder: (context) => [
-                        for (final version in _versionCatalog.selectable)
-                          ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxWidth: compact ? 96 : 200,
-                            ),
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                _versionLabel(version),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                  if (_versionCatalog.selectable.length > 1)
+                    DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _activeVersionId,
+                        borderRadius: BorderRadius.circular(12),
+                        selectedItemBuilder: (context) => [
+                          for (final version in _versionCatalog.selectable)
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: compact ? 96 : 200,
+                              ),
+                              // As wide as its words: the song's title
+                              // gets what is left.
+                              child: Center(
+                                widthFactor: 1,
+                                child: Text(
+                                  _versionLabel(version),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                             ),
-                          ),
-                      ],
-                      items: [
-                        for (final version in _versionCatalog.selectable)
-                          DropdownMenuItem(
-                            value: version.id,
-                            child: Text(_versionLabel(version)),
-                          ),
-                      ],
-                      onChanged: (id) {
-                        if (id == null) return;
-                        unawaited(_switchVersion(versionId: id, data: value));
-                      },
+                        ],
+                        items: [
+                          for (final version in _versionCatalog.selectable)
+                            DropdownMenuItem(
+                              value: version.id,
+                              child: Text(_versionLabel(version)),
+                            ),
+                        ],
+                        onChanged: (id) {
+                          if (id == null) return;
+                          unawaited(_switchVersion(versionId: id, data: value));
+                        },
+                      ),
                     ),
-                  ),
                   if (!compact)
                     IconButton(
                       tooltip: context.l10n.playbackSequence,
@@ -2057,7 +2148,18 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                   else
                     PopupMenuButton<_ScoreMenuAction>(
                       tooltip: context.l10n.scoreTools,
-                      icon: const Icon(Icons.more_vert_rounded),
+                      icon: Badge(
+                        isLabelVisible:
+                            compact &&
+                            value.omrJobId != null &&
+                            (value.quality?.issues.isNotEmpty ?? false),
+                        // The button is still called by its tooltip, not
+                        // by the number on it.
+                        label: ExcludeSemantics(
+                          child: Text('${value.quality?.issues.length ?? 0}'),
+                        ),
+                        child: const Icon(Icons.more_vert_rounded),
+                      ),
                       onSelected: (action) =>
                           _onMenuSelected(action, value, score),
                       itemBuilder: (context) => [
@@ -2099,6 +2201,25 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                             ),
                           const PopupMenuDivider(),
                         ],
+                        PopupMenuItem(
+                          value: _ScoreMenuAction.songInfo,
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.info_outline_rounded),
+                            title: Text(context.l10n.songInfo),
+                          ),
+                        ),
+                        if (_activeVersionId != scoreVersionOriginalId)
+                          PopupMenuItem(
+                            value: _ScoreMenuAction.renameVersion,
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(
+                                Icons.drive_file_rename_outline_rounded,
+                              ),
+                              title: Text(context.l10n.renameScoreVersion),
+                            ),
+                          ),
                         // The AI version is fetched from here on every screen
                         // size: the toolbar has no button for it.
                         if (value.omrJobId != null &&
@@ -2184,10 +2305,10 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                     child: VerovioScoreView(
                       key: _scoreViewKey,
                       score: score,
-                      // Playback order does not change the notation, so an
-                      // unsaved order keeps the source engraving.
-                      engravingXml:
-                          (_editing || editor.isDirty || _arrangement.isNotOff)
+                      // Neither the playback order nor the accompaniment
+                      // (heard, not written) changes the notation, so the
+                      // source engraving stays: its lines, tuplets, signs.
+                      engravingXml: (_editing || editor.isDirty)
                           ? null
                           : _activeVersionId == scoreVersionOriginalId
                           ? value.sourceXml
@@ -2201,6 +2322,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                       playbackArrangement: _playbackEnabled
                           ? _arrangement
                           : ArrangementProfile.off,
+                      tempoPercent: _tempoPercent,
                       semanticsLabel: value.song.title,
                       playback: _playback,
                       playbackVisible: _playbackEnabled,
@@ -2264,18 +2386,26 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                     ListenableBuilder(
                       listenable: _playback,
                       builder: (context, _) {
-                        return ScorePlaybackBar(
-                          state: _playback.state,
-                          firstBarNumber: score.firstBarNumber,
-                          padBottomSafeArea: !_editing,
-                          onPlayPause: () => _playback.playPause(),
-                          onStop: () => _playback.stop(),
-                          onSeek: (positionMs) => _playback.seek(positionMs),
-                          onEditSequence: _toggleSequencePanel,
-                          onEditArrangement: () =>
-                              unawaited(_editArrangement(score)),
-                          sequenceSelected: _showSequencePanel,
-                          arrangementSelected: _arrangement.isNotOff,
+                        // The bar and the panel below sit on the score's
+                        // white, in a dark theme too.
+                        return Theme(
+                          data: AppTheme.light,
+                          child: ScorePlaybackBar(
+                            state: _playback.state,
+                            firstBarNumber: score.firstBarNumber,
+                            padBottomSafeArea: !_editing,
+                            onPlayPause: () => _playback.playPause(),
+                            onStop: () => _playback.stop(),
+                            onSeek: (positionMs) => _playback.seek(positionMs),
+                            onEditSequence: _toggleSequencePanel,
+                            onEditArrangement: () =>
+                                unawaited(_editArrangement(score)),
+                            tempoPercent: _tempoPercent,
+                            onTempo: (percent) =>
+                                setState(() => _tempoPercent = percent),
+                            sequenceSelected: _showSequencePanel,
+                            arrangementSelected: _arrangement.isNotOff,
+                          ),
                         );
                       },
                     ),
@@ -2288,34 +2418,40 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                       onDrag: _startMeasureDrag,
                     ),
                   if (_showSequencePanel)
-                    ScoreStructurePanel(
-                      tab: _structureTab,
-                      onTabChanged: (tab) =>
-                          setState(() => _structureTab = tab),
-                      sequence: _sequence,
-                      sections: sections,
-                      firstBarNumber: score.firstBarNumber,
-                      selectedBar: _structure.pickStart,
-                      selectedEnd: pickedEnd,
-                      picking: selectedSection == null && _structure.pickingEnd,
-                      onCancelPick: _structure.clearPick,
-                      summary: _sequenceSummary(score),
-                      canUndo: _structure.canUndo,
-                      onUndo: _structure.undo,
-                      onClose: () => unawaited(_closeStructurePanel()),
-                      onSectionNamed: (name) => _nameSection(score, name),
-                      onCustomSection: () =>
-                          unawaited(_nameSectionCustom(score)),
-                      onBoundaryRemoved: () => _removeSectionBoundary(score),
-                      onStepsChanged: (steps) =>
-                          _structure.update(_sequence.copyWith(steps: steps)),
-                      onBuildFromScore: () => _structure.update(
-                        writtenOrderSequence(score, _sequence),
+                    Theme(
+                      data: AppTheme.light,
+                      child: ScoreStructurePanel(
+                        tab: _structureTab,
+                        onTabChanged: (tab) =>
+                            setState(() => _structureTab = tab),
+                        sequence: _sequence,
+                        sections: sections,
+                        firstBarNumber: score.firstBarNumber,
+                        stepBars: playbackStepBars(score, _sequence),
+                        selectedBar: _structure.pickStart,
+                        selectedEnd: pickedEnd,
+                        picking:
+                            selectedSection == null && _structure.pickingEnd,
+                        onCancelPick: _structure.clearPick,
+                        summary: _sequenceSummary(score),
+                        canUndo: _structure.canUndo,
+                        onUndo: _structure.undo,
+                        onClose: () => unawaited(_closeStructurePanel()),
+                        onSectionNamed: (name) => _nameSection(score, name),
+                        onCustomSection: () =>
+                            unawaited(_nameSectionCustom(score)),
+                        onBoundaryRemoved: () => _removeSectionBoundary(score),
+                        onStepsChanged: (steps) =>
+                            _structure.update(_sequence.copyWith(steps: steps)),
+                        onBuildFromScore: () => _structure.update(
+                          writtenOrderSequence(score, _sequence),
+                        ),
+                        madeScoreExists: _scoreFromOrder != null,
+                        onMakeScore: _saving
+                            ? null
+                            : () =>
+                                  unawaited(_openScoreFromOrder(value, editor)),
                       ),
-                      madeScoreExists: _scoreFromOrder != null,
-                      onMakeScore: _saving
-                          ? null
-                          : () => unawaited(_openScoreFromOrder(value, editor)),
                     ),
                   if (_editing)
                     ScoreEditorPanel(

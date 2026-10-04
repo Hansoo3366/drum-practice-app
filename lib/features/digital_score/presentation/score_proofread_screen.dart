@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
@@ -61,7 +62,9 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   static const _historyCharacters = 8 * 1000 * 1000;
 
   /// A Verovio page narrower than A4 engraves the bar larger. Phones get the
-  /// narrowest page so notes stay big enough to tap.
+  /// narrowest page so notes stay big enough to tap. (Narrower still was
+  /// tried for bars of few notes: the notes grow, but chord names and words
+  /// then run into each other.)
   static Size _pageSizeFor(double viewportWidth) =>
       Size((viewportWidth * 1.1).clamp(800, 1100).roundToDouble(), 1400);
 
@@ -142,6 +145,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   @override
   void initState() {
     super.initState();
+    _playback.addListener(_onPlayback);
     _measureIndex = _measureIndex.clamp(0, _measureCount - 1);
     _refresh(select: 0);
     unawaited(_loadPlaces());
@@ -156,6 +160,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   @override
   void dispose() {
+    _playback.removeListener(_onPlayback);
     _playback.dispose();
     super.dispose();
   }
@@ -327,6 +332,84 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     _apply((xml, ref) => _editor.setHarmony(xml, ref, text));
   }
 
+  bool _barPlaying = false;
+
+  /// The player says when the bar starts and stops sounding. It also
+  /// speaks from inside the engraving's own build, when nothing may be
+  /// rebuilt: the button is then drawn again after the frame.
+  void _onPlayback() {
+    final playing = _playback.state.playing;
+    if (playing == _barPlaying || !mounted) return;
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _barPlaying = _playback.state.playing);
+      });
+    } else {
+      setState(() => _barPlaying = playing);
+    }
+  }
+
+  /// Plays the bar from its start, or stops it.
+  Future<void> _playBar() async {
+    if (_playback.state.playing) {
+      await _playback.stop();
+      return;
+    }
+    await _playback.stop();
+    await _playback.playPause();
+  }
+
+  /// How the bar's notes fall short of or run over its time, in beats of
+  /// the time signature; null when they fit. A converted bar that does not
+  /// add up is the first thing to look at. The first bar may be a pickup.
+  double? get _lengthOff {
+    final bar = _previewMeasure;
+    final time = bar.attributes.time;
+    if (time == null || bar.attributes.divisions <= 0) return null;
+    if (bar.notes.isEmpty) return null;
+    final beat = 4 / time.beatType;
+    final off =
+        bar.durationDivisions / bar.attributes.divisions / beat - time.beats;
+    if (off.abs() < 1e-6) return null;
+    if (_measureIndex == 0 && off < 0) return null;
+    return off;
+  }
+
+  /// Corrects the word under the selected note. The keyboard's "next" writes
+  /// it and goes on to the next sung note, so a line of misread words is
+  /// typed in one go.
+  Future<void> _editLyric() async {
+    while (mounted) {
+      final summary = _summary;
+      final index = _noteIndex;
+      if (_ref == null || summary == null || index == null) return;
+      if (summary.isRest || summary.isGrace) return;
+      final initial = summary.lyric ?? '';
+      final result = await showDialog<({String text, bool next})>(
+        context: context,
+        builder: (_) => _LyricDialog(initial: initial),
+      );
+      if (result == null || !mounted) return;
+      if (result.text != initial) {
+        _apply((xml, ref) => _editor.setLyric(xml, ref, result.text));
+      }
+      if (!result.next) return;
+      // The next note that is sung: not a rest, an ornament, or another
+      // note of the same chord.
+      final notes = _bar.notes;
+      var next = index + 1;
+      while (next < notes.length &&
+          (notes[next].isRest ||
+              notes[next].isGrace ||
+              !notes[next].leadsChord)) {
+        next++;
+      }
+      if (next >= notes.length) return;
+      _selectNote(next);
+    }
+  }
+
   void _insertBar() => _apply(
     _editor.insertMeasureAfter,
     bars: (bars, at) => [...bars]..insert(at + 1, _nextBarId++),
@@ -462,11 +545,13 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         score: _previewScore,
         engravingXml: _preview,
         engravingPageSize: _pageSizeFor(constraints.maxWidth),
+        showZoomControls: false,
         semanticsLabel: l10n.proofreadBar(
           _measureIndex + _firstBarNumber,
           _measureCount - 1 + _firstBarNumber,
         ),
         playback: _playback,
+        playbackVisible: true,
         inputMode: 'select',
         oneFingerPan: true,
         onEventTapped: _onEventTapped,
@@ -498,6 +583,9 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       child: Scaffold(
         backgroundColor: AppColors.canvas,
         appBar: AppBar(
+          // No gap before the title: on a small phone the three buttons and
+          // Save would push the screen's name out.
+          titleSpacing: 0,
           title: Text(l10n.proofread),
           actions: [
             if (_places != null)
@@ -547,29 +635,68 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                             height: beside
                                 ? null
                                 : (area.maxHeight * 0.3).clamp(90.0, 190.0),
-                            child: _OriginalStrip(
-                              place: _place,
-                              image: _place == null
-                                  ? null
-                                  : _original(_place!.image),
-                              beside: beside,
+                            // Two pictures of one bar: each says which it
+                            // is.
+                            child: _Captioned(
+                              caption: l10n.scoreOriginal,
+                              child: _OriginalStrip(
+                                place: _place,
+                                image: _place == null
+                                    ? null
+                                    : _original(_place!.image),
+                                beside: beside,
+                              ),
                             ),
                           ),
                         // Keyed: showing or hiding the original must not
                         // make the engraving start over.
                         Expanded(
                           key: const ValueKey('engraving'),
-                          child: _engraving(l10n, selectedEvent),
+                          child: _Captioned(
+                            caption: _showOriginal && _places != null
+                                ? '${l10n.proofreadNow} · ${l10n.proofreadPick}'
+                                : l10n.proofreadPick,
+                            child: _engraving(l10n, selectedEvent),
+                          ),
                         ),
                       ],
                     );
                   },
                 ),
               ),
+              if (_lengthOff case final off?)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.warning_amber_rounded,
+                        size: 16,
+                        color: AppColors.accent,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        off < 0
+                            ? l10n.barTooShort(_beats(-off))
+                            : l10n.barTooLong(_beats(off)),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: AppColors.accent,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               const Divider(height: 1, color: AppColors.border),
+              // Every tool has a group, and every group a name: a first
+              // look at the screen says what there is to do (the bar, the
+              // note, its words, its length, its pitch) before a single
+              // sign has to be understood.
               _Toolbar(
                 children: [
-                  _ToolRow(
+                  _ToolGroup(
+                    label: l10n.barMenu,
                     children: [
                       _ToolButton(
                         tooltip: l10n.previousBar,
@@ -598,43 +725,80 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                             : null,
                         child: const Icon(Icons.chevron_right_rounded),
                       ),
-                      const _ToolGap(),
-                      _ToolButton(
-                        tooltip: l10n.insertMeasureAfter,
-                        onPressed: _insertBar,
-                        child: const Icon(Icons.add_box_outlined),
+                      _BarMenuButton(
+                        tooltip: l10n.barMenuTooltip,
+                        label: l10n.barEdit,
+                        items: [
+                          (
+                            icon: Icons.add_box_outlined,
+                            label: l10n.insertMeasureAfter,
+                            onPressed: _insertBar,
+                          ),
+                          (
+                            icon: Icons.copy_all_rounded,
+                            label: l10n.duplicateMeasure,
+                            onPressed: _duplicateBar,
+                          ),
+                          (
+                            icon: Icons.keyboard_double_arrow_left,
+                            label: l10n.moveMeasureEarlier,
+                            onPressed: _measureIndex > 0
+                                ? () => _moveBar(-1)
+                                : null,
+                          ),
+                          (
+                            icon: Icons.keyboard_double_arrow_right,
+                            label: l10n.moveMeasureLater,
+                            onPressed: _measureIndex < _measureCount - 1
+                                ? () => _moveBar(1)
+                                : null,
+                          ),
+                          (
+                            icon: Icons.text_fields_rounded,
+                            label: l10n.barTexts,
+                            onPressed: summary != null && _hasTexts
+                                ? () => unawaited(_editTexts())
+                                : null,
+                          ),
+                          (
+                            icon: Icons.delete_outline_rounded,
+                            label: l10n.deleteMeasure,
+                            onPressed: _measureCount > 1 ? _deleteBar : null,
+                          ),
+                        ],
                       ),
+                      // The bar as it sounds now: a correction is checked
+                      // by ear as well as against the original.
                       _ToolButton(
-                        tooltip: l10n.duplicateMeasure,
-                        onPressed: _duplicateBar,
-                        child: const Icon(Icons.copy_all_rounded),
+                        tooltip: _barPlaying ? l10n.stop : l10n.playBar,
+                        selected: _barPlaying,
+                        onPressed: _playBar,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _barPlaying
+                                  ? Icons.stop_rounded
+                                  : Icons.play_arrow_rounded,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 2),
+                            Text(_barPlaying ? l10n.stop : l10n.listen),
+                          ],
+                        ),
                       ),
-                      _ToolButton(
-                        tooltip: l10n.deleteMeasure,
-                        onPressed: _measureCount > 1 ? _deleteBar : null,
-                        child: const Icon(Icons.delete_outline_rounded),
-                      ),
-                      _ToolButton(
-                        tooltip: l10n.moveMeasureEarlier,
-                        onPressed: _measureIndex > 0
-                            ? () => _moveBar(-1)
-                            : null,
-                        child: const Icon(Icons.keyboard_double_arrow_left),
-                      ),
-                      _ToolButton(
-                        tooltip: l10n.moveMeasureLater,
-                        onPressed: _measureIndex < _measureCount - 1
-                            ? () => _moveBar(1)
-                            : null,
-                        child: const Icon(Icons.keyboard_double_arrow_right),
-                      ),
-                      const _ToolGap(),
+                    ],
+                  ),
+                  // The note: which one, then what is done to it.
+                  _ToolGroup(
+                    label: l10n.toolsNote,
+                    children: [
                       _ToolButton(
                         tooltip: l10n.previousNote,
                         onPressed: (_noteIndex ?? 0) > 0
                             ? () => _selectNote(_noteIndex! - 1)
                             : null,
-                        child: const Icon(Icons.first_page_rounded),
+                        child: const Icon(Icons.chevron_left_rounded),
                       ),
                       _ToolButton(
                         tooltip: l10n.nextNote,
@@ -643,11 +807,70 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                                 _noteIndex! < _previewMeasure.notes.length - 1
                             ? () => _selectNote(_noteIndex! + 1)
                             : null,
-                        child: const Icon(Icons.last_page_rounded),
+                        child: const Icon(Icons.chevron_right_rounded),
+                      ),
+                      const _ToolGap(),
+                      _ToolButton(
+                        tooltip: l10n.addChordTone,
+                        onPressed: hasNote
+                            ? () => _apply(_editor.addChordNote)
+                            : null,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.add_rounded, size: 18),
+                            Text(l10n.addChordTone),
+                          ],
+                        ),
+                      ),
+                      // One place for the two opposite things: a note is
+                      // taken away, a rest is made a note.
+                      if (summary != null && summary.isRest)
+                        _ToolButton(
+                          tooltip: l10n.restToNote,
+                          onPressed: () => _apply(_editor.restToNote),
+                          child: Text(l10n.restToNote),
+                        )
+                      else
+                        _ToolButton(
+                          tooltip: l10n.deleteNote,
+                          onPressed: hasNote
+                              ? () => _apply(_editor.deleteNote)
+                              : null,
+                          child: Text(l10n.erase),
+                        ),
+                    ],
+                  ),
+                  // The words at the note, each shown as it is now.
+                  _ToolGroup(
+                    label: l10n.toolsWords,
+                    children: [
+                      _ToolButton(
+                        tooltip: l10n.chordSymbol,
+                        onPressed: summary != null && !summary.isGrace
+                            ? () => unawaited(_editChordSymbol())
+                            : null,
+                        child: _ValueLabel(
+                          value: summary?.harmony,
+                          empty: l10n.chordSymbol,
+                        ),
+                      ),
+                      // What a converted lead sheet gets wrong most often
+                      // after the notes themselves.
+                      _ToolButton(
+                        tooltip: l10n.lyric,
+                        onPressed: hasNote
+                            ? () => unawaited(_editLyric())
+                            : null,
+                        child: _ValueLabel(
+                          value: summary?.lyric,
+                          empty: l10n.lyric,
+                        ),
                       ),
                     ],
                   ),
-                  _ToolRow(
+                  _ToolGroup(
+                    label: l10n.toolsLength,
                     children: [
                       for (final type in noteDurationTypes)
                         _ToolButton(
@@ -682,7 +905,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                       ),
                     ],
                   ),
-                  _ToolRow(
+                  _ToolGroup(
+                    label: l10n.toolsPitch,
                     children: [
                       _ToolButton(
                         tooltip: l10n.noteStepUp,
@@ -691,7 +915,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                                 (xml, ref) => _editor.moveDiatonic(xml, ref, 1),
                               )
                             : null,
-                        child: const Icon(Icons.keyboard_arrow_up_rounded),
+                        child: const Icon(Icons.arrow_upward_rounded),
                       ),
                       _ToolButton(
                         tooltip: l10n.noteStepDown,
@@ -701,8 +925,9 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                                     _editor.moveDiatonic(xml, ref, -1),
                               )
                             : null,
-                        child: const Icon(Icons.keyboard_arrow_down_rounded),
+                        child: const Icon(Icons.arrow_downward_rounded),
                       ),
+                      // "8" is how an octave is written on a score (8va).
                       _ToolButton(
                         tooltip: l10n.octaveUp,
                         onPressed: hasNote
@@ -710,9 +935,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                                 (xml, ref) => _editor.shiftOctave(xml, ref, 1),
                               )
                             : null,
-                        child: const Icon(
-                          Icons.keyboard_double_arrow_up_rounded,
-                        ),
+                        child: const _OctaveLabel(up: true),
                       ),
                       _ToolButton(
                         tooltip: l10n.octaveDown,
@@ -721,9 +944,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                                 (xml, ref) => _editor.shiftOctave(xml, ref, -1),
                               )
                             : null,
-                        child: const Icon(
-                          Icons.keyboard_double_arrow_down_rounded,
-                        ),
+                        child: const _OctaveLabel(up: false),
                       ),
                       const _ToolGap(),
                       for (final (alter, glyph, label) in [
@@ -745,53 +966,6 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                             style: const TextStyle(fontSize: 22, height: 1),
                           ),
                         ),
-                    ],
-                  ),
-                  _ToolRow(
-                    children: [
-                      _ToolButton(
-                        tooltip: l10n.addChordTone,
-                        onPressed: hasNote
-                            ? () => _apply(_editor.addChordNote)
-                            : null,
-                        child: const Icon(Icons.add_rounded),
-                      ),
-                      _ToolButton(
-                        tooltip: l10n.deleteNote,
-                        onPressed: hasNote
-                            ? () => _apply(_editor.deleteNote)
-                            : null,
-                        child: const Icon(Icons.backspace_outlined),
-                      ),
-                      _ToolButton(
-                        tooltip: l10n.restToNote,
-                        onPressed: summary != null && summary.isRest
-                            ? () => _apply(_editor.restToNote)
-                            : null,
-                        child: const Icon(Icons.music_note_rounded),
-                      ),
-                      const _ToolGap(),
-                      _ToolButton(
-                        tooltip: l10n.chordSymbol,
-                        wide: true,
-                        onPressed: summary != null && !summary.isGrace
-                            ? () => unawaited(_editChordSymbol())
-                            : null,
-                        child: Text(
-                          summary?.harmony?.isNotEmpty == true
-                              ? summary!.harmony!
-                              : l10n.chordSymbol,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      _ToolButton(
-                        tooltip: l10n.barTexts,
-                        onPressed: summary != null && _hasTexts
-                            ? () => unawaited(_editTexts())
-                            : null,
-                        child: const Icon(Icons.text_fields_rounded),
-                      ),
                     ],
                   ),
                 ],
@@ -871,6 +1045,22 @@ class _OriginalStrip extends StatelessWidget {
   }
 }
 
+/// Tool buttons are smaller on a narrow phone, so a group stays on one
+/// line there too.
+class _ToolSize extends InheritedWidget {
+  const _ToolSize({required this.compact, required super.child});
+
+  final bool compact;
+
+  static bool compactOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_ToolSize>()?.compact ?? false;
+
+  @override
+  bool updateShouldNotify(_ToolSize oldWidget) => oldWidget.compact != compact;
+}
+
+/// The groups of tools, side by side where there is room and one under the
+/// other where there is not. A group is never broken in two.
 class _Toolbar extends StatelessWidget {
   const _Toolbar({required this.children});
 
@@ -880,36 +1070,120 @@ class _Toolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     return ColoredBox(
       color: AppColors.canvas,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final child in children)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: child,
+      child: LayoutBuilder(
+        builder: (context, constraints) => _ToolSize(
+          compact: constraints.maxWidth < 400,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+            child: SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 16,
+                runSpacing: 6,
+                children: children,
               ),
-          ],
+            ),
+          ),
         ),
       ),
     );
   }
 }
 
-class _ToolRow extends StatelessWidget {
-  const _ToolRow({required this.children});
+/// Tools that belong together, under the name of what they work on.
+class _ToolGroup extends StatelessWidget {
+  const _ToolGroup({required this.label, required this.children});
 
+  final String label;
   final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      alignment: WrapAlignment.center,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 4,
-      runSpacing: 4,
-      children: children,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: 2),
+          child: Text(
+            label,
+            textScaler: MediaQuery.textScalerOf(
+              context,
+            ).clamp(maxScaleFactor: 1.3),
+            style: const TextStyle(
+              fontSize: 11,
+              height: 1.2,
+              fontWeight: FontWeight.w700,
+              color: AppColors.mutedInk,
+            ),
+          ),
+        ),
+        // Larger letters (the system's font size) make a group wider than
+        // a small phone: it is then drawn smaller, never cut off.
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final (index, child) in children.indexed) ...[
+                if (index > 0 &&
+                    child is! _ToolGap &&
+                    children[index - 1] is! _ToolGap)
+                  const SizedBox(width: 4),
+                child,
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// What is written at the note (a chord name, a syllable), or the name of
+/// the thing when nothing is.
+class _ValueLabel extends StatelessWidget {
+  const _ValueLabel({required this.value, required this.empty});
+
+  final String? value;
+  final String empty;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = value?.trim() ?? '';
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 96),
+      child: Text(
+        text.isEmpty ? empty : text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: text.isEmpty
+            ? null
+            : const TextStyle(fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+}
+
+/// "8" with an arrow: an octave up or down.
+class _OctaveLabel extends StatelessWidget {
+  const _OctaveLabel({required this.up});
+
+  final bool up;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text('8', style: TextStyle(fontWeight: FontWeight.w700)),
+        Icon(
+          up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+          size: 16,
+        ),
+      ],
     );
   }
 }
@@ -918,7 +1192,122 @@ class _ToolGap extends StatelessWidget {
   const _ToolGap();
 
   @override
-  Widget build(BuildContext context) => const SizedBox(width: 12);
+  Widget build(BuildContext context) => const SizedBox(width: 10);
+}
+
+/// "1", "1.5", "0.25": a number of beats without needless digits.
+String _beats(double value) {
+  final text = value.toStringAsFixed(2);
+  return text.contains('.')
+      ? text.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')
+      : text;
+}
+
+/// [child] with a small name in its corner.
+class _Captioned extends StatelessWidget {
+  const _Captioned({required this.caption, required this.child});
+
+  final String? caption;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final caption = this.caption;
+    if (caption == null) return child;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        child,
+        Positioned(
+          left: 8,
+          top: 6,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: AppColors.canvas.withValues(alpha: 0.86),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: Text(
+                  caption,
+                  // Larger letters, but not so large that the name lies
+                  // over what it names.
+                  textScaler: MediaQuery.textScalerOf(
+                    context,
+                  ).clamp(maxScaleFactor: 1.3),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    height: 1.2,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.mutedInk,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// A tool button that opens a list of things to do, each by name.
+class _BarMenuButton extends StatelessWidget {
+  const _BarMenuButton({
+    required this.tooltip,
+    required this.label,
+    required this.items,
+  });
+
+  final String tooltip;
+  final String label;
+  final List<({IconData icon, String label, VoidCallback? onPressed})> items;
+
+  Future<void> _open(BuildContext context) async {
+    final box = context.findRenderObject()! as RenderBox;
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final picked = await showMenu<int>(
+      context: context,
+      position: RelativeRect.fromRect(
+        box.localToGlobal(Offset.zero, ancestor: overlay) & box.size,
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        for (var i = 0; i < items.length; i++)
+          PopupMenuItem(
+            value: i,
+            enabled: items[i].onPressed != null,
+            child: Row(
+              children: [
+                Icon(items[i].icon, size: 20),
+                const SizedBox(width: 12),
+                Text(items[i].label),
+              ],
+            ),
+          ),
+      ],
+    );
+    if (picked != null) items[picked].onPressed?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Builder(
+      builder: (context) => _ToolButton(
+        tooltip: tooltip,
+        onPressed: () => unawaited(_open(context)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label),
+            const Icon(Icons.arrow_drop_down_rounded, size: 20),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ToolButton extends StatelessWidget {
@@ -939,6 +1328,7 @@ class _ToolButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = onPressed != null;
+    final compact = _ToolSize.compactOf(context);
     return Tooltip(
       message: tooltip,
       child: Semantics(
@@ -960,11 +1350,11 @@ class _ToolButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(4),
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                minWidth: wide ? 88 : 48,
-                minHeight: 48,
+                minWidth: compact ? (wide ? 76 : 40) : (wide ? 88 : 48),
+                minHeight: compact ? 44 : 48,
               ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+                padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 8),
                 child: Center(
                   widthFactor: 1,
                   child: IconTheme.merge(
@@ -1134,6 +1524,67 @@ class _ChordSymbolDialogState extends State<_ChordSymbolDialog> {
           child: Text(l10n.cancel),
         ),
         FilledButton(onPressed: _submit, child: Text(l10n.save)),
+      ],
+    );
+  }
+}
+
+class _LyricDialog extends StatefulWidget {
+  const _LyricDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_LyricDialog> createState() => _LyricDialogState();
+}
+
+class _LyricDialogState extends State<_LyricDialog> {
+  late final _controller = TextEditingController(text: widget.initial)
+    ..selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: widget.initial.length,
+    );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit({required bool next}) {
+    Navigator.of(context).pop((text: _controller.text.trim(), next: next));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return AlertDialog(
+      title: Text(l10n.lyric),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        maxLength: maxLyricLength,
+        textInputAction: TextInputAction.next,
+        decoration: InputDecoration(
+          helperText: l10n.lyricNextHint,
+          counterText: '',
+        ),
+        onSubmitted: (_) => _submit(next: true),
+      ),
+      actions: [
+        if (widget.initial.isNotEmpty)
+          TextButton(
+            onPressed: () => Navigator.of(context).pop((text: '', next: false)),
+            child: Text(l10n.remove),
+          ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: () => _submit(next: false),
+          child: Text(l10n.save),
+        ),
       ],
     );
   }

@@ -31,7 +31,8 @@ recognized for those measures as text.
 
 Rules:
 - Only report differences you can clearly see in the image. Never guess
-  hidden or unreadable content; report it under "uncertain" instead.
+  hidden or unreadable content; report it under "uncertain" instead, with
+  the reason as one short sentence in Korean.
 - Do not rewrite measures. Report each wrong element separately.
 - Chord symbols: write them like F#m7, Bb/D, Esus4, C(add2). Report the full
   list of chords of a measure in order when the recognized list is wrong.
@@ -84,7 +85,8 @@ SCHEMA = {
                 "type": "object",
                 "additionalProperties": False,
                 "required": ["measure", "reason"],
-                "properties": {"measure": {"type": "string"}, "reason": {"type": "string"}},
+                "properties": {"measure": {"type": "string"},
+                               "reason": {"type": "string", "description": "one short sentence in Korean"}},
             },
         },
         "overallConfidence": {"type": "number"},

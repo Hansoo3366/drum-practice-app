@@ -1,5 +1,123 @@
 # 작업 로그
 
+## 2026-10-04 22:20 KST — 남겨 두던 것 정리: 테스트 실패 0, 분석 0건
+
+- 작업자: Claude (Opus 5.5)
+- 사용자 지적: "그럼 아직 에러가 있는거잖아" (D-217). 앞선 보고마다 "1개 실패(예전부터 있던 것)", "아쉬운 것"을 남겨 둔 것에 대한 지적.
+- 실패하던 테스트: `alphatab_asset_test.dart`의 세 번째 테스트가 `assets/alphatab/vendor/soundfont/ydp-grand-piano.sf2`(50 MB 이상)를 기대. `git log --all`에 이 파일이 없다 — 저장소에 들어온 적이 없고, 그 폴더에는 고지문 3개만 추적된다. 앱의 재생은 `score_sound_font.dart`의 `assets/soundfont/GeneralUser-GS.sf2`를 쓴다. alphaTab 웹 렌더러(`assets/alphatab/index.html`)는 어떤 Dart 코드도 불러오지 않는다(`AlphaTabAssetServer`는 참조 없음, pubspec에 webview 없음). → 테스트를 실제 음색 파일(RIFF/sfbk 머리, 10 MB 이상, 라이선스, pubspec의 `assets/soundfont/`) 검사로 바꾸고, pubspec에서 `assets/alphatab/vendor/soundfont/`를 빼고, `THIRD_PARTY_NOTICES.md`의 YDP 항목을 지움. 폴더의 고지문 파일과 alphaTab 페이지 자체(2.6 MB)는 그대로 — 쓰지 않는 렌더러를 통째로 뺄지는 사용자 결정.
+- 정적 분석 17건 → 0: `dart fix --apply` 10건(생성자 순서, null 연산자, 중괄호, import 순서, 문자열 보간 4, final), 테스트의 `close()` 기다리기 2건, `setlist_detail_screen.dart`의 `onReorder` → `onReorderItem`(새 콜백은 옮긴 뒤의 자리를 주므로 `newIndex -= 1` 제거), `score_viewer_screen.dart`의 안 쓰는 함수 4개에 사유와 `// ignore: unused_element`(드럼 앱 코드라 지우지 않음).
+- 서버 테스트(Windows): `test_omr_server.py`에서 `Image.open`을 `with`로 닫고 `read_text(encoding="utf-8")`. 122개 OK.
+- 에디터: `AppBar(titleSpacing: 0)`, 이름표·묶음 이름에 `textScaler … clamp(maxScaleFactor: 1.3)`, l10n `proofreadPick`("음을 눌러 선택").
+- 검증: `flutter analyze` No issues found, `flutter test` 674 통과·2 건너뜀(외부 표본 필요), 서버 122 OK. 기기: debug 2096으로 448dp·358dp·358dp 글자 2배 캡처, release 2097을 새로 설치해 실행·재생·교정 화면 확인.
+- 커밋: `0271036`(10-03 18:30) 이후의 변경은 아직 커밋하지 않음(사용자 지시 대기).
+
+## 2026-10-04 19:05 KST — 교정 에디터 도구줄: 처음 쓰는 사용자 기준(3단계 6차)
+
+- 작업자: Claude (Opus 5.5)
+- 사용자 지시: "에디터 도구들도 사용하기 편한지 보기 편한지 처음 쓰는 유저를 기준으로 확인해봐" (D-216)
+- 방법: 에디터를 448dp(에뮬레이터 기본)와 358dp(`wm density 600`), 글자 1.3배·2배로 캡처해 "설명 없이 뜻이 전해지는가, 줄이 어디서 꺾이는가, 가리는 것이 있는가"를 봤다. 그 뒤 도구를 하나씩 눌러 화면이 어떻게 답하는지 확인.
+- 바꾼 것(`score_proofread_screen.dart`):
+  - `_Toolbar`: 묶음들의 `Wrap`(묶음은 쪼개지지 않음), `_ToolSize`로 좁은 화면(400dp 미만)에서 단추 40×44.
+  - `_ToolGroup`(이름 + 단추 줄, 넘치면 `FittedBox`로 줄임): 마디(‹, n/N마디, ›, 편집 ▾, ▶ 듣기) / 음표(‹, ›, + 화음, 지우기↔음표로) / 코드 · 가사(`_ValueLabel`로 지금 값) / 길이 / 높이(↑, ↓, `_OctaveLabel` 8↑ 8↓, ♯ ♭ ♮).
+  - `_Captioned`: "원본", "지금 악보"(l10n `scoreOriginal`, `proofreadNow`).
+  - `VerovioScoreView.showZoomControls`(기본 true) — 한 마디 화면에서는 false.
+  - 새 문구: `barEdit` 편집, `listen` 듣기, `erase` 지우기, `toolsNote`·`toolsWords`·`toolsLength`·`toolsPitch`.
+- 되돌린 것: 음이 적은 마디에 더 좁은 조판 폭(540·660)을 줘 크게 그리기 — 코드 이름과 가사가 겹쳐 800으로 되돌림(주석에 남김).
+- 검증: 에디터 화면 테스트 19개 그대로 통과(풍선말 이름은 그대로라 테스트 수정 없음), Dart 673 통과·2 건너뜀·1 실패(옛 alphaTab), analyze 오류 0. 기기와 무작위 실행은 PROJECT_STATUS `release_stage3_sixth_pass_editor_tools_20261004`.
+- 커밋: `0271036`(10-03 18:30) 이후의 변경은 아직 커밋하지 않음(사용자 지시 대기).
+
+## 2026-10-04 12:45 KST — 구성 변환과 교정 에디터 집중 점검(3단계 5차)
+
+- 작업자: Claude (Opus 5.5)
+- 사용자 지시: "다른앱이랑 에디터 성능, 버그, 사용성이 이상한부분 찾고, 구성변환이 가장 중요하니까 그쪽 중점으로 버그 탐색 에디터도 가장 중요함 사용하기 편해야하며, 간단해야하며, 그러나 오류가있어서는 안됨" (D-215). "구성 변환"은 곡 구성(구간·연주 순서·새 악보 만들기)으로 해석 — 확인 필요.
+- 비교: 편집 앱 10여 개와 구성 기능이 있는 앱(OnSong, SongbookPro, Planning Center, forScore, MuseScore, iReal Pro 등)의 설명서를 하위 에이전트가 읽어 정리. 표는 `docs/RELEASE_READINESS.md` 5차.
+- 구성 변환(`xml_measure_editor.dart` `expandMusicXml`, `playback_sequence.dart`):
+  - 14. 옮겨 온 마디의 문맥: `contexts[source + 1]`(마디가 끝난 뒤)을 첫머리에 적고 마디 안의 `<attributes>`를 지우던 것을, `_restate(copy, _beginning(measures[source], contexts[source]), arriving)`로 바꿈 — 시작할 때의 문맥을 도착한 곳과 다른 만큼만 적고, 마디 안의 변경은 둔다.
+  - 15. 이음매의 붙임줄: 펼친 뒤 앞·뒤 마디가 원래 이웃이 아니면 `_dropTies(…, 'stop'/'start')`, 풀려난 음은 `_spellFreed`.
+  - 16. `remapSectionMarks`: 이름 없는 첫 구간은 고친 악보에도 첫 경계 앞에 마디가 있을 때만 남긴다.
+  - 화면: `playbackStepBars`(단계별 실제 마디), `barRuns`("5–7, 10"), 패널의 `stepBars`, l10n `barNumbers`. 강조 칠은 `saveLayer`로 한 번에(`verovio_overlay_painter.dart`).
+  - 테스트 `song_form_chaos_test.dart`: 독립 읽기 함수 `_read`(파트·마디별 조·박자·음자리표와 음의 보표·음자리표·음높이·길이)로 펼친 악보와 원본을 비교, 이음매의 붙임줄, MIDI 길이와 음 끄기, 마디 편집 뒤의 구간(`remapSectionMarks`), 단계별 마디의 합 = 연주 순서.
+- 에디터(`score_proofread_screen.dart`, `xml_measure_editor.dart`):
+  - 가사: `XmlMeasureEditor.setLyric`(절 번호, 화음은 첫 음, 있던 `<syllabic>` 유지, 새로 쓰면 `single`, 길이 40자), `XmlNoteSummary.lyric`·`leadsChord`, `_LyricDialog`(다음 키 → 다음 음).
+  - 도구줄: `_BarMenuButton`(추가·복제·앞으로·뒤로·이 마디의 글자·삭제), 음 줄(이전·다음 음, 화음, 삭제, 음표로, 코드, 가사), 길이 줄, 높이 줄.
+  - 이 마디 듣기: 미리보기 뷰를 `playbackVisible: true`로, `_playBar`. 재생기가 빌드 중에 상태를 알리므로 단추는 `_onPlayback`이 프레임 뒤에 다시 그린다.
+  - 박자 경고: `_lengthOff`(마디 길이 − 박자, 박 단위), l10n `barTooShort`/`barTooLong`.
+  - 속도: `_ScoreDoc`이 `toXml()`로 쓴 글과 그 문서를 한 번 넘겨 쓴다(다음 호출이 같은 글 객체를 주면 다시 읽지 않음, 실패한 편집은 남기지 않음). `inspect`·`isolateMeasureXml`은 악보를 허물지 않고 한 마디를 복사해 만든다(`_isolated`) — 그래서 읽은 문서를 `keep`으로 되돌려 둔다. `xml_measure_editor_chaos_test`가 짝수 시드 단계마다 같은 편집을 글의 사본에도 해서 결과를 비교.
+  - 열기 속도(17): `measureCountOf`·`barOrigins`가 `_ScoreDoc`의 넘겨 쓰기를 같이 쓰고 `keep`, `_originsOf`는 `identification` 안에서만 찾는다. 정지 감시 `watchForStalls`(`lib/core/platform/stall_watch.dart`, `piano_main.dart`에서 debug 빌드에만).
+- 그 밖: 변환한 악보의 ⋮ 단추가 접근성 이름을 숫자로 잃던 것(`ExcludeSemantics`), 라이브러리에서 곡을 열면 떠 있던 안내 닫기, 가사 창 도움말 줄임.
+- 검증: Dart 673 통과·2 건너뜀·1 실패(옛 alphaTab), analyze 오류 0. 기기와 무작위 실행은 PROJECT_STATUS `release_stage3_fifth_pass_form_editor_20261004`.
+- 커밋: `0271036`(10-03 18:30) 이후의 변경은 아직 커밋하지 않음(사용자 지시 대기).
+
+## 2026-10-04 10:40 KST — 다른 악보 앱과 비교한 UX 점검(3단계 4차), 재생 소리 버그 3개
+
+- 작업자: Claude (Opus 5.5)
+- 사용자 지시: "아직 부족해 다른앱 작동이랑 비교해서 이슈뿐만아니라 ux 도 확인해" (D-214)
+- 비교 방법: 다른 악보 앱 10개(PlayScore 2, Sheet Music Scanner, Soundslice, Newzik, Flat, MuseScore, forScore, MobileSheets, Piascore, SongbookPro)의 공식 설명서·도움말을 하위 에이전트가 읽어 흐름 10개(첫 실행, 가져오기, 라이브러리, 보기, 재생, 변환 뒤 확인, 조옮김, 내보내기, 설정, 삭제·저장)의 관례를 출처와 함께 정리했다. 에뮬레이터에 다른 앱은 설치하지 않았다(계정 필요). 같은 흐름을 우리 앱에서 해 보고 코드로 원인을 확인했다. 표는 `docs/RELEASE_READINESS.md` 4차.
+- 재생(관례와 다른 점):
+  - 한 번에 재생: `_togglePlayback`이 막대를 열고 다음 프레임에 `playPause`.
+  - 따라가기: `playback_follow.dart`의 `playbackFollowTranslation`(화면 밖이면 그 줄을 위에서 15% 자리로, 악보 가장자리는 넘지 않음), `VerovioScoreView._followPlayback`이 마디가 바뀔 때·재생 시작·이동 때 부른다. 손가락이 닿아 있으면 하지 않는다.
+  - 마디 눌러 재생: `PianoScorePlaybackController.playFromMeasure`, `performanceStartOf`(반복되는 마디는 지금에 가까운 쪽).
+  - 재생 속도: `ScorePlaybackBar`의 `_TempoButton`·`_TempoSheet`(40~150%), `VerovioScoreView.tempoPercent`, 바꾸면 `_retime`이 자리와 길이를 새 빠르기로 옮기고 재생 중이면 이어서 재생.
+  - 화면 유지: `lib/core/platform/screen_awake.dart`(잡은 쪽을 세어 마지막이 놓을 때만 끔). 악보 화면과 변환 작업이 함께 쓴다.
+- 재생 소리 버그(코드로 찾음, D-214):
+  - 11. 이어 재생·이동: 네이티브 `SequencerEngine.start()`는 `currentTick_`을 항상 시작 틱으로 돌리고 이동 호출이 없다. `_playPause`는 매번 전체 MIDI를 올렸다. → `playableSequence(sequence, timing, fromMs, speed)`가 시작 자리 이전의 음을 빼고 나머지를 0부터 다시 쓴다.
+  - 12. 템포 변화: `MidiNativeSequenceBridge.uploadSequence`는 첫 템포만 `setTempo`한다. → 같은 함수가 템포 지도(`MidiTiming`)로 모든 음의 실제 시각을 구해 한 템포(120)의 틱으로 쓴다. 강조 마디·누른 마디의 시각도 `_barStarts`가 같은 지도에서 구한다(MIDI가 만들어지기 전에는 예전처럼 고르게 나눈다).
+  - 13. 메트로놈 표시: `flutter_notemus` 파서는 `beat-unit`은 읽지만 `beat-unit-dot`은 읽지 않고, 우리 코덱은 `per-minute`를 그대로 4분음표 빠르기로 썼다. → `metronome_tempo.dart`(`quarterTempo`, MIDI용 XML에만 적용하는 `metronomesInQuarters`), 코덱의 표시 읽기 수정. 화면 조판에 쓰는 XML은 건드리지 않는다.
+- 라이브러리·설정: 설정 단추(피아노), 머리말 이름·표어·표시, 없는 온보딩 항목 숨김, `LibrarySort`(SharedPreferences `library_sort`), 가져오기 순서와 `convertHint`, 종류 선택의 제목·설명·`omrPhotoTip`, 변환 완료 안내(`OmrConvertJobs.finished` 스트림 → `_ConvertResume`), ⋮ 배지(변환한 악보만), 버전이 하나면 선택 칸 숨김.
+- 개인정보 처리방침(R-7, B-023): 피아노 라우터가 드럼 앱 문구를 보여 주고 있었다. 서버 코드와 VM 설정(이름만 확인: `OMR_AI_MODEL=gemini-3.8-flash@low`, `OMR_KEEP_SEC` 미설정 → 기본 21600초)을 근거로 초안을 썼다. 확정은 사용자.
+- 찾았지만 손대지 않은 것: 피아노 앱 실행 아이콘이 드럼 아이콘(R-8, B-024), 제안 목록(촬영·다른 앱에서 열기·공유 창·알림·구간 반복·메트로놈·남은 횟수·막대 숨기기·확대 단추).
+- 검증: Dart 661 통과·2 건너뜀·1 실패(옛 alphaTab), analyze 오류 0(17건: 경고 4·info 13 그대로). 기기 debug 2077~2080, release 2081·2082 — 내용은 RELEASE_READINESS 4차 "검증". 소리는 듣지 못했다(R-4).
+- 커밋: `0271036`(10-03 18:30) 이후의 변경은 아직 커밋하지 않음(사용자 지시 대기).
+
+## 2026-10-03 23:30 KST — 사용성 전부 수정, 악보 가운데 정렬, 뒤섞은 방식 QA(3단계 3차)
+
+- 작업자: Claude (Opus 5.5)
+- 사용자 지시: "쓰기 불편한 점 다 고치고, 버그 탐색 더 해, 진짜 말도 안되는 방식으로도 해보고 해야지, 테스트는 항상 공격적으로, 우리가 짜놓은 시나리오대로 말고 마구 뒤섞어서 해봐야돼, 그리고 하나 이슈 발견한거, 악보가 센터 정렬이 아닌거같다?" (D-213)
+- 악보 가운데 정렬: `VerovioTextLabel`이 파트 이름(`label`, `labelAbbr`)을 그리지 않는데 Verovio는 그 폭만큼 모든 줄의 왼쪽을 비웠다. `engravingMusicXml`(`xml_measure_editor.dart`)이 조판에 넘기는 XML에서 `part-name` 내용, `part-abbreviation`, `*-display`, `group-name`, `group-abbreviation`을 뺀다(저장된 파일은 그대로). 같은 함수가 `measure-numbering none`도 빼서 변환 악보에 줄 머리 번호가 보인다(N-4). 화면과 `engravePages`(PDF) 둘 다 이 함수를 거친다.
+- 사용성 U-1~U-11: `library_folder_bar.dart`(이름 칸 자동 포커스), `library_screen.dart`(피아노용 빈 안내, 길게 눌러 곡 정보, 복사본 이름 `copyTitle`, PDF 한 곡 선택 시 "전자악보로 변환", 검색 칸 밖을 누르면 포커스 해제), `digital_score_screen.dart`(도구에 "곡 정보"·"버전 이름 바꾸기", `DigitalScoreEditorService.renameVersion`), `arrangement_panel.dart`("재생 반주"와 안내 문장), `piano_part_sheet.dart`(용어, "만들기" 고정), l10n(en·ko, `flutter gen-l10n`).
+- N 항목: N-5 템포 음표·점 글리프와 셈여림 글자(`verovio_text_labels.dart`), N-6 `ai_verify.py`가 이유를 한국어로, N-7 "(지움)", N-8 겹침 여백, N-9 ♭·♯·♮을 Bravura U+ED60~ED62로 그림(`verovioLabelSpan`, 글자 크기의 0.9배), N-14 일시정지 때 강조 유지, N-15 `<?xml` + 탭, N-17 `arrangementBrief`와 서버 `_arrange_clean(first=)`이 화면 번호를 씀. 서버 변경(`ai_verify.py`, `omr_ai.py`, `omr_server.py`)은 VM에 배포했고 `first=2` → 400으로 확인.
+- 뒤섞은 QA 도구(`tool/qa/`): `chaos.py`(시드로 재현되는 무작위 걷기, 단계마다 logcat을 읽고 비움), `make_odd_files.py`·`odd_imports.py`(이상한 파일 19개를 만들고 하나씩 가져오기·변환), `steps.py`, `check_16kb.py`. 테스트 `xml_measure_editor_chaos_test.dart`(편집 17종과 조회를 무작위 순서로, 없는 마디·음 포함, `CHAOS_SCALE`로 판 수를 늘림), `omr_review_approvals_fuzz_test.dart`.
+- 뒤섞은 QA가 찾은 버그와 수정:
+  5. 빈 파일 변환: `enqueue`의 `FormatException`이 처리되지 않았다 → `library_screen.dart` `_convert`가 잡아 안내.
+  6. MusicXML 가져오기의 내부 영어 문구 → `MusicXmlImportService.inspect`가 한 문장으로.
+  7. 변환 실패의 서버 문구 → `convertServerFailure`(`omr_convert_jobs.dart`)가 네 가지로 옮김. 401·429도 문구 분리(`omr_convert_client.dart`).
+  8. 어두운 화면: `VerovioScoreView`, 재생 막대, 구간 패널을 `Theme(data: AppTheme.light)`로 감쌈(바탕이 `AppColors.canvas` 흰색으로 고정인데 아이콘은 테마 색을 따랐다).
+  9. 변환 검토 창의 개발용 키 칸: `kDebugMode`에서만.
+  10. 가져오기 창: 실패 안내를 스낵바 대신 창 안 문구로(`import_score_sheet.dart`).
+- 찾았지만 앱 문제가 아닌 것: monkey 로그의 `PermissionHandler` 예외는 에뮬레이터의 다른 앱(`kids_music_player`). 화면 둘레의 연두색 테두리는 uiautomator가 남긴 접근성 포커스 표시(홈에 갔다 오면 사라짐). 재생 중에는 uiautomator dump가 늦게 돌아와 위치 글자가 옛 값으로 보인다(드라이버 한계).
+- 미수정으로 남긴 것: 조옮김 −24에서 덧줄 음표와 가사가 겹침(조판), N-16(파트 이름 `verse`), 화면 안 음표 입력 코드(`noteInputEnabled`) 정리 여부.
+- 검증: Dart 642 통과·2 건너뜀·1 실패(옛 alphaTab), analyze 오류 0(경고 4·info 13 그대로), 서버 122개 중 118 통과(4개 Windows 환경). 기기: 위 3차 표. release 2076을 에뮬레이터에 새로 설치해 변환부터 재생까지 확인(가운데 정렬 51/51px).
+- 커밋: `0271036`(18:30) 이후의 변경은 아직 커밋하지 않음(사용자 지시 대기).
+
+## 2026-10-03 20:35 KST — Lomse 편집기 제거, 처음 쓰는 사용자 방식 QA(3단계 2차)
+
+- 작업자: Claude (Opus 5.5)
+- 사용자 지시: "꺼져있는 편집기 없애 다른 편집기 만들었잖아", "더 테스트해 공격적으로 … 기능이 정상 작동하는지 … 진짜 처음 쓰는 유저가 하듯이 마구 눌러봐야지 사용하기도 편한가도 체크하고".
+- Lomse 편집기 제거(D-212): `lib/features/piano/`(8개), `test/features/piano/`(5개), `native/lomse_bridge/`, `lomse-log.txt` 삭제. `piano_app_router.dart`의 `/editor` 경로와 리다이렉트, `ScoreEntryScreen.useLomse`, `PianoAppShell`의 편집 탭, `android/app/build.gradle.kts`의 piano `jniLibs` 연결, `.gitignore`·README의 언급 제거. `noteInputEnabled`는 화면 안 음표 입력(DigitalScoreScreen 편집 모드, 라이브러리 "새 악보")에 아직 쓰여 그대로 둠. release 2068: 149.7 MB(전 163.7), `libc++_shared.so`도 함께 빠졌는데 남은 라이브러리 중 그것을 찾는 것은 없고 앱 실행·조판·재생 정상.
+- QA 방법: `tool/qa/steps.py`로 누르고 화면 캡처를 직접 보며 결과를 확인. 내보낸 파일은 기기에서 꺼내 내용을 읽음. 서버 쪽은 기록과 카운터로 확인.
+- 고친 버그:
+  1. 곡 복사: `SongRepository.duplicateSongs`가 악보 파일·라벨·기본 연주 순서·반주 설정만 복사했다. 변환한 곡은 버전 목록(`score_versions/<id>/`), 버전별 연주 순서, 변환 검토 자료가 없어 복사본이 OMR 원본(파트가 갈라지고 "Dru?" 같은 글자가 남은 상태)으로 열렸다. `SongFileStorage.copySongSidecars`: 곡 id로 이름 붙은 파일·폴더를 모든 디렉터리에서 찾아 복사(`scores`·`audio`·`omr_pending`·`jam_host` 제외). `deleteSongs`도 같은 목록을 지우도록(`deleteSongSidecars`) — 그 전에는 버전 파일, 올린 원본 PDF, AI 검수 보고 등이 지운 곡 뒤에 남았다. 저장소 테스트 1개.
+  2. 검색·분류 결과 없음: 새 문구 `noMatchingScoresTitle`/`Body`(en·ko, `flutter gen-l10n`).
+  3. 변환 다시 시도: `OmrConvertJobs.retry`가 서버 작업 id가 있을 때만 동작해, 올리기 전에 실패한 작업은 버튼조차 없었다. 보관 파일(`omr_pending/<id>.bin`)로 다시 올리도록 하고, 실패한 카드에는 항상 다시 시도 버튼. 닫으면 보관 파일 삭제. 기기: 비행기 모드 실패 → 해제 → 다시 시도 → 변환 완료(해제 직후 몇 초는 에뮬레이터의 이름 풀이가 안 돼 다시 실패했다).
+  4. 반주 켤 때 조판: `DigitalScoreScreen`이 반주가 켜지면 `engravingXml`을 넘기지 않아 모델에서 다시 조판했다. 반주는 재생 MIDI에만 들어가므로(MIDI 쪽은 반주가 켜지면 스스로 모델을 쓴다) 조판은 파일 그대로 둠. 기기: 켜기 전후 캡처 차이 0픽셀, 재생 강조 정상.
+- 확인한 정상 동작: 폴더 만들기·이동, 삭제 확인 창, 즐겨찾기 분류, 곡 정보 수정, 조옮김 +2(화면으로 조표·코드 확인, 새 버전), 악기별 악보(AI 추천 한국어, Strings 버전의 3단 악보), 반주 MIDI 음 수 121 → 368, 내보내기 4종, PDF 뷰어, `monkey` 4,000 이벤트(충돌·Flutter 예외 0).
+- 기록만 한 것: 사용성 U-1~U-11, N-15(`.musicxml.xml`: file_picker가 모르는 확장자면 내용을 보고 MIME을 정하고 시스템이 `.xml`을 붙임), N-16(파트 이름 `verse`), N-17(AI 설명문 마디 번호 +1). 드라이버 주의: "메뉴 닫기"의 중심이 메뉴 항목과 겹쳐 내보내기가 눌린다 — 메뉴는 `back`으로 닫는다.
+- 검증: Dart 전체 634 통과·2 건너뜀·1 실패(옛 alphaTab), analyze 오류 0(17건 그대로). 서버 테스트는 서버 코드를 바꾸지 않아 다시 돌리지 않음.
+- 커밋: `0271036`(18:30, 0·1단계) 이후의 변경은 아직 커밋하지 않음.
+
+## 2026-10-03 19:50 KST — 16 KB 페이지(R-6), 변환 실패 문구, 3단계 화면별 QA 1차
+
+- 작업자: Claude (Opus 5.5)
+- 사용자 지시: "커밋 푸시 메인에 하고 차례대로 ㄱㄱ". 18:30에 `0271036`으로 main에 커밋·푸시(0·1단계 전체).
+- R-6: `tool/qa/check_16kb.py`로 release APK를 검사 — 19개 라이브러리 중 `libpage_lomse_bridge.so`만 LOAD 정렬 4096(경고 창의 나머지 "Unknown error"는 문제 아님). `native/lomse_bridge/build_android.ps1`에 `-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON`(NDK 27), `-Offline -BuildType Release`로 x86_64·arm64-v8a 다시 빌드(각 214단계). 그동안 APK에 들어가던 bridge는 Debug 빌드였다. release 2066: 검사 통과, 16K 에뮬레이터에 새로 설치해 경고 없이 실행, 악보 열기·재생 강조 확인. armeabi-v7a 폴더에는 플러그인의 32비트 라이브러리 3개가 4 KB 정렬로 남는데 32비트 기기는 4 KB 페이지라 검사에서 뺐다.
+- N-12: `convertFailureMessage`(omr_convert_jobs.dart) — 서버가 준 이유는 그대로, 연결 실패는 "변환 서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도하세요.", 그 밖은 "변환하지 못했습니다. 다시 시도하세요.". 401은 "이 버전의 앱으로는 변환할 수 없습니다. 앱을 업데이트하세요."(재등록 뒤에도 401이면 앱 키가 거절된 것). 테스트 1개.
+- 3단계 변환 검토: 제안을 쓰는 로직을 화면에서 `lib/features/digital_score/domain/omr_review_approvals.dart`의 `withReviewApprovals`로 옮김(동작 변화 없음). `omr_review_approvals_fuzz_test.dart`: 무작위 리드시트 마디와 제안(멜로디·음높이·음 길이·넣을 수 없는 종류, 없는 음 번호, 틀린 표기)을 무작위로 승인해 3,000판 — 거절 문구가 있거나, 결과가 읽히고 마디 수·승인 안 한 마디·코드 기호 수·(멜로디가 아니면) 가사가 그대로이며 박자표를 넘지 않는다. 통과. `setNoteLengths`의 길이 검사를 지운 변형에서는 4번째 판에서 실패함을 확인하고 되돌림.
+- 3단계 기기(release 2067, `tool/qa/steps.py` 신설: 단계마다 화면에 생기고 사라진 글자를 출력): 변환 검토(문제 없음 → 다음 열린 마디, 확인 취소, 넣은 채 고치기 → "넣은 제안을 먼저 저장하거나 되돌리세요.", 넣은 채 뒤로 → 버리기/취소/저장, 저장 → "AI 승인 3", 고치기 → 교정에서 음 올림 → "교정 5" 저장 → 검토로 돌아와 다른 마디의 음 길이 제안 2개 넣고 "AI 승인 6" 저장 → 악보에 두 수정 모두 있음), 교정(도구 전부, 마디 이동 0·17·18, 코드 `Xq9` 거절·`Gm7` 저장, 저장하지 않고 나가기), 재생(일시정지 중 강조 없음, 이어 재생·탐색·정지). 새 버그 없음, 로그 오류 0.
+- 실수와 정정: `dart format lib test tool`이 내가 건드리지 않은 파일 15개를 다시 포맷했다(이 PC의 Dart 3.12와 저장소 포맷 차이) → `git checkout`으로 되돌림. 포맷은 바꾼 파일만 한다. 드라이버의 `tap "이동"`이 창 제목 "마디 이동"을 눌러 범위 검사가 안 되는 것처럼 보였다 → `이동#1`로 다시 확인.
+- 검증: Dart 전체 648 통과·2 건너뜀·1 실패(옛 alphaTab), analyze 오류 0(17건: 경고 4 기존, info 13). 서버 119개 중 115.
+- 남은 것: 실기기·소리(2단계), 3단계의 가져오기·내보내기·악기별 악보·조옮김·클라우드, 4단계 10곡. 새 bridge를 쓰는 편집기는 꺼져 있어 동작 미확인.
+- 이 항목의 변경은 아직 커밋하지 않음.
+
 ## 2026-10-03 18:25 KST — R-2 서버 배포: HTTPS, 설치본 등록, 앱 키 교체
 
 - 작업자: Claude (Opus 5.5)

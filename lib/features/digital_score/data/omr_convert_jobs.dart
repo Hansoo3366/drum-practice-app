@@ -5,13 +5,13 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:page_a_diddle/core/platform/screen_awake.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_client.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_service.dart';
 import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 
 enum OmrConvertJobStatus { running, failed }
 
@@ -95,9 +95,17 @@ class OmrConvertJob {
 class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
   static const _prefsKey = 'omr_pending_jobs';
   final Map<String, bool> _polling = {};
+  final _finished =
+      StreamController<({String songId, String title})>.broadcast();
+
+  /// Every conversion that ended as a score in the library. A conversion
+  /// takes minutes and the user looks elsewhere meanwhile: the screen says
+  /// when it is done.
+  Stream<({String songId, String title})> get finished => _finished.stream;
 
   @override
   List<OmrConvertJob> build() {
+    ref.onDispose(_finished.close);
     unawaited(_restore());
     return const [];
   }
@@ -128,11 +136,21 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
     ];
     await _writePending(id, bytes);
     await _setWakeLock();
+    await _upload(id, source.name, bytes, profile);
+  }
+
+  /// Sends the file of job [id] to the server and starts following it.
+  Future<void> _upload(
+    String id,
+    String name,
+    Uint8List bytes,
+    OmrRecognitionProfile profile,
+  ) async {
     try {
       final remote = await ref
           .read(omrConvertServiceProvider)
           .start(
-            source: PickedLocalFile(name: source.name, bytes: bytes),
+            source: PickedLocalFile(name: name, bytes: bytes),
             profile: profile,
           );
       state = [
@@ -157,13 +175,16 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
     await _restore();
   }
 
-  /// Checks a failed job's server job again. The server may have finished
-  /// while the phone was offline, so nothing is uploaded again.
-  void retry(String id) {
+  /// Tries a failed job again. One the server already has is only checked
+  /// again: the server may have finished while the phone was offline, so
+  /// nothing is uploaded twice. One that never reached the server (no
+  /// connection when it was started) is sent from the file kept for it.
+  Future<void> retry(String id) async {
     final job = state.where((job) => job.id == id).firstOrNull;
-    if (job == null || job.isRunning || (job.serverJobId ?? '').isEmpty) {
-      return;
-    }
+    if (job == null || job.isRunning) return;
+    final onServer = (job.serverJobId ?? '').isNotEmpty;
+    final bytes = onServer ? null : await _readPending(id);
+    if (!onServer && bytes == null) return;
     state = [
       for (final item in state)
         if (item.id == id)
@@ -173,7 +194,11 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
     ];
     unawaited(_persist());
     unawaited(_setWakeLock());
-    unawaited(_poll(id));
+    if (bytes == null) {
+      unawaited(_poll(id));
+    } else {
+      await _upload(id, job.originalName ?? job.title, bytes, job.profile);
+    }
   }
 
   void dismiss(String id) {
@@ -184,6 +209,8 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
     ];
     unawaited(_persist());
     unawaited(_setWakeLock());
+    // The file kept for a retry is not needed any more.
+    unawaited(_deletePending(id).then((_) {}, onError: (Object _) {}));
   }
 
   Future<void> _restore() async {
@@ -237,7 +264,7 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
               job,
         ];
         if (remote.isError) {
-          _fail(id, OmrConvertException(remote.error));
+          _fail(id, OmrConvertException(convertServerFailure(remote.error)));
           return;
         }
         if (remote.isDone) {
@@ -257,6 +284,9 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
             ),
           );
           if (imported == null) return;
+          if (!_finished.isClosed) {
+            _finished.add((songId: imported, title: local.title));
+          }
           await _deletePending(id);
           _polling[id] = false;
           state = [
@@ -284,9 +314,7 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
 
   void _fail(String id, Object error) {
     _polling[id] = false;
-    final message = error is OmrConvertException
-        ? error.message
-        : error.toString();
+    final message = convertFailureMessage(error);
     state = [
       for (final job in state)
         if (job.id == id)
@@ -331,11 +359,7 @@ class OmrConvertJobs extends Notifier<List<OmrConvertJob>> {
 
   Future<void> _setWakeLock() async {
     final running = state.any((job) => job.isRunning);
-    if (running) {
-      await WakelockPlus.enable();
-    } else {
-      await WakelockPlus.disable();
-    }
+    await (running ? ScreenAwake.hold(this) : ScreenAwake.release(this));
   }
 }
 
@@ -346,6 +370,34 @@ final omrConvertJobsProvider =
 /// The server keeps converting meanwhile, so a brief drop on a phone (Wi-Fi
 /// to mobile data, a tunnel) must not throw the finished result away.
 const omrNetworkRetryWindow = Duration(minutes: 5);
+
+/// What the server's reason for a failed job reads as to the user. The
+/// server writes for its own log ("No valid MusicXML result; see
+/// recognition.json and candidate logs").
+String convertServerFailure(String error) {
+  final text = error.toLowerCase();
+  if (text.contains('no valid musicxml') || text.contains('no score')) {
+    return '악보를 찾지 못했습니다. 악보가 또렷하게 보이는 사진이나 PDF인지 확인하세요.';
+  }
+  if (text.contains('timed out') || text.contains('timeout')) {
+    return '변환이 너무 오래 걸려 멈췄습니다. 쪽 수를 줄여 다시 시도하세요.';
+  }
+  if (text.contains('restart')) {
+    return '서버가 다시 시작되어 변환이 끊겼습니다. 다시 시도하세요.';
+  }
+  return '변환하지 못했습니다. 다시 시도하세요.';
+}
+
+/// What a failed conversion says on its card. The server's own reasons are
+/// shown as they are; a connection that failed, or anything unexpected, is
+/// said in words the user can act on instead of the exception's text.
+String convertFailureMessage(Object error) => switch (error) {
+  OmrConvertException(:final message) => message,
+  FormatException(:final message) when message.isNotEmpty => message,
+  _ when isTransientNetworkError(error) =>
+    '변환 서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도하세요.',
+  _ => '변환하지 못했습니다. 다시 시도하세요.',
+};
 
 bool isTransientNetworkError(Object error) =>
     error is SocketException ||

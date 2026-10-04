@@ -1,3 +1,4 @@
+import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_text_labels.dart';
@@ -120,6 +121,25 @@ void main() {
     ]);
   });
 
+  test('reads the metronome note and dynamics letters of newer glyphs', () {
+    const svg = '''
+<svg viewBox="0 0 100 100">
+  <g class="tempo"><text x="30" y="5"><tspan font-size="6px">Andante (</tspan>
+    <tspan font-family="Leipzig" font-size="9px">&#xECA5;</tspan>
+    <tspan font-size="6px"> </tspan>
+    <tspan font-family="Leipzig" font-size="9px">&#xECB7;</tspan>
+    <tspan font-size="6px"> = 50)</tspan></text></g>
+  <g class="dir"><text x="30" y="15">
+    <tspan font-family="Leipzig" font-size="9px">&#xE524;&#xE522;</tspan></text></g>
+</svg>
+''';
+
+    expect(extractVerovioTextLabels(svg).map((label) => label.text), [
+      'Andante (♩. = 50)',
+      'sf',
+    ]);
+  });
+
   test('keeps the spaces written inside a text, not the indentation', () {
     const svg = '''
 <svg viewBox="0 0 100 100">
@@ -146,5 +166,20 @@ void main() {
       'B♭',
       '예수',
     ]);
+  });
+
+  test('a chord name draws its accidental in the bundled engraving font', () {
+    const style = TextStyle(fontSize: 20, fontFamily: 'serif');
+    // No accidental: the text as it is.
+    expect((verovioLabelSpan('Gm7', style) as TextSpan).text, 'Gm7');
+
+    final span = verovioLabelSpan('B♭m7/A♯', style) as TextSpan;
+    final parts = span.children!.cast<TextSpan>();
+    expect(parts.map((part) => part.text), ['B', '\uED60', 'm7/A', '\uED62']);
+    // The device's symbol font is not asked for the sign.
+    expect(span.toPlainText(), isNot(contains('♭')));
+    expect(parts[1].style!.fontFamily, 'Bravura');
+    expect(parts[1].style!.fontSize, 20 * verovioAccidentalScale);
+    expect(parts[0].style, isNull);
   });
 }

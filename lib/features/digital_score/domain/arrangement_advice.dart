@@ -46,17 +46,20 @@ class ArrangementAdvice {
       return AccompanimentStyle(pattern: pattern, register: register);
     }
 
+    // Bars come back in the numbers the brief used.
+    final first = xmlFirstBarNumber(xml);
+    final last = first + bars.length - 1;
     final sections = <int, AccompanimentStyle>{};
     final roles = <int, SectionRole>{};
     for (final raw in json['sections'] as List? ?? const []) {
       final bar = raw is Map ? raw['bar'] : null;
       final parsed = style(raw);
-      if (bar is! int || bar < 1 || bar > bars.length || parsed == null) {
+      if (bar is! int || bar < first || bar > last || parsed == null) {
         continue;
       }
-      sections[bar - 1] = parsed;
+      sections[bar - first] = parsed;
       final role = _roleNames[(raw as Map)['role']];
-      if (role != null) roles[bar - 1] = role;
+      if (role != null) roles[bar - first] = role;
     }
     final corrections = <ChordCorrection>[];
     for (final raw in json['chords'] as List? ?? const []) {
@@ -64,10 +67,10 @@ class ArrangementAdvice {
       final bar = raw['bar'];
       final index = raw['index'];
       final suggested = raw['suggested']?.toString().trim() ?? '';
-      if (bar is! int || index is! int || bar < 1 || bar > bars.length) {
+      if (bar is! int || index is! int || bar < first || bar > last) {
         continue;
       }
-      final chords = bars[bar - 1];
+      final chords = bars[bar - first];
       if (index < 1 || index > chords.length) continue;
       final current = harmonyText(chords[index - 1]);
       try {
@@ -78,7 +81,7 @@ class ArrangementAdvice {
       if (suggested == current) continue;
       corrections.add(
         ChordCorrection(
-          measureIndex: bar - 1,
+          measureIndex: bar - first,
           chordIndex: index - 1,
           current: current,
           suggested: suggested,
@@ -180,7 +183,10 @@ String applyChordCorrections(String xml, List<ChordCorrection> corrections) {
 /// A short text description of a lead sheet for the adviser: key, time,
 /// sections, and for every bar its chord symbols and melody notes.
 ///
-/// [sections] are (name, first bar, last bar) with bars counted from 1.
+/// Bars are numbered as the screens number them ([xmlFirstBarNumber]: from
+/// 1, or from 0 when the score opens with a pickup), so what the adviser
+/// writes about "bar 11" is the bar the user sees as 11. [sections] are
+/// (name, first bar, last bar) in the same numbers.
 String arrangementBrief(
   String xml, {
   List<({String name, int start, int end})> sections = const [],
@@ -190,11 +196,16 @@ String arrangementBrief(
   final part = document.rootElement.getElement('part');
   final measures = part?.findElements('measure').toList() ?? const [];
   final analysis = analyzeLeadSheet(xml);
+  final first = xmlFirstBarNumber(xml);
   final out = StringBuffer()
     ..writeln('key signature: ${_keyName(analysis.keyFifths)}')
     ..writeln('time: ${analysis.beats}/${analysis.beatType}');
   if (tempoBpm != null) out.writeln('tempo: ${tempoBpm.round()} bpm');
-  out.writeln('bars: ${measures.length}');
+  out.writeln(
+    first == 0
+        ? 'bars: 0-${measures.length - 1} (bar 0 is a pickup)'
+        : 'bars: ${measures.length}',
+  );
   if (sections.isNotEmpty) {
     out.writeln(
       'sections: ${sections.map((s) => '${s.name} ${s.start}-${s.end}').join(', ')}',
@@ -250,7 +261,9 @@ String arrangementBrief(
           }
       }
     }
-    out.write('${index + 1}: ${chords.isEmpty ? '-' : chords.join(' ')} | ');
+    out.write(
+      '${index + first}: ${chords.isEmpty ? '-' : chords.join(' ')} | ',
+    );
     if (notes.isEmpty) {
       out.writeln('rest');
     } else {

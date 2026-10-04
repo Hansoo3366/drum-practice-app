@@ -22,6 +22,49 @@ void main() {
     expect(failed.error, 'convert timed out');
   });
 
+  test('a failed conversion is explained in words, not exception text', () {
+    // The server's own reason is shown as it is.
+    expect(
+      convertFailureMessage(const OmrRateLimitedException()),
+      contains('내일'),
+    );
+    expect(
+      convertFailureMessage(const FormatException('변환할 파일을 읽을 수 없습니다.')),
+      '변환할 파일을 읽을 수 없습니다.',
+    );
+    // A connection that failed names no address, port or exception.
+    for (final error in <Object>[
+      const SocketException('Connection refused'),
+      http.ClientException('Connection refused', Uri.parse('http://x:8080')),
+    ]) {
+      final message = convertFailureMessage(error);
+      expect(message, contains('연결하지 못했습니다'));
+      expect(message, isNot(contains('Exception')));
+    }
+    expect(convertFailureMessage(StateError('boom')), '변환하지 못했습니다. 다시 시도하세요.');
+  });
+
+  test(
+    'the reason the server gives for a failed job is put in plain words',
+    () {
+      expect(
+        convertServerFailure(
+          'No valid MusicXML result; see recognition.json and candidate logs',
+        ),
+        contains('악보를 찾지 못했습니다'),
+      );
+      expect(convertServerFailure('convert timed out'), contains('오래 걸려'));
+      expect(
+        convertServerFailure('interrupted by a server restart'),
+        contains('다시 시작'),
+      );
+      expect(
+        convertServerFailure('Traceback (most recent call last)'),
+        '변환하지 못했습니다. 다시 시도하세요.',
+      );
+    },
+  );
+
   test('pending job keeps its recognition profile after restoration', () {
     const job = OmrConvertJob(
       id: 'omr-2',

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:page_a_diddle/features/digital_score/data/score_sound_font.dart';
 
 void main() {
   const assetRoot = 'assets/alphatab';
@@ -120,34 +121,31 @@ void main() {
     expect(File('$assetRoot/THIRD_PARTY_NOTICES.md').existsSync(), isTrue);
   });
 
-  test(
-    'sampled grand piano SoundFont is bundled for offline MIDI playback',
-    () {
-      final soundFont = File('$assetRoot/vendor/soundfont/ydp-grand-piano.sf2');
-      final notice = File(
-        '$assetRoot/vendor/soundfont/YDP-GrandPiano-NOTICE.txt',
-      );
-      final license = File('$assetRoot/vendor/soundfont/CC-BY-3.0.txt');
-      final notices = File(
-        '$assetRoot/THIRD_PARTY_NOTICES.md',
-      ).readAsStringSync();
+  test('the SoundFont scores are played with is bundled, with its licence', () {
+    // The native player reads this file (see `scoreSoundFontPath`). The
+    // sampled piano of the earlier web renderer was never part of the
+    // repository and is not what plays: nothing may bundle its folder, or a
+    // copy left on one machine would ride along in that machine's builds.
+    final soundFont = File(scoreSoundFontAsset);
+    expect(soundFont.existsSync(), isTrue);
+    expect(soundFont.lengthSync(), greaterThan(10_000_000));
+    final handle = soundFont.openSync();
+    final header = handle.readSync(12);
+    handle.closeSync();
+    expect(header.sublist(0, 4), [0x52, 0x49, 0x46, 0x46]);
+    expect(header.sublist(8, 12), [0x73, 0x66, 0x62, 0x6b]);
+    expect(
+      File('assets/soundfont/GeneralUser-GS-LICENSE.txt').existsSync(),
+      isTrue,
+    );
 
-      expect(soundFont.existsSync(), isTrue);
-      expect(soundFont.lengthSync(), greaterThan(50_000_000));
-      final handle = soundFont.openSync();
-      final header = handle.readSync(12);
-      handle.closeSync();
-      expect(header.sublist(0, 4), [0x52, 0x49, 0x46, 0x46]);
-      expect(header.sublist(8, 12), [0x73, 0x66, 0x62, 0x6b]);
-      expect(notice.existsSync(), isTrue);
-      expect(
-        notice.readAsStringSync(),
-        contains('Creative Commons Attribution 3.0'),
-      );
-      expect(license.existsSync(), isTrue);
-      expect(license.readAsStringSync(), contains('Attribution 3.0 Unported'));
-      expect(notices, contains('vendor/soundfont/ydp-grand-piano.sf2'));
-      expect(notices, isNot(contains('sonivox.sf2')));
-    },
-  );
+    final pubspec = File('pubspec.yaml').readAsStringSync();
+    expect(pubspec, contains('- path: assets/soundfont/'));
+    expect(pubspec, isNot(contains('assets/alphatab/vendor/soundfont/')));
+    final notices = File(
+      '$assetRoot/THIRD_PARTY_NOTICES.md',
+    ).readAsStringSync();
+    expect(notices, isNot(contains('ydp-grand-piano.sf2')));
+    expect(notices, isNot(contains('sonivox.sf2')));
+  });
 }

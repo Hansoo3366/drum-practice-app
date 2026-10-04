@@ -228,13 +228,15 @@ class OmrConvertClient {
   Future<Map<String, Object?>> arrangementAdvice({
     required String brief,
     required int bars,
+    int firstBar = 1,
   }) async {
     final response = await _authed(
       (headers) => _http
           .post(
             Uri.parse('${_config.baseUrl}/arrange/advice'),
             headers: {...headers, 'Content-Type': 'application/json'},
-            body: jsonEncode({'brief': brief, 'bars': bars}),
+            // "first": the number the brief gives the first bar.
+            body: jsonEncode({'brief': brief, 'bars': bars, 'first': firstBar}),
           )
           .timeout(const Duration(seconds: 90)),
     );
@@ -357,9 +359,13 @@ class OmrConvertClient {
   }
 
   OmrConvertException _failure(http.Response response) =>
-      response.statusCode == 429
-      ? const OmrRateLimitedException()
-      : OmrConvertException(_errorMessage(response));
+      switch (response.statusCode) {
+        429 => const OmrRateLimitedException(),
+        // Registering again did not help: the server does not take this
+        // build's app key any more.
+        401 => const OmrConvertException('이 버전의 앱으로는 변환할 수 없습니다. 앱을 업데이트하세요.'),
+        _ => OmrConvertException(_errorMessage(response)),
+      };
 
   String _errorMessage(http.Response response) {
     try {

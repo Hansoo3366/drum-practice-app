@@ -734,6 +734,55 @@ void main() {
       expect(xml, contains('>프</rehearsal>'));
     });
 
+    test('engraving takes out part names and shows bar numbers', () {
+      const xml =
+          '<score-partwise version="4.0"><part-list>'
+          '<part-group type="start" number="1"><group-name>Band</group-name>'
+          '<group-abbreviation>Bd.</group-abbreviation></part-group>'
+          '<score-part id="P1"><part-name print-object="yes">verse</part-name>'
+          '<part-name-display><display-text>verse</display-text>'
+          '</part-name-display><part-abbreviation>Vo.</part-abbreviation>'
+          '<part-abbreviation-display><display-text>Vo.</display-text>'
+          '</part-abbreviation-display><score-instrument id="P1-I1">'
+          '<instrument-name>Voice</instrument-name></score-instrument>'
+          '</score-part></part-list><part id="P1">'
+          '<measure number="0" implicit="yes"><print>'
+          '<measure-numbering>none</measure-numbering></print>'
+          '<direction><direction-type><words>part-name stays in text'
+          '</words></direction-type></direction>'
+          '<note><rest/><duration>1</duration></note></measure>'
+          '<measure number="1"><note><rest/><duration>4</duration></note>'
+          '</measure></part></score-partwise>';
+      final shown = XmlDocument.parse(engravingMusicXml(xml));
+
+      // No names for the engraver to keep room for left of each line...
+      expect(shown.findAllElements('part-name').single.innerText, isEmpty);
+      for (final gone in [
+        'part-abbreviation',
+        'part-name-display',
+        'part-abbreviation-display',
+        'group-name',
+        'group-abbreviation',
+        'measure-numbering',
+      ]) {
+        expect(shown.findAllElements(gone), isEmpty, reason: gone);
+      }
+      // ...and nothing else is touched.
+      expect(
+        shown.findAllElements('instrument-name').single.innerText,
+        'Voice',
+      );
+      expect(
+        shown.findAllElements('words').single.innerText,
+        'part-name stays in text',
+      );
+      expect(
+        shown.findAllElements('measure').map((m) => m.getAttribute('number')),
+        ['0', '1'],
+      );
+      expect(xml, contains('<part-name print-object="yes">verse</part-name>'));
+    });
+
     test('new note lengths close the bar up behind them', () {
       String bar(String attributes, List<String> notes) =>
           '<score-partwise version="4.0"><part-list><score-part id="P1">'
@@ -1130,7 +1179,7 @@ void main() {
       final xml = _score([
         '${_note('G', 4, duration: 2, type: 'half', extra: tieStart)}'
             '${_note('G', 4, duration: 2, type: 'half', extra: tieStop)}',
-        '${_note('G', 4, duration: 4, type: 'whole', extra: tieStop)}',
+        (_note('G', 4, duration: 4, type: 'whole', extra: tieStop)),
       ], staves: 1);
 
       final result = _editor.moveDiatonic(xml, _ref(0, measureIndex: 1), 1);
@@ -1269,7 +1318,7 @@ void main() {
                       '${_note('C', 5, duration: 2, type: 'half', extra: '', accidental: '')}'
                       '<harmony><root><root-step>G</root-step></root><kind>major</kind></harmony>'
                       '${_note('D', 5, duration: 2, type: 'half')}',
-                  '${_note('E', 5, duration: 4, type: 'whole')}',
+                  (_note('E', 5, duration: 4, type: 'whole')),
                 ],
                 staves: 1,
                 fifths: 0,
@@ -1335,7 +1384,7 @@ void main() {
       'refuses a melody that does not fill the bar or cannot be written',
       () {
         final xml = _score([
-          '${_note('C', 5, duration: 4, type: 'whole')}',
+          (_note('C', 5, duration: 4, type: 'whole')),
         ], staves: 1);
         expect(
           () => _editor.replaceMelody(xml, 0, 0, 'C5 h, D5 q'),
@@ -1364,7 +1413,7 @@ void main() {
     test('fills an empty bar', () {
       final xml = _score([
         '',
-        '${_note('C', 5, duration: 4, type: 'whole')}',
+        (_note('C', 5, duration: 4, type: 'whole')),
       ], staves: 1);
       final result = _editor.replaceMelody(xml, 0, 0, 'D5 h, E5 h');
       final bar = _codec.decodeXml(result.xml).parts.first.measures.first;

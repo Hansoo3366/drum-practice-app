@@ -125,7 +125,6 @@ flutter:
     - assets/alphatab/
     - assets/alphatab/vendor/
     - assets/alphatab/vendor/font/
-    - assets/alphatab/vendor/soundfont/
     - assets/scores/
     - assets/sounds/
     # Instrument samples for score playback: the piano app only.

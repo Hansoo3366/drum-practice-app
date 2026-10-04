@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter_notemus/flutter_notemus.dart' as nm;
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/domain/arrangement_profile.dart';
+import 'package:page_a_diddle/features/digital_score/domain/metronome_tempo.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/performance_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
@@ -32,6 +33,163 @@ double midiSequenceDurationMs(
     if (event.bpm case final next? when next > 0) bpm = next;
   }
   return milliseconds;
+}
+
+/// When each tick of a sequence sounds, following its tempo changes.
+class MidiTiming {
+  MidiTiming(nm.MidiSequence sequence, {int fallbackBpm = 120})
+    : ticksPerQuarter = sequence.ticksPerQuarter <= 0
+          ? 960
+          : sequence.ticksPerQuarter,
+      totalTicks = sequence.totalTicks {
+    final tempos = [
+      for (final track in sequence.tracks)
+        for (final event in track.events)
+          if (event.type == nm.MidiEventType.tempo && (event.bpm ?? 0) > 0)
+            event,
+    ]..sort((a, b) => a.tick.compareTo(b.tick));
+    var bpm = fallbackBpm <= 0 ? 120 : fallbackBpm;
+    var tick = 0;
+    var ms = 0.0;
+    _ticks.add(0);
+    _ms.add(0);
+    _bpm.add(bpm);
+    for (final event in tempos) {
+      ms += (event.tick - tick) * 60000 / (bpm * ticksPerQuarter);
+      tick = event.tick;
+      bpm = event.bpm!;
+      if (_ticks.last == tick) {
+        _bpm[_bpm.length - 1] = bpm;
+      } else {
+        _ticks.add(tick);
+        _ms.add(ms);
+        _bpm.add(bpm);
+      }
+    }
+  }
+
+  final int ticksPerQuarter;
+  final int totalTicks;
+  final _ticks = <int>[];
+  final _ms = <double>[];
+  final _bpm = <int>[];
+
+  /// Milliseconds from the start at which [tick] sounds.
+  double msAt(num tick) {
+    var i = _ticks.length - 1;
+    while (i > 0 && _ticks[i] > tick) {
+      i--;
+    }
+    return _ms[i] + (tick - _ticks[i]) * 60000 / (_bpm[i] * ticksPerQuarter);
+  }
+
+  double get durationMs => msAt(totalTicks);
+}
+
+/// The one tempo [playableSequence] is written in.
+const _playerBpm = 120;
+
+/// [sequence] as the native player can play it. The player keeps the first
+/// tempo for the whole piece and always starts at its first tick, so a
+/// ritardando, a pause that is taken up again, a move along the bar and a
+/// slower practice tempo all have to be written into the ticks: every note
+/// is put where it sounds, counted from [fromMs] of the music's own time
+/// and played [speed] times as fast, at one tempo.
+///
+/// A note already sounding at [fromMs] is left out with its end.
+nm.MidiSequence playableSequence(
+  nm.MidiSequence sequence,
+  MidiTiming timing, {
+  double fromMs = 0,
+  double speed = 1,
+}) {
+  final perMs = _playerBpm * timing.ticksPerQuarter / 60000;
+  final rate = speed <= 0 ? 1.0 : speed;
+  int at(int tick) => ((timing.msAt(tick) - fromMs) / rate * perMs).round();
+  bool isOn(nm.MidiEvent e) =>
+      e.type == nm.MidiEventType.noteOn && (e.velocity ?? 0) > 0;
+  bool isOff(nm.MidiEvent e) =>
+      e.type == nm.MidiEventType.noteOff ||
+      (e.type == nm.MidiEventType.noteOn && (e.velocity ?? 0) == 0);
+
+  nm.MidiEvent? signature;
+  for (final track in sequence.tracks) {
+    for (final event in track.events) {
+      if (event.type != nm.MidiEventType.timeSignature) continue;
+      if (event.numerator == null || event.denominator == null) continue;
+      if (signature == null || event.tick < signature.tick) signature = event;
+    }
+  }
+  final tracks = <nm.MidiTrack>[
+    nm.MidiTrack(
+      name: 'Conductor',
+      channel: 0,
+      events: [
+        const nm.MidiEvent.tempo(tick: 0, bpm: _playerBpm),
+        if (signature != null)
+          nm.MidiEvent.timeSignature(
+            tick: 0,
+            numerator: signature.numerator!,
+            denominator: signature.denominator!,
+          ),
+      ],
+    ),
+  ];
+  for (final track in sequence.tracks) {
+    if (track.name.toLowerCase() == 'conductor') continue;
+    // Ends before beginnings at the same tick, as the player pairs them.
+    final ordered = [
+      for (final event in track.events)
+        if (isOn(event) || isOff(event)) event,
+    ];
+    final indexed = [for (var i = 0; i < ordered.length; i++) (i, ordered[i])]
+      ..sort((a, b) {
+        final byTick = a.$2.tick.compareTo(b.$2.tick);
+        if (byTick != 0) return byTick;
+        final byKind = (isOff(a.$2) ? 0 : 1).compareTo(isOff(b.$2) ? 0 : 1);
+        return byKind != 0 ? byKind : a.$1.compareTo(b.$1);
+      });
+    // Notes begun before the start: how many ends of each are still to come.
+    final leftOut = <(int, int), int>{};
+    final events = <nm.MidiEvent>[];
+    for (final (_, event) in indexed) {
+      final key = (event.channel, event.note ?? 0);
+      final tick = at(event.tick);
+      if (isOn(event)) {
+        if (tick < 0) {
+          leftOut[key] = (leftOut[key] ?? 0) + 1;
+          continue;
+        }
+        events.add(
+          nm.MidiEvent.noteOn(
+            tick: tick,
+            channel: event.channel,
+            note: event.note ?? 0,
+            velocity: event.velocity ?? 0,
+          ),
+        );
+        continue;
+      }
+      final waiting = leftOut[key] ?? 0;
+      if (waiting > 0) {
+        leftOut[key] = waiting - 1;
+        continue;
+      }
+      events.add(
+        nm.MidiEvent.noteOff(
+          tick: math.max(0, tick),
+          channel: event.channel,
+          note: event.note ?? 0,
+        ),
+      );
+    }
+    tracks.add(track.copyWith(events: events));
+  }
+  return nm.MidiSequence(
+    ticksPerQuarter: timing.ticksPerQuarter,
+    tracks: tracks,
+    warnings: sequence.warnings,
+  );
 }
 
 /// [sequence] with the notes at [tiedInto] not struck again: the note-on is
@@ -124,7 +282,8 @@ nm.MidiSequence playbackMidi(
 }) {
   final copies = midiReadyCopies(musicXml);
   final sequence = nm.MidiMapper.fromScore(
-    nm.MusicXMLParser.scoreFromMusicXML(copies.untied),
+    // The reader of this file knows a mark's beat unit but not its dot.
+    nm.MusicXMLParser.scoreFromMusicXML(metronomesInQuarters(copies.untied)),
     options: options,
   );
   final played = codec.decodeXml(copies.ready);

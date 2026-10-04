@@ -52,7 +52,7 @@ void main() {
           switch (e) {
             MusicNote(:final pitch?) =>
               '${pitch.step.name}${pitch.alter}${pitch.octave}',
-            MusicHarmony h =>
+            final MusicHarmony h =>
               '${h.rootStep.name}${h.rootAlter}/${h.bassStep?.name}${h.bassAlter}',
             _ => '',
           },

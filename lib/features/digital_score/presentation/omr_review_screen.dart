@@ -11,6 +11,7 @@ import 'package:page_a_diddle/features/digital_score/data/omr_convert_service.da
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_quality.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_review.dart';
+import 'package:page_a_diddle/features/digital_score/domain/omr_review_approvals.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/omr_original_crop.dart';
@@ -245,7 +246,7 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
       set.remove(suggestionIndex);
     }
     try {
-      final xml = _withApprovals(_baseXml);
+      final xml = withReviewApprovals(_baseXml, widget.bars, _approved);
       setState(() {
         _xml = xml;
         _readVersion();
@@ -257,102 +258,6 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(error.message)));
     }
-  }
-
-  /// [xml] with every approved suggestion written in.
-  String _withApprovals(String xml) {
-    var result = xml;
-    for (final bar in widget.bars) {
-      final chosen = _approved[bar.key];
-      if (chosen == null || chosen.isEmpty) continue;
-      final index = _barIndexIn(result, bar);
-      if (index == null) {
-        throw const FormatException('이 버전에는 없는 마디입니다.');
-      }
-      // A whole melody first: single notes are then addressed in it. The
-      // lengths go in together, so each names the note it was made for and
-      // the bar closes up behind them.
-      final order = chosen.toList()
-        ..sort((a, b) {
-          int rank(int i) => bar.suggestions[i].field == 'melody' ? 0 : 1;
-          return rank(a) != rank(b) ? rank(a) - rank(b) : a - b;
-        });
-      final lengths = <int, ({String type, int dots})>{};
-      for (final i in order) {
-        final suggestion = bar.suggestions[i];
-        final note = XmlNoteRef(
-          partIndex: bar.partIndex,
-          measureIndex: index,
-          noteIndex: (suggestion.note ?? 1) - 1,
-        );
-        switch (suggestion.field) {
-          case 'melody':
-            result = _editor
-                .replaceMelody(
-                  result,
-                  bar.partIndex,
-                  index,
-                  suggestion.suggested,
-                )
-                .xml;
-          case 'pitch' when suggestion.note != null:
-            result = _editor
-                .setNotePitch(result, note, suggestion.suggested)
-                .xml;
-          case 'duration' when suggestion.note != null:
-            lengths[note.noteIndex] = _suggestedLength(
-              result,
-              note,
-              suggestion,
-            );
-          default:
-            throw const FormatException('이 제안은 바로 넣을 수 없습니다.');
-        }
-      }
-      if (lengths.isNotEmpty) {
-        result = _editor
-            .setNoteLengths(result, bar.partIndex, index, lengths)
-            .xml;
-      }
-    }
-    return result;
-  }
-
-  /// The length a duration suggestion asks for ("8.", "q", "D5 8": its last
-  /// token). It names a note of the bar as converted. When that note no
-  /// longer has the length the suggestion saw, the bar has changed since
-  /// (an earlier approval or a fix), and writing it would change some other
-  /// note.
-  ({String type, int dots}) _suggestedLength(
-    String xml,
-    XmlNoteRef ref,
-    OmrReviewSuggestion suggestion,
-  ) {
-    MelodyToken length(String text) => parseMelodyTokens(
-      'C4 ${text.trim().split(RegExp(r'\s+')).last}',
-    ).single;
-    final token = length(suggestion.suggested);
-    MelodyToken? seen;
-    try {
-      seen = length(suggestion.current);
-    } on FormatException {
-      // No length to compare with.
-    }
-    if (seen != null) {
-      final now = _editor.describe(xml, ref);
-      if (now.type != seen.type || now.dots != seen.dots) {
-        throw const FormatException('마디가 바뀌어 이 제안은 넣을 수 없습니다.');
-      }
-    }
-    return (type: token.type, dots: token.dots);
-  }
-
-  /// Where [bar] is in [xml], by the bar origins written in it.
-  int? _barIndexIn(String xml, OmrReviewBar bar) {
-    final origins = barOrigins(xml);
-    if (origins == null) return bar.measureIndex;
-    final index = origins.indexOf(bar.measureIndex);
-    return index < 0 ? null : index;
   }
 
   /// Saves the score with the approved suggestions as a new version.
@@ -797,7 +702,7 @@ class _Findings extends StatelessWidget {
               text:
                   '${suggestion.label}: '
                   '${suggestion.current.isEmpty ? '(없음)' : suggestion.current}'
-                  ' → ${suggestion.suggested}',
+                  ' → ${suggestion.suggested.isEmpty ? '(지움)' : suggestion.suggested}',
               note: [
                 if (suggestion.confidence case final confidence?)
                   '확신 ${(confidence * 100).round()}%',

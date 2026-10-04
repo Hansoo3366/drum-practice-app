@@ -5,6 +5,71 @@ import 'package:page_a_diddle/features/digital_score/domain/score_playback.dart'
 import 'package:page_a_diddle/features/digital_score/presentation/score_playback_bar.dart';
 
 void main() {
+  testWidgets('the practice tempo is a number to press, on a phone too', (
+    tester,
+  ) async {
+    // A narrow phone: the bar with every control still fits.
+    await tester.binding.setSurfaceSize(const Size(360, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final asked = <int>[];
+    var percent = 100;
+    await tester.pumpWidget(
+      _app(
+        StatefulBuilder(
+          builder: (context, setState) => Align(
+            alignment: Alignment.bottomCenter,
+            child: ScorePlaybackBar(
+              state: const ScorePlaybackState(ready: true, durationMs: 10000),
+              onPlayPause: _noop,
+              onStop: _noop,
+              onSeek: _noopSeek,
+              onEditSequence: _noop,
+              onEditArrangement: _noop,
+              tempoPercent: percent,
+              onTempo: (value) => setState(() {
+                asked.add(value);
+                percent = value;
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('100%'));
+    await tester.pumpAndSettle();
+    expect(find.text('재생 속도'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('-5%'));
+    await tester.tap(find.byTooltip('-5%'));
+    await tester.pumpAndSettle();
+    expect(asked, [95, 90]);
+    // The bar behind the sheet shows the tempo that plays.
+    expect(find.text('90%'), findsWidgets);
+
+    // Back to the written tempo with one press.
+    await tester.tap(find.widgetWithText(TextButton, '100%'));
+    await tester.pumpAndSettle();
+    expect(asked.last, 100);
+  });
+
+  testWidgets('a bar without a tempo callback has no tempo control', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        const ScorePlaybackBar(
+          state: ScorePlaybackState(ready: true),
+          onPlayPause: _noop,
+          onStop: _noop,
+          onSeek: _noopSeek,
+        ),
+      ),
+    );
+    expect(find.text('100%'), findsNothing);
+  });
+
   testWidgets('keeps transport controls disabled until the player is ready', (
     tester,
   ) async {
@@ -31,7 +96,7 @@ void main() {
     expect(buttonWithTooltip('재생').onPressed, isNull);
     expect(buttonWithTooltip('정지').onPressed, isNull);
     expect(find.byTooltip('조옮김'), findsNothing);
-    expect(find.byTooltip('반주'), findsNothing);
+    expect(find.byTooltip('재생 반주'), findsNothing);
     expect(find.byTooltip('연주 순서'), findsNothing);
     expect(find.text('1 · 1'), findsOneWidget);
   });
@@ -116,7 +181,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('반주'));
+    await tester.tap(find.byTooltip('재생 반주'));
     expect(arrangementCount, 1);
   });
 }

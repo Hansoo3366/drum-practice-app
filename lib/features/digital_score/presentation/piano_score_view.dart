@@ -19,6 +19,7 @@ class PianoScorePlaybackController extends ChangeNotifier {
   Future<bool> Function()? _playPause;
   Future<bool> Function()? _stop;
   Future<bool> Function(double positionMs)? _seek;
+  Future<bool> Function(int measureIndex)? _playFromMeasure;
 
   ScorePlaybackState get state => _state;
 
@@ -26,16 +27,19 @@ class PianoScorePlaybackController extends ChangeNotifier {
     required Future<bool> Function() playPause,
     required Future<bool> Function() stop,
     required Future<bool> Function(double positionMs) seek,
+    Future<bool> Function(int measureIndex)? playFromMeasure,
   }) {
     _playPause = playPause;
     _stop = stop;
     _seek = seek;
+    _playFromMeasure = playFromMeasure;
   }
 
   void detach() {
     _playPause = null;
     _stop = null;
     _seek = null;
+    _playFromMeasure = null;
   }
 
   void replaceState(ScorePlaybackState next) {
@@ -50,6 +54,12 @@ class PianoScorePlaybackController extends ChangeNotifier {
 
   Future<bool> seek(double positionMs) async =>
       await _seek?.call(positionMs) ?? false;
+
+  /// Moves to the start of the written bar [measureIndex]: playing goes on
+  /// from there, a paused player waits there. False when the order does not
+  /// play that bar.
+  Future<bool> playFromMeasure(int measureIndex) async =>
+      await _playFromMeasure?.call(measureIndex) ?? false;
 }
 
 class PianoScoreView extends StatefulWidget {

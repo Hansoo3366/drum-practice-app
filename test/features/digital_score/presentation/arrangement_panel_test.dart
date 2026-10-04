@@ -28,7 +28,7 @@ void main() {
 
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
-    expect(find.text('반주'), findsOneWidget);
+    expect(find.text('재생 반주'), findsOneWidget);
 
     await tester.tap(find.text('박마다'));
     await tester.pump();

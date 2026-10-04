@@ -11,6 +11,7 @@ import 'package:page_a_diddle/app/widgets/compact_controls.dart';
 import 'package:page_a_diddle/app/widgets/sheet_insets.dart';
 import 'package:page_a_diddle/core/database/app_database.dart';
 import 'package:page_a_diddle/core/format/relative_time.dart';
+import 'package:page_a_diddle/core/storage/song_file_storage.dart';
 import 'package:page_a_diddle/core/storage/storage_provider.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_import_service.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_picker.dart';
@@ -24,7 +25,9 @@ import 'package:page_a_diddle/features/library/data/pdf_picker.dart';
 import 'package:page_a_diddle/features/library/data/song_repository.dart';
 import 'package:page_a_diddle/features/library/domain/folder_colors.dart';
 import 'package:page_a_diddle/features/library/domain/library_filter.dart';
+import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
 import 'package:page_a_diddle/features/library/domain/score_file_filter.dart';
+import 'package:page_a_diddle/features/library/domain/score_type.dart';
 import 'package:page_a_diddle/features/library/presentation/create_music_xml_sheet.dart';
 import 'package:page_a_diddle/features/library/presentation/edit_song_sheet.dart';
 import 'package:page_a_diddle/features/library/presentation/import_score_sheet.dart';
@@ -58,6 +61,15 @@ class LibraryScreen extends ConsumerWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Converting is what the piano app is for: it comes first and
+            // says what it takes.
+            if (isPianoProduct)
+              ListTile(
+                leading: const Icon(Icons.document_scanner_outlined),
+                title: Text(context.l10n.convertToDigitalScore),
+                subtitle: Text(context.l10n.convertHint),
+                onTap: () => Navigator.pop(context, _LibraryAddAction.convert),
+              ),
             if (noteInputEnabled)
               ListTile(
                 leading: const Icon(Icons.edit_note_rounded),
@@ -75,12 +87,6 @@ class LibraryScreen extends ConsumerWidget {
               onTap: () =>
                   Navigator.pop(context, _LibraryAddAction.importMusicXml),
             ),
-            if (isPianoProduct)
-              ListTile(
-                leading: const Icon(Icons.document_scanner_outlined),
-                title: Text(context.l10n.convertToDigitalScore),
-                onTap: () => Navigator.pop(context, _LibraryAddAction.convert),
-              ),
           ],
         ),
       ),
@@ -104,6 +110,16 @@ class LibraryScreen extends ConsumerWidget {
   ) async {
     final file = await ref.read(omrSourcePickerProvider).pick();
     if (file == null || !context.mounted) return;
+    await _convert(context, ref, file, folderId: _currentImportFolderId(ref));
+  }
+
+  /// Asks what kind of score [file] is and sends it to be converted.
+  Future<void> _convert(
+    BuildContext context,
+    WidgetRef ref,
+    PickedLocalFile file, {
+    String? folderId,
+  }) async {
     final profile = await showModalBottomSheet<OmrRecognitionProfile>(
       context: context,
       useSafeArea: true,
@@ -111,19 +127,40 @@ class LibraryScreen extends ConsumerWidget {
         padding: sheetContentPadding(sheetContext, top: 16, bottom: 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // The two kinds are read differently: the choice says what
+            // each one is, for someone who meets it for the first time.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                sheetContext.l10n.omrProfileTitle,
+                style: Theme.of(sheetContext).textTheme.titleMedium,
+              ),
+            ),
             ListTile(
               leading: const Icon(Icons.piano_rounded),
               title: Text(sheetContext.l10n.omrProfileStandard),
+              subtitle: Text(sheetContext.l10n.omrProfileStandardHint),
               onTap: () =>
                   Navigator.pop(sheetContext, OmrRecognitionProfile.standard),
             ),
             ListTile(
               leading: const Icon(Icons.lyrics_rounded),
               title: Text(sheetContext.l10n.omrProfileChordsLyrics),
+              subtitle: Text(sheetContext.l10n.omrProfileChordsLyricsHint),
               onTap: () => Navigator.pop(
                 sheetContext,
                 OmrRecognitionProfile.chordsLyrics,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Text(
+                sheetContext.l10n.omrPhotoTip,
+                style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           ],
@@ -131,9 +168,35 @@ class LibraryScreen extends ConsumerWidget {
       ),
     );
     if (profile == null || !context.mounted) return;
-    await ref
-        .read(omrConvertJobsProvider.notifier)
-        .enqueue(file, folderId: _currentImportFolderId(ref), profile: profile);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref
+          .read(omrConvertJobsProvider.notifier)
+          .enqueue(file, folderId: folderId, profile: profile);
+    } on FormatException catch (error) {
+      // An empty file, or one that cannot be read.
+      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  /// Converts the PDF of the one selected score, so a PDF already in the
+  /// library need not be found and picked again.
+  Future<void> _convertSelected(
+    BuildContext context,
+    WidgetRef ref,
+    Song song,
+  ) async {
+    final source = await ref
+        .read(songFileStorageProvider)
+        .resolve(song.sourcePath);
+    if (!context.mounted) return;
+    ref.read(librarySelectionProvider.notifier).clear();
+    await _convert(
+      context,
+      ref,
+      PickedLocalFile(name: '${song.title}.pdf', path: source.path),
+      folderId: song.folderId,
+    );
   }
 
   Future<void> _createMusicXml(BuildContext context, WidgetRef ref) async {
@@ -295,13 +358,37 @@ class LibraryScreen extends ConsumerWidget {
                     ref.read(librarySelectionProvider.notifier).clear(),
               ),
         actions: [
-          if (selection.isEmpty)
+          if (selection.isEmpty) ...[
+            // The piano app has no home screen: its settings (theme,
+            // privacy, terms, contact) open from the library.
+            if (isPianoProduct)
+              CompactIconButton(
+                icon: Icons.settings_outlined,
+                tooltip: l10n.settings,
+                onPressed: () => context.push('/settings'),
+              ),
             CompactIconButton(
               icon: Icons.add_rounded,
               tooltip: l10n.import,
               onPressed: () => _importScore(context, ref),
-            )
-          else ...[
+            ),
+          ] else ...[
+            if (isPianoProduct)
+              if (songs.asData?.value
+                      .where(
+                        (song) =>
+                            selection.length == 1 &&
+                            song.id == selection.single &&
+                            song.offlineAvailable &&
+                            ScoreType.fromKey(song.scoreType) == ScoreType.pdf,
+                      )
+                      .firstOrNull
+                  case final pdf?)
+                CompactIconButton(
+                  icon: Icons.document_scanner_outlined,
+                  tooltip: l10n.convertToDigitalScore,
+                  onPressed: () => _convertSelected(context, ref, pdf),
+                ),
             if (selection.length == 1)
               CompactIconButton(
                 icon: Icons.edit_rounded,
@@ -356,6 +443,11 @@ class LibraryScreen extends ConsumerWidget {
                           onChanged: ref
                               .read(libraryQueryProvider.notifier)
                               .update,
+                          // Typing is over when the list or anything else
+                          // is touched: the keyboard must not come back
+                          // over the list after a sheet or a file picker.
+                          onTapOutside: (_) =>
+                              FocusManager.instance.primaryFocus?.unfocus(),
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -429,21 +521,25 @@ class LibraryScreen extends ConsumerWidget {
                                   20,
                                   4,
                                 ),
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    l10n.libraryCountFilter(
-                                      items.length,
-                                      selectedFilter.label(l10n),
-                                    ),
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .labelMedium
-                                        ?.copyWith(
-                                          color: colors.onSurfaceVariant,
-                                          fontWeight: FontWeight.w700,
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        l10n.libraryCountFilter(
+                                          items.length,
+                                          selectedFilter.label(l10n),
                                         ),
-                                  ),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelMedium
+                                            ?.copyWith(
+                                              color: colors.onSurfaceVariant,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                      ),
+                                    ),
+                                    const _SortButton(),
+                                  ],
                                 ),
                               ),
                         loading: () => const SizedBox.shrink(),
@@ -451,11 +547,25 @@ class LibraryScreen extends ConsumerWidget {
                       ),
                       Expanded(
                         child: songs.when(
-                          data: (items) => items.isEmpty && convertJobs.isEmpty
-                              ? _EmptyLibrary(
-                                  onImport: () => _importScore(context, ref),
+                          data: (items) =>
+                              items.isNotEmpty || convertJobs.isNotEmpty
+                              ? _SongList(items: items)
+                              // Nothing matches what was typed or picked:
+                              // the library itself may be full.
+                              : ref
+                                        .watch(libraryQueryProvider)
+                                        .trim()
+                                        .isNotEmpty ||
+                                    selectedFilter != LibraryFilter.all ||
+                                    labelFilter != null
+                              ? AppEmptyState(
+                                  icon: Icons.search_off_rounded,
+                                  title: l10n.noMatchingScoresTitle,
+                                  body: l10n.noMatchingScoresBody,
                                 )
-                              : _SongList(items: items),
+                              : _EmptyLibrary(
+                                  onImport: () => _importScore(context, ref),
+                                ),
                           loading: () =>
                               const Center(child: CircularProgressIndicator()),
                           error: (error, stackTrace) => const _LibraryError(),
@@ -516,9 +626,10 @@ class LibraryScreen extends ConsumerWidget {
   Future<void> _copySelected(BuildContext context, WidgetRef ref) async {
     final ids = ref.read(librarySelectionProvider);
     if (ids.isEmpty) return;
+    final l10n = context.l10n;
     final pick = await showLibraryFolderPicker(
       context,
-      title: context.l10n.copyToFolder,
+      title: l10n.copyToFolder,
     );
     if (pick == null) return;
     await ref
@@ -527,6 +638,7 @@ class LibraryScreen extends ConsumerWidget {
           ids: ids,
           folderId: pick.folderId,
           clearFolder: pick.folderId == null,
+          copyTitle: l10n.copyTitle,
         );
     ref.read(librarySelectionProvider.notifier).clear();
   }
@@ -587,6 +699,10 @@ class _SongList extends ConsumerWidget {
 
         return InkWell(
           borderRadius: BorderRadius.circular(8),
+          // Holding a score opens its title, artist and folder.
+          onLongPress: selecting
+              ? null
+              : () => showEditSongSheet(context, song: song),
           onTap: () {
             if (selecting) {
               ref.read(librarySelectionProvider.notifier).toggle(song.id);
@@ -598,6 +714,8 @@ class _SongList extends ConsumerWidget {
               ).showSnackBar(SnackBar(content: Text(l10n.downloadNeeded)));
               return;
             }
+            // What was said about another score has had its moment.
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
             context.push('/score/${song.id}');
           },
           child: Padding(
@@ -727,6 +845,38 @@ class _SongList extends ConsumerWidget {
   }
 }
 
+/// The order of the list, changed with one press: last changed first, or
+/// by title.
+class _SortButton extends ConsumerWidget {
+  const _SortButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = context.l10n;
+    final sort = ref.watch(librarySortProvider);
+    final colors = Theme.of(context).colorScheme;
+    return TextButton.icon(
+      style: TextButton.styleFrom(
+        foregroundColor: colors.onSurfaceVariant,
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        textStyle: Theme.of(
+          context,
+        ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
+      ),
+      onPressed: () => ref
+          .read(librarySortProvider.notifier)
+          .update(
+            sort == LibrarySort.recent ? LibrarySort.title : LibrarySort.recent,
+          ),
+      icon: const Icon(Icons.sort_rounded, size: 18),
+      label: Text(
+        sort == LibrarySort.recent ? l10n.sortRecent : l10n.sortTitle,
+      ),
+    );
+  }
+}
+
 class _ConvertResume extends ConsumerStatefulWidget {
   const _ConvertResume();
 
@@ -736,16 +886,40 @@ class _ConvertResume extends ConsumerStatefulWidget {
 
 class _ConvertResumeState extends ConsumerState<_ConvertResume>
     with WidgetsBindingObserver {
+  StreamSubscription<({String songId, String title})>? _finished;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _finished = ref
+        .read(omrConvertJobsProvider.notifier)
+        .finished
+        .listen(_sayFinished);
   }
 
   @override
   void dispose() {
+    unawaited(_finished?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  /// A finished conversion is said aloud, with the way to open it: its row
+  /// only takes the place of the progress card, which is easy to miss.
+  void _sayFinished(({String songId, String title}) done) {
+    if (!mounted) return;
+    final l10n = context.l10n;
+    final router = GoRouter.of(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(l10n.convertDone(done.title)),
+        action: SnackBarAction(
+          label: l10n.open,
+          onPressed: () => router.push('/score/${done.songId}'),
+        ),
+      ),
+    );
   }
 
   @override
@@ -824,7 +998,7 @@ class _ConvertJobTile extends ConsumerWidget {
               ],
             ),
           ),
-          if (!job.isRunning && (job.serverJobId ?? '').isNotEmpty)
+          if (!job.isRunning)
             CompactIconButton(
               icon: Icons.refresh_rounded,
               tooltip: l10n.retryAction,
@@ -855,7 +1029,7 @@ class _EmptyLibrary extends StatelessWidget {
     return AppEmptyState(
       icon: Icons.library_music_outlined,
       title: l10n.emptyLibraryTitle,
-      body: l10n.emptyLibraryBody,
+      body: isPianoProduct ? l10n.emptyLibraryBodyPiano : l10n.emptyLibraryBody,
       actionLabel: l10n.import,
       onAction: onImport,
     );

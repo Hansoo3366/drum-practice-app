@@ -287,11 +287,8 @@ class _SetlistSongList extends ConsumerWidget {
           child: child,
         );
       },
-      onReorder: (oldIndex, newIndex) {
+      onReorderItem: (oldIndex, newIndex) {
         final ordered = [...items];
-        if (newIndex > oldIndex) {
-          newIndex -= 1;
-        }
         final moved = ordered.removeAt(oldIndex);
         ordered.insert(newIndex, moved);
         unawaited(
@@ -312,9 +309,9 @@ class _SetlistSongList extends ConsumerWidget {
             borderRadius: BorderRadius.circular(10),
             onTap: () {
               if (!item.song.offlineAvailable) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text(context.l10n.downloadRequired)));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(context.l10n.downloadRequired)),
+                );
                 return;
               }
               context.push('/score/${item.song.id}?setlistId=$setlistId');
@@ -423,7 +420,10 @@ class _EmptySetlistSongs extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 18),
-            Text(context.l10n.noSongs, style: Theme.of(context).textTheme.titleLarge),
+            Text(
+              context.l10n.noSongs,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
             const SizedBox(height: 8),
             Text(
               context.l10n.setlistPromptBody,

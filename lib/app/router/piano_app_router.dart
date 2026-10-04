@@ -4,10 +4,8 @@ import 'package:go_router/go_router.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/router/app_transitions.dart';
 import 'package:page_a_diddle/app/widgets/piano_app_shell.dart';
-import 'package:page_a_diddle/features/digital_score/domain/note_input_feature.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_entry_screen.dart';
 import 'package:page_a_diddle/features/library/presentation/library_screen.dart';
-import 'package:page_a_diddle/features/piano/presentation/piano_editor_screen.dart';
 import 'package:page_a_diddle/features/settings/presentation/legal_document_screen.dart';
 import 'package:page_a_diddle/features/settings/presentation/settings_screen.dart';
 import 'package:page_a_diddle/features/storage/presentation/webdav_browser_screen.dart';
@@ -41,36 +39,15 @@ final pianoRouterProvider = Provider<GoRouter>((ref) {
               ),
             ],
           ),
-          if (noteInputEnabled)
-            StatefulShellBranch(
-              routes: [
-                GoRoute(
-                  path: '/editor',
-                  pageBuilder: (context, state) => fadePage(
-                    key: state.pageKey,
-                    child: const PianoEditorScreen(),
-                  ),
-                ),
-              ],
-            ),
         ],
       ),
-      if (!noteInputEnabled)
-        GoRoute(
-          path: '/editor',
-          parentNavigatorKey: _pianoRootNavigatorKey,
-          redirect: (_, _) => '/library',
-        ),
       GoRoute(
         path: '/score/:songId',
         parentNavigatorKey: _pianoRootNavigatorKey,
         pageBuilder: (context, state) => fadePage(
           key: ValueKey<String>(state.uri.toString()),
           duration: const Duration(milliseconds: 340),
-          child: ScoreEntryScreen(
-            songId: state.pathParameters['songId']!,
-            useLomse: false,
-          ),
+          child: ScoreEntryScreen(songId: state.pathParameters['songId']!),
         ),
       ),
       GoRoute(
@@ -86,7 +63,7 @@ final pianoRouterProvider = Provider<GoRouter>((ref) {
           key: state.pageKey,
           child: LegalDocumentScreen(
             title: context.l10n.privacyPolicy,
-            body: context.l10n.privacyBody,
+            body: context.l10n.privacyBodyPiano,
           ),
         ),
       ),
@@ -97,7 +74,7 @@ final pianoRouterProvider = Provider<GoRouter>((ref) {
           key: state.pageKey,
           child: LegalDocumentScreen(
             title: context.l10n.termsOfUse,
-            body: context.l10n.termsBody,
+            body: context.l10n.termsBodyPiano,
           ),
         ),
       ),

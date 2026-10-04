@@ -530,6 +530,7 @@ class _FolderEditorSheetState extends ConsumerState<_FolderEditorSheet> {
           const SizedBox(height: 16),
           TextField(
             controller: _nameController,
+            autofocus: true,
             textInputAction: TextInputAction.done,
             decoration: InputDecoration(
               labelText: l10n.folderName,

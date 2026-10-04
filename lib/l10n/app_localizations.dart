@@ -422,6 +422,42 @@ abstract class AppLocalizations {
   /// **'Import a PDF\nto start practicing'**
   String get emptyLibraryBody;
 
+  /// noMatchingScoresTitle
+  ///
+  /// In en, this message translates to:
+  /// **'No scores found'**
+  String get noMatchingScoresTitle;
+
+  /// noMatchingScoresBody
+  ///
+  /// In en, this message translates to:
+  /// **'Try another word\nor another filter'**
+  String get noMatchingScoresBody;
+
+  /// emptyLibraryBodyPiano
+  ///
+  /// In en, this message translates to:
+  /// **'Bring in a photo or PDF\nand turn it into a score you can play'**
+  String get emptyLibraryBodyPiano;
+
+  /// Title of a copied score
+  ///
+  /// In en, this message translates to:
+  /// **'{title} copy'**
+  String copyTitle(String title);
+
+  /// renameScoreVersion
+  ///
+  /// In en, this message translates to:
+  /// **'Rename version'**
+  String get renameScoreVersion;
+
+  /// arrangementHint
+  ///
+  /// In en, this message translates to:
+  /// **'Heard only while playing. To keep it as notes, use \"Make an instrument score\".'**
+  String get arrangementHint;
+
   /// emptyRecentTitle
   ///
   /// In en, this message translates to:
@@ -1142,6 +1178,180 @@ abstract class AppLocalizations {
   /// **'No songs'**
   String get noSongs;
 
+  /// convertDone
+  ///
+  /// In en, this message translates to:
+  /// **'{title} converted'**
+  String convertDone(String title);
+
+  /// sortRecent
+  ///
+  /// In en, this message translates to:
+  /// **'Recent'**
+  String get sortRecent;
+
+  /// sortTitle
+  ///
+  /// In en, this message translates to:
+  /// **'Title'**
+  String get sortTitle;
+
+  /// playbackTempo
+  ///
+  /// In en, this message translates to:
+  /// **'Playback speed'**
+  String get playbackTempo;
+
+  /// pianoTagline
+  ///
+  /// In en, this message translates to:
+  /// **'Photos and PDFs to digital scores'**
+  String get pianoTagline;
+
+  /// privacyBodyPiano
+  ///
+  /// In en, this message translates to:
+  /// **'Piano Score keeps your scores, versions and settings on this device. There is no account, and no name or contact is collected.\n\nWhen you convert a score, the photo or PDF you pick is sent to the conversion server (HTTPS). To read and check the score, the server sends parts of the score image to an AI service (Google Gemini). Uploaded files and results are deleted from the server six hours after the conversion ends.\n\nWhen you ask for an AI suggestion, a summary of the chords and sections is sent to the same server and AI service.\n\nTo count daily use, a random identifier made when the app is installed is registered with the server. It is not used to identify a person.\n\nCloud storage (WebDAV, Google Drive, Dropbox) exchanges files only with the places you connect.\n\nNo advertising or analytics tools are used.\n\nContact: support@page-a-diddle.app'**
+  String get privacyBodyPiano;
+
+  /// termsBodyPiano
+  ///
+  /// In en, this message translates to:
+  /// **'By using Piano Score you agree to use it for lawful personal or professional music practice.\n\nYou are responsible for the rights to the scores and files you import or convert. Do not import or convert material you may not use.\n\nConversion and AI corrections can be wrong. Check the result against the original before relying on it.\n\nThe app is provided as is, without a guarantee of uninterrupted operation.\n\nContact: support@page-a-diddle.app'**
+  String get termsBodyPiano;
+
+  /// convertHint
+  ///
+  /// In en, this message translates to:
+  /// **'A photo or PDF of a score'**
+  String get convertHint;
+
+  /// omrProfileTitle
+  ///
+  /// In en, this message translates to:
+  /// **'What kind of score is it?'**
+  String get omrProfileTitle;
+
+  /// omrProfileStandardHint
+  ///
+  /// In en, this message translates to:
+  /// **'Notes only (a piano score)'**
+  String get omrProfileStandardHint;
+
+  /// omrProfileChordsLyricsHint
+  ///
+  /// In en, this message translates to:
+  /// **'With chord names and lyrics'**
+  String get omrProfileChordsLyricsHint;
+
+  /// omrPhotoTip
+  ///
+  /// In en, this message translates to:
+  /// **'A straight, sharp page reads best.'**
+  String get omrPhotoTip;
+
+  /// Bars by their printed numbers, as runs: 5–7, 10
+  ///
+  /// In en, this message translates to:
+  /// **'Bars {bars}'**
+  String barNumbers(String bars);
+
+  /// barMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Bar'**
+  String get barMenu;
+
+  /// barMenuTooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Edit bar'**
+  String get barMenuTooltip;
+
+  /// playBar
+  ///
+  /// In en, this message translates to:
+  /// **'Play this bar'**
+  String get playBar;
+
+  /// barTooShort
+  ///
+  /// In en, this message translates to:
+  /// **'{beats} beats short of the time'**
+  String barTooShort(String beats);
+
+  /// barTooLong
+  ///
+  /// In en, this message translates to:
+  /// **'{beats} beats over the time'**
+  String barTooLong(String beats);
+
+  /// lyric
+  ///
+  /// In en, this message translates to:
+  /// **'Lyric'**
+  String get lyric;
+
+  /// lyricNextHint
+  ///
+  /// In en, this message translates to:
+  /// **'Next key: on to the next note'**
+  String get lyricNextHint;
+
+  /// barEdit
+  ///
+  /// In en, this message translates to:
+  /// **'Edit'**
+  String get barEdit;
+
+  /// listen
+  ///
+  /// In en, this message translates to:
+  /// **'Listen'**
+  String get listen;
+
+  /// erase
+  ///
+  /// In en, this message translates to:
+  /// **'Erase'**
+  String get erase;
+
+  /// toolsNote
+  ///
+  /// In en, this message translates to:
+  /// **'Note'**
+  String get toolsNote;
+
+  /// toolsWords
+  ///
+  /// In en, this message translates to:
+  /// **'Chord · Lyric'**
+  String get toolsWords;
+
+  /// toolsLength
+  ///
+  /// In en, this message translates to:
+  /// **'Length'**
+  String get toolsLength;
+
+  /// toolsPitch
+  ///
+  /// In en, this message translates to:
+  /// **'Pitch'**
+  String get toolsPitch;
+
+  /// The bar as the score has it now, beside the original
+  ///
+  /// In en, this message translates to:
+  /// **'Now'**
+  String get proofreadNow;
+
+  /// How a note is selected in the proofreading editor
+  ///
+  /// In en, this message translates to:
+  /// **'Tap a note to pick it'**
+  String get proofreadPick;
+
   /// songAdded
   ///
   /// In en, this message translates to:
@@ -1337,7 +1547,7 @@ abstract class AppLocalizations {
   /// editSong
   ///
   /// In en, this message translates to:
-  /// **'Edit score'**
+  /// **'Edit song info'**
   String get editSong;
 
   /// codeCopied
@@ -3335,7 +3545,7 @@ abstract class AppLocalizations {
   /// Empty playback sequence when the score has no section marks
   ///
   /// In en, this message translates to:
-  /// **'Tap a bar to start a section'**
+  /// **'Make sections first: tap a line under \"Sections\"'**
   String get noSections;
 
   /// Arrangement sheet when the score has no chord symbols
@@ -3383,7 +3593,7 @@ abstract class AppLocalizations {
   /// Chord-based piano accompaniment profile
   ///
   /// In en, this message translates to:
-  /// **'Accompaniment'**
+  /// **'Playback accompaniment'**
   String get scoreArrangement;
 
   /// Disable generated piano accompaniment
@@ -3395,7 +3605,7 @@ abstract class AppLocalizations {
   /// Held block-chord accompaniment
   ///
   /// In en, this message translates to:
-  /// **'Chord'**
+  /// **'Held'**
   String get arrangementBlock;
 
   /// Per-beat repeated chord accompaniment
@@ -3773,7 +3983,7 @@ abstract class AppLocalizations {
   /// Heading for how the right hand of the generated piano part plays
   ///
   /// In en, this message translates to:
-  /// **'Right hand'**
+  /// **'Right-hand pattern'**
   String get pianoPattern;
 
   /// Accompaniment pattern: chord struck once and held
@@ -3797,7 +4007,7 @@ abstract class AppLocalizations {
   /// Heading for where the right hand of the generated piano part lies
   ///
   /// In en, this message translates to:
-  /// **'Register'**
+  /// **'Accompaniment height'**
   String get pianoRegister;
 
   /// Right-hand register around middle C
@@ -3923,7 +4133,7 @@ abstract class AppLocalizations {
   /// Heading for how many notes the generated parts play at once
   ///
   /// In en, this message translates to:
-  /// **'Density'**
+  /// **'Chord thickness'**
   String get accompanimentDensity;
 
   /// Thin accompaniment: at most three notes, nothing doubled
@@ -3947,7 +4157,7 @@ abstract class AppLocalizations {
   /// Heading for the split point between the piano's hands
   ///
   /// In en, this message translates to:
-  /// **'Right hand lowest note'**
+  /// **'Where the hands split'**
   String get pianoSplitPoint;
 
   /// Split point left to the chosen register

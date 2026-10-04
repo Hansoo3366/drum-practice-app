@@ -52,8 +52,6 @@ class OmrQualityIssue {
 }
 
 class OmrQualityReport {
-  static const currentVersion = 3;
-
   const OmrQualityReport({
     required this.issues,
     required this.score,
@@ -83,6 +81,7 @@ class OmrQualityReport {
           : null,
     );
   }
+  static const currentVersion = 3;
 
   final List<OmrQualityIssue> issues;
   final int score;

@@ -168,6 +168,28 @@ class AppLocalizationsLa extends AppLocalizations {
   String get emptyLibraryBody => 'PDF importa\nut exerceas';
 
   @override
+  String get noMatchingScoresTitle => 'No scores found';
+
+  @override
+  String get noMatchingScoresBody => 'Try another word\nor another filter';
+
+  @override
+  String get emptyLibraryBodyPiano =>
+      'Bring in a photo or PDF\nand turn it into a score you can play';
+
+  @override
+  String copyTitle(String title) {
+    return '$title copy';
+  }
+
+  @override
+  String get renameScoreVersion => 'Rename version';
+
+  @override
+  String get arrangementHint =>
+      'Heard only while playing. To keep it as notes, use \"Make an instrument score\".';
+
+  @override
   String get emptyRecentTitle => 'Nullae chartae recentes';
 
   @override
@@ -564,6 +586,103 @@ class AppLocalizationsLa extends AppLocalizations {
 
   @override
   String get noSongs => 'Nulla carmina';
+
+  @override
+  String convertDone(String title) {
+    return '$title converted';
+  }
+
+  @override
+  String get sortRecent => 'Recent';
+
+  @override
+  String get sortTitle => 'Title';
+
+  @override
+  String get playbackTempo => 'Playback speed';
+
+  @override
+  String get pianoTagline => 'Photos and PDFs to digital scores';
+
+  @override
+  String get privacyBodyPiano =>
+      'Piano Score keeps your scores, versions and settings on this device. There is no account, and no name or contact is collected.\n\nWhen you convert a score, the photo or PDF you pick is sent to the conversion server (HTTPS). To read and check the score, the server sends parts of the score image to an AI service (Google Gemini). Uploaded files and results are deleted from the server six hours after the conversion ends.\n\nWhen you ask for an AI suggestion, a summary of the chords and sections is sent to the same server and AI service.\n\nTo count daily use, a random identifier made when the app is installed is registered with the server. It is not used to identify a person.\n\nCloud storage (WebDAV, Google Drive, Dropbox) exchanges files only with the places you connect.\n\nNo advertising or analytics tools are used.\n\nContact: support@page-a-diddle.app';
+
+  @override
+  String get termsBodyPiano =>
+      'By using Piano Score you agree to use it for lawful personal or professional music practice.\n\nYou are responsible for the rights to the scores and files you import or convert. Do not import or convert material you may not use.\n\nConversion and AI corrections can be wrong. Check the result against the original before relying on it.\n\nThe app is provided as is, without a guarantee of uninterrupted operation.\n\nContact: support@page-a-diddle.app';
+
+  @override
+  String get convertHint => 'A photo or PDF of a score';
+
+  @override
+  String get omrProfileTitle => 'What kind of score is it?';
+
+  @override
+  String get omrProfileStandardHint => 'Notes only (a piano score)';
+
+  @override
+  String get omrProfileChordsLyricsHint => 'With chord names and lyrics';
+
+  @override
+  String get omrPhotoTip => 'A straight, sharp page reads best.';
+
+  @override
+  String barNumbers(String bars) {
+    return 'Bars $bars';
+  }
+
+  @override
+  String get barMenu => 'Bar';
+
+  @override
+  String get barMenuTooltip => 'Edit bar';
+
+  @override
+  String get playBar => 'Play this bar';
+
+  @override
+  String barTooShort(String beats) {
+    return '$beats beats short of the time';
+  }
+
+  @override
+  String barTooLong(String beats) {
+    return '$beats beats over the time';
+  }
+
+  @override
+  String get lyric => 'Lyric';
+
+  @override
+  String get lyricNextHint => 'Next key: on to the next note';
+
+  @override
+  String get barEdit => 'Edit';
+
+  @override
+  String get listen => 'Listen';
+
+  @override
+  String get erase => 'Erase';
+
+  @override
+  String get toolsNote => 'Note';
+
+  @override
+  String get toolsWords => 'Chord · Lyric';
+
+  @override
+  String get toolsLength => 'Length';
+
+  @override
+  String get toolsPitch => 'Pitch';
+
+  @override
+  String get proofreadNow => 'Now';
+
+  @override
+  String get proofreadPick => 'Tap a note to pick it';
 
   @override
   String songAdded(String title) {
@@ -1733,7 +1852,7 @@ class AppLocalizationsLa extends AppLocalizations {
   String get moveSectionLater => 'Move section later';
 
   @override
-  String get noSections => 'Tap a bar to start a section';
+  String get noSections => 'Make sections first: tap a line under \"Sections\"';
 
   @override
   String get noHarmony => 'No chords';
@@ -1757,13 +1876,13 @@ class AppLocalizationsLa extends AppLocalizations {
   String get semitoneUp => 'Up a semitone';
 
   @override
-  String get scoreArrangement => 'Accompaniment';
+  String get scoreArrangement => 'Playback accompaniment';
 
   @override
   String get arrangementOff => 'Off';
 
   @override
-  String get arrangementBlock => 'Chord';
+  String get arrangementBlock => 'Held';
 
   @override
   String get arrangementPulse => 'Beat';
@@ -1981,7 +2100,7 @@ class AppLocalizationsLa extends AppLocalizations {
   String get pianoPartName => 'Piano';
 
   @override
-  String get pianoPattern => 'Right hand';
+  String get pianoPattern => 'Right-hand pattern';
 
   @override
   String get pianoPatternHeld => 'Held';
@@ -1993,7 +2112,7 @@ class AppLocalizationsLa extends AppLocalizations {
   String get pianoPatternBroken => 'Broken';
 
   @override
-  String get pianoRegister => 'Register';
+  String get pianoRegister => 'Accompaniment height';
 
   @override
   String get pianoRegisterMiddle => 'Middle';
@@ -2060,7 +2179,7 @@ class AppLocalizationsLa extends AppLocalizations {
   String get accompanimentOneScore => 'All in one score';
 
   @override
-  String get accompanimentDensity => 'Density';
+  String get accompanimentDensity => 'Chord thickness';
 
   @override
   String get accompanimentDensityLight => 'Light';
@@ -2072,7 +2191,7 @@ class AppLocalizationsLa extends AppLocalizations {
   String get accompanimentDensityFull => 'Full';
 
   @override
-  String get pianoSplitPoint => 'Right hand lowest note';
+  String get pianoSplitPoint => 'Where the hands split';
 
   @override
   String get pianoSplitAuto => 'Auto';

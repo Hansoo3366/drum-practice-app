@@ -22,6 +22,58 @@ void main() {
     expect(storage.resolve('/tmp/outside.pdf'), throwsFormatException);
   });
 
+  test('a copy of a song gets everything kept beside its score file', () async {
+    Future<void> put(String relative, String text) async {
+      final file = File(path.join(root.path, relative));
+      await file.parent.create(recursive: true);
+      await file.writeAsString(text);
+    }
+
+    Future<String?> read(String relative) async {
+      final file = File(path.join(root.path, relative));
+      return await file.exists() ? file.readAsString() : null;
+    }
+
+    await put('score_versions/song/manifest.json', '{"activeId":"v2"}');
+    await put('score_versions/song/v2.musicxml', '<score/>');
+    await put('playback_sequences/song.json', 'written order');
+    await put('playback_sequences/song/v2.json', 'order of v2');
+    await put('omr_validation/song.json', 'report');
+    await put('omr_systems/song/p1-s1.jpg', 'line');
+    await put('omr_sources/song.pdf', '%PDF');
+    // Not sidecars: the score itself, another song, a running upload.
+    await put('scores/song.mxl', 'score');
+    await put('omr_validation/song-2.json', 'other song');
+    await put('omr_pending/song.bin', 'upload');
+
+    await storage.copySongSidecars('song', 'copy');
+
+    expect(
+      await read('score_versions/copy/manifest.json'),
+      '{"activeId":"v2"}',
+    );
+    expect(await read('score_versions/copy/v2.musicxml'), '<score/>');
+    expect(await read('playback_sequences/copy.json'), 'written order');
+    expect(await read('playback_sequences/copy/v2.json'), 'order of v2');
+    expect(await read('omr_validation/copy.json'), 'report');
+    expect(await read('omr_systems/copy/p1-s1.jpg'), 'line');
+    expect(await read('omr_sources/copy.pdf'), '%PDF');
+    expect(await read('scores/copy.mxl'), isNull);
+    expect(await read('omr_pending/copy.bin'), isNull);
+    expect(await read('omr_validation/copy-2.json'), isNull);
+
+    // Deleting a song leaves nothing of it behind, and only of it.
+    await storage.deleteSongSidecars('song');
+
+    expect(await read('score_versions/song/manifest.json'), isNull);
+    expect(await read('playback_sequences/song.json'), isNull);
+    expect(await read('omr_sources/song.pdf'), isNull);
+    expect(await read('omr_systems/song/p1-s1.jpg'), isNull);
+    expect(await read('scores/song.mxl'), 'score');
+    expect(await read('omr_validation/song-2.json'), 'other song');
+    expect(await read('score_versions/copy/v2.musicxml'), '<score/>');
+  });
+
   test('정상적인 상대 경로는 앱 저장소 안에서 해석한다', () async {
     final file = await storage.resolve('scores/song.pdf');
 

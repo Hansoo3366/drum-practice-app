@@ -41,21 +41,33 @@ class _VerovioOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final highlight = Paint()
-      ..color = AppColors.accent.withValues(alpha: 0.12)
-      ..style = PaintingStyle.fill;
     final range = highlightedRange;
-    for (final measure in layout.measures) {
-      final inRange =
-          range != null &&
-          measure.measureIndex >= range.start &&
-          measure.measureIndex <= range.end;
-      if (inRange ||
-          measure.measureIndex == highlightedMeasureIndex ||
-          measure.measureIndex == playbackMeasure ||
-          measure.measureIndex == measureDragTo) {
-        canvas.drawRect(measure.rect, highlight);
+    final marked = [
+      for (final measure in layout.measures)
+        if ((range != null &&
+                measure.measureIndex >= range.start &&
+                measure.measureIndex <= range.end) ||
+            measure.measureIndex == highlightedMeasureIndex ||
+            measure.measureIndex == playbackMeasure ||
+            measure.measureIndex == measureDragTo)
+          measure.rect,
+    ];
+    if (marked.isNotEmpty) {
+      // One even tint over all of them: bars next to each other overlap a
+      // little, and tinted one by one they would show a darker stripe at
+      // every barline.
+      final bounds = marked.reduce((a, b) => a.expandToInclude(b));
+      canvas.saveLayer(
+        bounds,
+        Paint()..color = Colors.black.withValues(alpha: 0.12),
+      );
+      final fill = Paint()
+        ..color = AppColors.accent
+        ..style = PaintingStyle.fill;
+      for (final rect in marked) {
+        canvas.drawRect(rect, fill);
       }
+      canvas.restore();
     }
     _paintKeyNames(canvas);
     final selectedAddress = selectedNoteAddress;
@@ -271,7 +283,8 @@ class _VerovioOverlayPainter extends CustomPainter {
       for (var pass = 0; pass < 3; pass++) {
         Rect? hit;
         for (final chord in chordRects) {
-          if (chord.overlaps(box)) {
+          // With room around a text: a section name sits in a frame.
+          if (chord.inflate(4).overlaps(box)) {
             hit = chord;
             break;
           }

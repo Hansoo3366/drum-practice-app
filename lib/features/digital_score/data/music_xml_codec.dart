@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:page_a_diddle/features/digital_score/domain/metronome_tempo.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:xml/xml.dart';
 
@@ -438,8 +439,14 @@ class MusicXmlCodec {
       for (final type in directionTypes) {
         final metronome = _firstChild(type, 'metronome');
         if (metronome != null) {
+          // The mark counts beats of its own unit; the tempo is in
+          // quarters ("♩. = 50" is 75).
           tempo = _plausibleTempo(
-            double.tryParse(_childText(metronome, 'per-minute') ?? ''),
+            quarterTempo(
+              _childText(metronome, 'beat-unit'),
+              _children(metronome, 'beat-unit-dot').length,
+              double.tryParse(_childText(metronome, 'per-minute') ?? ''),
+            ),
           );
           if (tempo != null) break;
         }

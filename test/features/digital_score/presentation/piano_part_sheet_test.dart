@@ -113,6 +113,9 @@ void main() {
     expect(find.text('1마디: F# → D/F#'), findsOneWidget);
     expect(find.text('G장조에서 F#은 드뭅니다'), findsOneWidget);
     // Nothing is accepted until the user ticks it.
+    // The list scrolls above the button, which stays in view.
+    await tester.ensureVisible(find.text('17마디: CM9 → Cmaj9'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('17마디: CM9 → Cmaj9'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('만들기'));
@@ -184,13 +187,13 @@ void main() {
   ) async {
     final result = await _open(tester, () async => throw StateError('no'));
 
-    expect(find.text('오른손'), findsOneWidget);
+    expect(find.text('오른손 반주 모양'), findsOneWidget);
     await tester.tap(find.text('Brass'));
     await tester.tap(find.text('Organ'));
     await tester.tap(find.text('Piano'));
     await tester.pumpAndSettle();
-    expect(find.text('오른손'), findsNothing);
-    expect(find.text('음역'), findsNothing);
+    expect(find.text('오른손 반주 모양'), findsNothing);
+    expect(find.text('반주 높이'), findsNothing);
     await tester.tap(find.text('만들기'));
     await tester.pumpAndSettle();
 
@@ -283,12 +286,12 @@ void main() {
   ) async {
     await _open(tester, () async => throw StateError('no'));
 
-    expect(find.text('오른손 최저음(분할점)'), findsOneWidget);
+    expect(find.text('양손 경계'), findsOneWidget);
     await tester.tap(find.text('Piano'));
     await tester.tap(find.text('Organ'));
     await tester.pumpAndSettle();
-    expect(find.text('오른손 최저음(분할점)'), findsNothing);
-    expect(find.text('두께'), findsOneWidget);
+    expect(find.text('양손 경계'), findsNothing);
+    expect(find.text('화음 두께'), findsOneWidget);
   });
 
   testWidgets('nothing can be made without an instrument', (tester) async {

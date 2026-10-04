@@ -178,12 +178,75 @@ Future<void> _close(WidgetTester tester) async {
   await tester.pump(const Duration(minutes: 2));
 }
 
+/// What is done to a bar as a whole is in the bar menu, by name.
+const _barTools = {'다음 마디 추가', '마디 복제', '마디 삭제', '마디 앞으로', '마디 뒤로', '이 마디의 글자'};
+
 Future<void> _tapTool(WidgetTester tester, String tooltip) async {
-  await tester.tap(find.byTooltip(tooltip));
+  if (_barTools.contains(tooltip)) {
+    await tester.tap(find.byTooltip('마디 편집'));
+    await _settle(tester);
+    await tester.tap(find.text(tooltip));
+  } else {
+    await tester.tap(find.byTooltip(tooltip));
+  }
   await _settle(tester);
 }
 
 void main() {
+  testWidgets('bar operations are a menu by name; the bar can be heard', (
+    tester,
+  ) async {
+    final storage = _MemoryStorage();
+    await _open(tester, storage);
+
+    // Not five more arrows in the tool rows.
+    for (final name in _barTools) {
+      expect(find.byTooltip(name), findsNothing);
+    }
+    expect(find.byTooltip('이 마디 듣기'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('마디 편집'));
+    await _settle(tester);
+    for (final name in _barTools) {
+      expect(find.text(name), findsOneWidget);
+    }
+    // Pressing outside closes it and changes nothing.
+    await tester.tapAt(const Offset(4, 4));
+    await _settle(tester);
+    expect(find.text('마디 삭제'), findsNothing);
+    expect(find.text('1 / 2마디'), findsOneWidget);
+    await _close(tester);
+  });
+
+  testWidgets('a word is corrected under its note, and the next one after', (
+    tester,
+  ) async {
+    final storage = _MemoryStorage();
+    await _open(tester, storage);
+
+    await _tapTool(tester, '가사');
+    expect(find.widgetWithText(AlertDialog, '가사'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '주');
+    // The keyboard's Next writes the word and opens the next note's.
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await _settle(tester);
+    expect(find.widgetWithText(AlertDialog, '가사'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '님');
+    await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+    await _settle(tester);
+    expect(find.byType(AlertDialog), findsNothing);
+
+    // Saved as a version, with both words in it.
+    await tester.tap(find.widgetWithText(FilledButton, '저장'));
+    await _settle(tester);
+    await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+    await _settle(tester);
+    final saved = utf8.decode(storage.versions.values.single);
+    expect(saved, contains('<text>주</text>'));
+    expect(saved, contains('<text>님</text>'));
+    await _close(tester);
+  });
+
   testWidgets('edits one bar and saves it as a new raw XML version', (
     tester,
   ) async {
@@ -384,13 +447,17 @@ void main() {
     await tester.tap(find.byTooltip('제거'));
     await _settle(tester);
     // Nothing left to remove: the tool is off.
-    final tool = tester.widget<InkWell>(
-      find.descendant(
-        of: find.byTooltip('이 마디의 글자'),
-        matching: find.byType(InkWell),
+    await tester.tap(find.byTooltip('마디 편집'));
+    await _settle(tester);
+    final tool = tester.widget<PopupMenuItem<int>>(
+      find.ancestor(
+        of: find.text('이 마디의 글자'),
+        matching: find.byType(PopupMenuItem<int>),
       ),
     );
-    expect(tool.onTap, isNull);
+    expect(tool.enabled, isFalse);
+    await tester.tapAt(const Offset(4, 4));
+    await _settle(tester);
 
     await tester.tap(find.widgetWithText(FilledButton, '저장'));
     await _settle(tester);

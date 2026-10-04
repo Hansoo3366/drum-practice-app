@@ -489,6 +489,66 @@ class SongFileStorage {
     return relativePath;
   }
 
+  /// The directories whose entries are not a song's sidecars: the score and
+  /// audio files themselves (the library records their paths) and uploads
+  /// of conversions still running.
+  static const _notSidecars = {'scores', 'audio', 'omr_pending', 'jam_host'};
+
+  /// Everything kept beside a song's score file. Each is a file
+  /// `<songId>.<extension>` or a folder `<songId>` in a directory of its
+  /// own: versions, sections and playing orders, key, accompaniment, the
+  /// conversion's reports and pictures of the original.
+  Future<List<FileSystemEntity>> _sidecars(String songId) async {
+    final root = await _rootDirectoryProvider();
+    if (!await root.exists()) return const [];
+    final found = <FileSystemEntity>[];
+    await for (final directory in root.list()) {
+      if (directory is! Directory ||
+          _notSidecars.contains(path.basename(directory.path))) {
+        continue;
+      }
+      await for (final entry in directory.list()) {
+        final name = path.basename(entry.path);
+        if (entry is Directory ? name == songId : name.startsWith('$songId.')) {
+          found.add(entry);
+        }
+      }
+    }
+    return found;
+  }
+
+  /// Gives the copy [toSongId] of a song what [fromSongId] has beside its
+  /// score file, so the copy opens as the song does: same versions with the
+  /// same one active, same sections, same review.
+  Future<void> copySongSidecars(String fromSongId, String toSongId) async {
+    for (final entry in await _sidecars(fromSongId)) {
+      final name = path.basename(entry.path);
+      final target = path.join(
+        entry.parent.path,
+        '$toSongId${name.substring(fromSongId.length)}',
+      );
+      if (entry is File) {
+        await entry.copy(target);
+      } else if (entry is Directory) {
+        await for (final item in entry.list(recursive: true)) {
+          if (item is! File) continue;
+          final copy = File(
+            path.join(target, path.relative(item.path, from: entry.path)),
+          );
+          await copy.parent.create(recursive: true);
+          await item.copy(copy.path);
+        }
+      }
+    }
+  }
+
+  /// Removes what a deleted song left beside its score file.
+  Future<void> deleteSongSidecars(String songId) async {
+    for (final entry in await _sidecars(songId)) {
+      await entry.delete(recursive: true);
+    }
+  }
+
   Future<File> resolve(String relativePath) async {
     final root = await _rootDirectoryProvider();
     final normalized = path.normalize(relativePath);

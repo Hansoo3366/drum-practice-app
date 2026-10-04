@@ -71,6 +71,15 @@ class _ArrangementSheetState extends State<_ArrangementSheet> {
               ),
             ],
           ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              l10n.arrangementHint,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.mutedInk),
+            ),
+          ),
           const SizedBox(height: 8),
           if (!hasHarmony)
             Padding(

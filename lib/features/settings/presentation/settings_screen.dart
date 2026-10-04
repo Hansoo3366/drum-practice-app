@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:page_a_diddle/app/branding/app_branding.dart';
 import 'package:page_a_diddle/app/branding/app_support.dart';
 import 'package:page_a_diddle/app/icons/app_icons.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
@@ -39,20 +40,38 @@ class SettingsScreen extends ConsumerWidget {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
             child: Row(
               children: [
-                const AppBrandMark(size: 52),
+                // The brand mark is the drum app's icon.
+                if (isPianoProduct)
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: AppColors.accent,
+                      borderRadius: BorderRadius.circular(52 * 0.22),
+                    ),
+                    child: const Icon(
+                      Icons.piano_rounded,
+                      color: Colors.white,
+                      size: 30,
+                    ),
+                  )
+                else
+                  const AppBrandMark(size: 52),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        l10n.appName,
+                        isPianoProduct
+                            ? AppBranding.pianoAppName
+                            : l10n.appName,
                         style: textTheme.titleLarge?.copyWith(
                           fontWeight: FontWeight.w900,
                         ),
                       ),
                       Text(
-                        l10n.tagline,
+                        isPianoProduct ? l10n.pianoTagline : l10n.tagline,
                         style: textTheme.bodyMedium?.copyWith(
                           color: colors.onSurfaceVariant,
                         ),
@@ -85,14 +104,16 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: Text(l10n.cloudScores),
             onTap: () => context.push('/tools/webdav'),
           ),
-          ListTile(
-            leading: Icon(Icons.waving_hand_outlined, color: colors.primary),
-            title: Text(l10n.replayOnboarding),
-            onTap: () async {
-              await ref.read(onboardingCompletedProvider.notifier).reset();
-              if (context.mounted) context.go('/onboarding');
-            },
-          ),
+          // The piano app has no onboarding to show again.
+          if (!isPianoProduct)
+            ListTile(
+              leading: Icon(Icons.waving_hand_outlined, color: colors.primary),
+              title: Text(l10n.replayOnboarding),
+              onTap: () async {
+                await ref.read(onboardingCompletedProvider.notifier).reset();
+                if (context.mounted) context.go('/onboarding');
+              },
+            ),
           const Divider(height: 28),
           _SectionHeader(l10n.sectionLegal),
           ListTile(
@@ -118,7 +139,9 @@ class SettingsScreen extends ConsumerWidget {
               final info = packageInfo.asData?.value;
               showLicensePage(
                 context: context,
-                applicationName: l10n.appName,
+                applicationName: isPianoProduct
+                    ? AppBranding.pianoAppName
+                    : l10n.appName,
                 applicationVersion: info?.version,
                 applicationLegalese: AppSupport.supportEmail,
               );

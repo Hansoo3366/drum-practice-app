@@ -210,39 +210,43 @@ class _OmrQualitySheetState extends ConsumerState<_OmrQualitySheet> {
             icon: const Icon(Icons.compare_outlined),
             label: const Text('원본 마디 대조·수정'),
           ),
-          TextField(
-            controller: _keyController,
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: 'XAI_API_KEY',
-              hintText: l10n.omrAiNeedKey,
+          // Reviewing with a key of one's own is a developer's tool: the
+          // server reviews every conversion, and a user has no such key.
+          if (kDebugMode) ...[
+            TextField(
+              controller: _keyController,
+              obscureText: true,
+              decoration: InputDecoration(
+                labelText: 'XAI_API_KEY',
+                hintText: l10n.omrAiNeedKey,
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              TextButton(
-                onPressed: _busy
-                    ? null
-                    : () async {
-                        await ref
-                            .read(omrAiReviewerProvider)
-                            .saveKey(_keyController.text);
-                      },
-                child: Text(l10n.omrAiSaveKey),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: _busy ? null : _runAi,
-                child: _busy
-                    ? const SizedBox.square(
-                        dimension: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Text(l10n.omrAiRun),
-              ),
-            ],
-          ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () async {
+                          await ref
+                              .read(omrAiReviewerProvider)
+                              .saveKey(_keyController.text);
+                        },
+                  child: Text(l10n.omrAiSaveKey),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _busy ? null : _runAi,
+                  child: _busy
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(l10n.omrAiRun),
+                ),
+              ],
+            ),
+          ],
           if (_error != null) ...[
             const SizedBox(height: 8),
             Text(
@@ -312,6 +316,8 @@ enum _ScoreMenuAction {
   review,
   fetchAi,
   deleteVersion,
+  renameVersion,
+  songInfo,
   transpose,
   threeStaff,
   arrangement,

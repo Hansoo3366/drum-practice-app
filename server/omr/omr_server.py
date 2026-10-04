@@ -600,8 +600,11 @@ def arrange_advice():
         return jsonify(error="unauthorized"), 401
     payload = request.get_json(silent=True) or {}
     brief, bars = payload.get("brief"), payload.get("bars")
+    # The number the brief gives its first bar: 0 when the score opens with a pickup.
+    first = payload.get("first", 1)
     if (not isinstance(brief, str) or not brief.strip() or len(brief) > ARRANGE_MAX_BRIEF
-            or not isinstance(bars, int) or isinstance(bars, bool) or bars < 1):
+            or not isinstance(bars, int) or isinstance(bars, bool) or bars < 1
+            or first not in (0, 1) or isinstance(first, bool)):
         return jsonify(error="bad request"), 400
     if not _ai_enabled():
         return jsonify(error="ai unavailable"), 503
@@ -609,7 +612,7 @@ def arrange_advice():
     if limited is not None:
         return limited
     try:
-        return jsonify(_arrange_advice(brief, bars))
+        return jsonify(_arrange_advice(brief, bars, first=first))
     except Exception as error:  # noqa: BLE001 - the model call failed; the app falls back to its defaults
         return jsonify(error="ai failed", detail=str(error)[-200:]), 502
 

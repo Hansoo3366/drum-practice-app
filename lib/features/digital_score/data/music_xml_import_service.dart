@@ -64,8 +64,18 @@ class MusicXmlImportService {
     );
   }
 
+  /// Reads [file] as a score. Whatever is wrong with it (empty, cut off,
+  /// not MusicXML at all, values no score can have) is one thing to the
+  /// user: this file cannot be read as a score.
   Future<MusicScore> inspect(PickedLocalFile file) async {
-    return _codec.decode(await _read(file), fileName: file.name);
+    final bytes = await _read(file);
+    try {
+      return _codec.decode(bytes, fileName: file.name);
+    } on Object {
+      throw const FormatException(
+        '악보로 읽을 수 없는 파일입니다. MusicXML(.musicxml, .mxl, .xml) 파일인지 확인하세요.',
+      );
+    }
   }
 
   Future<String> importMusicXml({

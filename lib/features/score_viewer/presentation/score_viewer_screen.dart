@@ -2681,6 +2681,8 @@ class _PdfScoreViewerState extends ConsumerState<_PdfScoreViewer> {
     }
   }
 
+  // Not offered by any control of the viewer yet.
+  // ignore: unused_element
   Future<void> _deleteMeasure(Measure? measure) async {
     if (measure == null) {
       return;
@@ -2698,6 +2700,8 @@ class _PdfScoreViewerState extends ConsumerState<_PdfScoreViewer> {
     }
   }
 
+  // Not offered by any control of the viewer yet.
+  // ignore: unused_element
   Future<void> _showSectionPicker(Measure measure) async {
     if (!_allowsEditing) return;
     final section = await showModalBottomSheet<String>(
@@ -4297,6 +4301,8 @@ class _PdfScoreViewerState extends ConsumerState<_PdfScoreViewer> {
     }
   }
 
+  // Not offered by any control of the viewer yet.
+  // ignore: unused_element
   Future<void> _showTempoMapEditor(Measure measure, TempoMap? existing) async {
     if (!_allowsEditing) return;
     final startController = TextEditingController(
@@ -4524,6 +4530,8 @@ class _PdfScoreViewerState extends ConsumerState<_PdfScoreViewer> {
     }
   }
 
+  // Not offered by any control of the viewer yet.
+  // ignore: unused_element
   Future<void> _showTimeSignatureEditor(
     Measure measure,
     TimeSignatureMap? existing,

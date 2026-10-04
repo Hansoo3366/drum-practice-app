@@ -65,6 +65,10 @@ class _ImportScoreSheetState extends ConsumerState<_ImportScoreSheet> {
   final _tempoController = TextEditingController();
   bool _isSaving = false;
 
+  // Why the last try failed, said in the sheet: a snackbar would lie over
+  // the button the user has to press again.
+  String? _error;
+
   @override
   void initState() {
     super.initState();
@@ -90,7 +94,10 @@ class _ImportScoreSheetState extends ConsumerState<_ImportScoreSheet> {
       return;
     }
 
-    setState(() => _isSaving = true);
+    setState(() {
+      _isSaving = true;
+      _error = null;
+    });
     final tempoText = _tempoController.text.trim();
 
     try {
@@ -125,17 +132,18 @@ class _ImportScoreSheetState extends ConsumerState<_ImportScoreSheet> {
       }
     } on FormatException catch (error) {
       if (mounted) {
-        setState(() => _isSaving = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        setState(() {
+          _isSaving = false;
+          _error = error.message;
+        });
       }
     } on Object catch (_) {
       if (mounted) {
-        setState(() => _isSaving = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(context.l10n.importFailed)));
+        final message = context.l10n.importFailed;
+        setState(() {
+          _isSaving = false;
+          _error = message;
+        });
       }
     }
   }
@@ -212,6 +220,13 @@ class _ImportScoreSheetState extends ConsumerState<_ImportScoreSheet> {
                       : null;
                 },
               ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
               const SizedBox(height: 22),
               SizedBox(
                 width: double.infinity,

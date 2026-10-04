@@ -310,6 +310,7 @@ class SongRepository {
     required Iterable<String> ids,
     String? folderId,
     bool clearFolder = false,
+    String Function(String title)? copyTitle,
   }) async {
     for (final id in ids) {
       final song = await getSong(id);
@@ -335,7 +336,8 @@ class SongRepository {
         await saveSong(
           SongsCompanion.insert(
             id: newId,
-            title: song.title,
+            // Told apart from the song it was copied from.
+            title: copyTitle?.call(song.title) ?? song.title,
             artist: Value(song.artist),
             defaultTempo: Value(song.defaultTempo),
             targetBpm: Value(song.targetBpm),
@@ -355,16 +357,12 @@ class SongRepository {
             labelNames: labels.map((label) => label.name),
           );
         }
-        final sequence = await _storage.loadPlaybackSequence(song.id);
-        if (sequence != null) {
-          await _storage.savePlaybackSequence(newId, sequence);
-        }
-        final arrangement = await _storage.loadArrangementProfile(song.id);
-        if (arrangement != null) {
-          await _storage.saveArrangementProfile(newId, arrangement);
-        }
+        // Versions, sections, playing order, accompaniment, the conversion
+        // review: the copy opens as the song does.
+        await _storage.copySongSidecars(song.id, newId);
       } on Object {
         await _storage.delete(relativePath);
+        await _storage.deleteSongSidecars(newId);
         rethrow;
       }
     }
@@ -393,22 +391,8 @@ class SongRepository {
         }
       }
       try {
-        await _storage.delete(_storage.playbackSequencePathFor(song.id));
-      } on Object {
-        // Best-effort file cleanup.
-      }
-      try {
-        await _storage.delete(_storage.arrangementProfilePathFor(song.id));
-      } on Object {
-        // Best-effort file cleanup.
-      }
-      try {
-        await _storage.delete(_storage.originalKeyPathFor(song.id));
-      } on Object {
-        // Best-effort file cleanup.
-      }
-      try {
-        await _storage.deleteOmrReviewFiles(song.id);
+        // Versions, playing orders, the uploaded original and the rest.
+        await _storage.deleteSongSidecars(song.id);
       } on Object {
         // Best-effort file cleanup.
       }

@@ -40,12 +40,19 @@ String sectionDisplayName(
   int firstBarNumber = 1,
 }) {
   return section.name.isEmpty
-      ? l10n.sectionBarRange(
-          section.startMeasureIndex + firstBarNumber,
-          section.endMeasureIndex + firstBarNumber,
-        )
+      ? l10n.barNumbers(_sectionBars(section, firstBarNumber))
       : scoreSectionLabel(l10n, section);
 }
+
+/// "5–10", or "0" for a section of one bar.
+String _sectionBars(ScoreSection section, int firstBarNumber) => barRuns([
+  for (
+    var bar = section.startMeasureIndex;
+    bar <= section.endMeasureIndex;
+    bar++
+  )
+    bar,
+], firstBarNumber: firstBarNumber);
 
 /// Sections as the user named them: a piece split off where the written
 /// order jumps (see [ScoreSection.continued]) joins the section before it.
@@ -104,11 +111,23 @@ class ScoreStructurePanel extends StatelessWidget {
     this.madeScoreExists = false,
     this.onMakeScore,
     this.firstBarNumber = 1,
+    this.stepBars = const [],
     super.key,
   });
 
   /// The number of the score's first bar ([MusicScore.firstBarNumber]).
   final int firstBarNumber;
+
+  /// The bars each step of [sequence] plays (see `playbackStepBars`).
+  final List<List<int>> stepBars;
+
+  /// The bars step [index] plays, as runs, when it is played once and its
+  /// bars are known.
+  String? _played(int index) {
+    if (index >= stepBars.length || stepBars[index].isEmpty) return null;
+    if (sequence.steps[index].repeats != 1) return null;
+    return barRuns(stepBars[index], firstBarNumber: firstBarNumber);
+  }
 
   final StructureTab tab;
   final ValueChanged<StructureTab> onTabChanged;
@@ -256,13 +275,12 @@ class ScoreStructurePanel extends StatelessWidget {
                       )
                     : picking || current == null
                     ? l10n.sectionBarPickEnd(bar + firstBarNumber)
-                    : l10n.sectionInfo(
+                    : [
                         current.name.isEmpty
                             ? l10n.sectionUnnamed
                             : scoreSectionLabel(l10n, current),
-                        current.startMeasureIndex + firstBarNumber,
-                        current.endMeasureIndex + firstBarNumber,
-                      ),
+                        l10n.barNumbers(_sectionBars(current, firstBarNumber)),
+                      ].join(' · '),
                 style: bar == null ? muted : theme.textTheme.titleSmall,
               ),
             ),
@@ -355,22 +373,27 @@ class ScoreStructurePanel extends StatelessWidget {
                     index > 0 &&
                     byId[steps[index - 1].sectionId]?.endMeasureIndex ==
                         section.startMeasureIndex - 1,
-                label: sectionDisplayName(
-                  l10n,
-                  section,
-                  firstBarNumber: firstBarNumber,
-                ),
+                // The bars the step really plays, where they are known:
+                // once through a first ending is "5–9", through the second
+                // "5–7, 10". A step played several times says its section.
+                label: section.name.isEmpty && _played(index) != null
+                    ? l10n.barNumbers(_played(index)!)
+                    : sectionDisplayName(
+                        l10n,
+                        section,
+                        firstBarNumber: firstBarNumber,
+                      ),
                 bars: [
                   if (section.name.isNotEmpty || section.continued)
-                    l10n.sectionBarRange(
-                      section.startMeasureIndex + firstBarNumber,
-                      section.endMeasureIndex + firstBarNumber,
+                    l10n.barNumbers(
+                      _played(index) ?? _sectionBars(section, firstBarNumber),
                     ),
-                  if (steps[index] case PlaybackStep(
-                    repeats: 1,
-                    :final pass?,
-                  ) when pass > 0)
-                    l10n.endingPass(pass),
+                  if (_played(index) == null)
+                    if (steps[index] case PlaybackStep(
+                      repeats: 1,
+                      :final pass?,
+                    ) when pass > 0)
+                      l10n.endingPass(pass),
                 ].join(' · '),
                 repeats: steps[index].repeats,
                 canMoveEarlier: index > 0,

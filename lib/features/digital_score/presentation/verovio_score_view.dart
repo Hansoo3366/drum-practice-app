@@ -26,6 +26,7 @@ import 'package:page_a_diddle/features/digital_score/domain/score_transpose.dart
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/midi_duration.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_score_view.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/playback_follow.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_text_labels.dart';
 import 'package:verovio_flutter/verovio_flutter.dart';
 
@@ -45,6 +46,8 @@ class VerovioScoreView extends StatefulWidget {
     this.playbackScore,
     this.playbackSequence = PlaybackSequence.empty,
     this.playbackArrangement = ArrangementProfile.off,
+    this.tempoPercent = 100,
+    this.showZoomControls = true,
     required this.semanticsLabel,
     required this.playback,
     this.playbackVisible = false,
@@ -84,6 +87,13 @@ class VerovioScoreView extends StatefulWidget {
   final MusicScore? playbackScore;
   final PlaybackSequence playbackSequence;
   final ArrangementProfile playbackArrangement;
+
+  /// How fast the score plays, in percent of its written tempo.
+  final int tempoPercent;
+
+  /// The zoom buttons over the score. A view of one bar does without them:
+  /// they would stand on the bar, and two fingers zoom as everywhere.
+  final bool showZoomControls;
   final String semanticsLabel;
   final PianoScorePlaybackController playback;
   final bool playbackVisible;
@@ -214,7 +224,12 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   @override
   void initState() {
     super.initState();
-    widget.playback.attach(playPause: _playPause, stop: _stop, seek: _seek);
+    widget.playback.attach(
+      playPause: _playPause,
+      stop: _stop,
+      seek: _seek,
+      playFromMeasure: _playFromMeasure,
+    );
     _rebuildScore();
     if (widget.playbackVisible) unawaited(_ensureAudio());
   }
@@ -258,6 +273,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     } else if (playbackConfigurationChanged) {
       if (widget.playback.state.playing) unawaited(_stop());
       _resetPlaybackState();
+    } else if (oldWidget.tempoPercent != widget.tempoPercent) {
+      unawaited(_retime(oldWidget.tempoPercent));
     }
     if (oldWidget.playbackVisible != widget.playbackVisible &&
         !widget.playbackVisible) {
@@ -273,6 +290,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   void dispose() {
     _renderGeneration++;
     _playbackTimer?.cancel();
+    _followTimer?.cancel();
     widget.playback.detach();
     _transform.dispose();
     // A view that never opened its player has no backend to stop; the
@@ -369,8 +387,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       ),
     );
     if (mounted) setState(() {});
-    if (widget.playbackVisible)
+    if (widget.playbackVisible) {
       unawaited(_playbackMidi().then((_) {}, onError: (Object _) {}));
+    }
   }
 
   /// Length of the performance before its MIDI exists: every bar the order
@@ -384,10 +403,40 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         widget.score,
         widget.playbackSequence,
       ).fold<double>(0, (sum, index) => sum + lengths[index]);
-      return quarters * 60000 / bpm;
+      return quarters * 60000 / bpm / _speed;
     } on FormatException {
-      return estimateScoreDurationMs(widget.playbackScore ?? widget.score);
+      return estimateScoreDurationMs(widget.playbackScore ?? widget.score) /
+          _speed;
     }
+  }
+
+  /// The practice tempo as a factor: every time the player shows is the
+  /// time the listener hears, at this speed.
+  double get _speed => widget.tempoPercent.clamp(10, 400) / 100;
+
+  /// The tempo was changed: the place in the music stays, its time and the
+  /// length of the piece change, and what is playing goes on at the new
+  /// tempo.
+  Future<void> _retime(int fromPercent) async {
+    final state = widget.playback.state;
+    final ratio = fromPercent / widget.tempoPercent;
+    final wasPlaying = state.playing;
+    if (wasPlaying) {
+      _playbackTimer?.cancel();
+      _playbackTimer = null;
+      try {
+        await _audio.stop();
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    widget.playback.replaceState(
+      widget.playback.state.copyWith(
+        playing: false,
+        currentTimeMs: state.currentTimeMs * ratio,
+        durationMs: state.durationMs * ratio,
+      ),
+    );
+    if (wasPlaying) await _playPause();
   }
 
   /// Measure indices (first part) that start a written line, or empty.
@@ -441,8 +490,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
             }),
           )
           .timeout(timeout);
-      // Bar numbers as the app counts them (position, from 1).
-      await service.loadData(withPositionMeasureNumbers(xml)).timeout(timeout);
+      await service.loadData(engravingMusicXml(xml)).timeout(timeout);
       final pageCount = await service.pageCount.timeout(timeout);
       if (pageCount <= 0) throw StateError('Verovio returned no pages.');
 
@@ -532,7 +580,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
             }),
           )
           .timeout(timeout);
-      await service.loadData(withPositionMeasureNumbers(xml)).timeout(timeout);
+      await service.loadData(engravingMusicXml(xml)).timeout(timeout);
       final pageCount = await service.pageCount.timeout(timeout);
       final pages = <EngravedPage>[];
       for (var pageIndex = 0; pageIndex < pageCount; pageIndex++) {
@@ -952,9 +1000,20 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       return false;
     }
     final nm.MidiSequence sequence;
+    final MidiTiming timing;
     try {
       final midi = await _playbackMidi();
-      sequence = midi.sequence;
+      final speed = _speed;
+      timing = _timingOf(midi);
+      // The player starts at its first tick and keeps one tempo: the place
+      // to go on from, the score's tempo changes and the practice tempo
+      // are written into what it is given.
+      sequence = playableSequence(
+        midi.sequence,
+        timing,
+        fromMs: widget.playback.state.currentTimeMs * speed,
+        speed: speed,
+      );
       await _setInstruments(midi);
       await _bridge.uploadAndStart(sequence, includeMetronome: false);
     } catch (_) {
@@ -966,14 +1025,13 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     widget.playback.replaceState(
       widget.playback.state.copyWith(
         playing: true,
-        durationMs: midiSequenceDurationMs(
-          sequence,
-          fallbackBpm: (widget.score.tempoBpm ?? 120).round(),
-        ),
+        durationMs: timing.durationMs / _speed,
+        measureNumber: _measureForTime(widget.playback.state.currentTimeMs) + 1,
       ),
     );
     // The playing bar shows from the first moment, not from the next bar.
     if (mounted) setState(() {});
+    _followPlayback(widget.playback.state.measureNumber - 1);
     _playbackTimer?.cancel();
     _playbackTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       if (!mounted || _playbackAnchor == null) return;
@@ -996,7 +1054,10 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
           beatIndex: 0,
         ),
       );
-      if (moved) setState(() {});
+      if (moved) {
+        setState(() {});
+        _followPlayback(measure);
+      }
     });
     return true;
   }
@@ -1015,6 +1076,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         _midiFor.bpm == bpm) {
       return current;
     }
+    // The timing read from the MIDI before goes with it.
+    _timing = null;
+    _starts = null;
     _midiFor = (
       xml: widget.engravingXml,
       score: widget.score,
@@ -1035,9 +1099,17 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         // The exact length replaces the estimate while nothing plays.
         if (!mounted || !identical(_midi, future)) return;
         if (widget.playback.state.playing) return;
+        final before = widget.playback.state;
+        final duration = _timingOf(midi).durationMs / _speed;
+        // A place already chosen (a pressed bar, a moved slider) keeps its
+        // share of the piece.
+        final share = before.durationMs > 0
+            ? before.currentTimeMs / before.durationMs
+            : 0.0;
         widget.playback.replaceState(
-          widget.playback.state.copyWith(
-            durationMs: midiSequenceDurationMs(midi.sequence, fallbackBpm: bpm),
+          before.copyWith(
+            durationMs: duration,
+            currentTimeMs: share * duration,
           ),
         );
         setState(() {});
@@ -1100,7 +1172,95 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     );
     if (mounted) setState(() {});
     if (wasPlaying) return _playPause();
+    _followPlayback(widget.playback.state.measureNumber - 1);
     return true;
+  }
+
+  /// Plays from the start of the written bar [measureIndex]: what a press
+  /// on a bar means while the player is open.
+  Future<bool> _playFromMeasure(int measureIndex) async {
+    if (!widget.playbackVisible) return false;
+    final state = widget.playback.state;
+    final duration = state.durationMs;
+    if (!duration.isFinite || duration <= 0) return false;
+    _measureForTime(state.currentTimeMs);
+    final timeline = _timeline;
+    if (timeline == null) return false;
+    final starts = _barStarts(timeline.map, timeline.lengths);
+    double? at;
+    if (starts != null) {
+      // Of the times the order plays this bar, the one nearest to now.
+      for (var i = 0; i < timeline.map.length; i++) {
+        if (timeline.map[i] != measureIndex) continue;
+        if (at == null ||
+            (starts[i] - state.currentTimeMs).abs() <
+                (at - state.currentTimeMs).abs()) {
+          at = starts[i];
+        }
+      }
+    } else {
+      final start = performanceStartOf(
+        timeline.map,
+        timeline.lengths,
+        measureIndex,
+        near: state.currentTimeMs / duration,
+      );
+      at = start == null ? null : start * duration;
+    }
+    if (at == null) return false;
+    // A moment inside the bar: its first instant is also the last of the
+    // bar before.
+    await _seek(at + 1);
+    if (!widget.playback.state.playing) return _playPause();
+    return true;
+  }
+
+  Timer? _followTimer;
+  Size? _viewport;
+
+  /// Moves the score so the bar being played is on screen, unless a finger
+  /// is on it: the reader's own move wins.
+  void _followPlayback(int measureIndex) {
+    final layout = _layout;
+    final viewport = _viewport;
+    if (!mounted || layout == null || viewport == null) return;
+    if (_activePointers.isNotEmpty) return;
+    Rect? bar;
+    for (final measure in layout.measures) {
+      if (measure.measureIndex != measureIndex) continue;
+      bar = bar == null ? measure.rect : bar.expandToInclude(measure.rect);
+    }
+    if (bar == null) return;
+    final from = _transform.value.getTranslation();
+    final scale = _transform.value.getMaxScaleOnAxis();
+    final start = Offset(from.x, from.y);
+    final target = playbackFollowTranslation(
+      bar: bar,
+      viewport: viewport,
+      document: Size(
+        math.max(viewport.width, _documentWidth),
+        math.max(viewport.height, _documentHeight),
+      ),
+      scale: scale,
+      translation: start,
+    );
+    if (target == null) return;
+    _followTimer?.cancel();
+    const steps = 14;
+    var step = 0;
+    _followTimer = Timer.periodic(const Duration(milliseconds: 16), (timer) {
+      if (!mounted || _activePointers.isNotEmpty) {
+        timer.cancel();
+        return;
+      }
+      step++;
+      final t = Curves.easeOutCubic.transform(step / steps);
+      final at = Offset.lerp(start, target, t)!;
+      _transform.value = Matrix4.identity()
+        ..translateByDouble(at.dx, at.dy, 0, 1)
+        ..scaleByDouble(scale, scale, 1, 1);
+      if (step >= steps) timer.cancel();
+    });
   }
 
   /// Written bar playing at [ms]. The performance may repeat or skip bars,
@@ -1121,7 +1281,65 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         lengths: measureQuarterLengths(widget.score),
       );
     }
+    final starts = _barStarts(timeline.map, timeline.lengths);
+    if (starts != null) {
+      // The last bar that has begun.
+      var low = 0;
+      var high = starts.length - 1;
+      while (low < high) {
+        final mid = (low + high + 1) >> 1;
+        if (starts[mid] <= ms) {
+          low = mid;
+        } else {
+          high = mid - 1;
+        }
+      }
+      return timeline.map[low];
+    }
     return writtenMeasureAt(timeline.map, timeline.lengths, ms / duration);
+  }
+
+  /// The timing of the MIDI that plays, read once per MIDI.
+  MidiTiming _timingOf(PlaybackMidi midi) {
+    final known = _timing;
+    if (known != null && identical(known.midi, midi)) return known.timing;
+    final timing = MidiTiming(
+      midi.sequence,
+      fallbackBpm: (widget.score.tempoBpm ?? 120).round(),
+    );
+    _timing = (midi: midi, timing: timing);
+    _starts = null;
+    return timing;
+  }
+
+  ({PlaybackMidi midi, MidiTiming timing})? _timing;
+  ({List<int> map, int percent, MidiTiming timing, List<double> ms})? _starts;
+
+  /// When each bar of the order begins, in the listener's time, once the
+  /// MIDI is known: a ritardando makes bars longer than their note values
+  /// say, and the bar shown has to be the bar heard. Null before the MIDI
+  /// exists; the bars are then spread evenly.
+  List<double>? _barStarts(List<int> map, List<double> lengths) {
+    final timing = _timing?.timing;
+    if (timing == null || map.isEmpty) return null;
+    final known = _starts;
+    if (known != null &&
+        identical(known.map, map) &&
+        identical(known.timing, timing) &&
+        known.percent == widget.tempoPercent) {
+      return known.ms;
+    }
+    final total = map.fold<double>(0, (sum, index) => sum + lengths[index]);
+    if (total <= 0) return null;
+    final speed = _speed;
+    final ms = <double>[];
+    var elapsed = 0.0;
+    for (final index in map) {
+      ms.add(timing.msAt(elapsed / total * timing.totalTicks) / speed);
+      elapsed += lengths[index];
+    }
+    _starts = (map: map, percent: widget.tempoPercent, timing: timing, ms: ms);
+    return ms;
   }
 
   ({
@@ -1296,159 +1514,177 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
 
   @override
   Widget build(BuildContext context) {
+    // The score is on white paper whatever the app's theme: what is drawn
+    // over it (zoom buttons) takes the light theme's colours, or it would
+    // be light on white in a dark theme.
     return Semantics(
       container: true,
       label: widget.semanticsLabel,
-      child: ColoredBox(
-        color: AppColors.canvas,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final viewW = constraints.maxWidth.isFinite
-                ? constraints.maxWidth
-                : 360.0;
-            final viewH = constraints.maxHeight.isFinite
-                ? constraints.maxHeight
-                : 600.0;
-            if ((_lastViewportWidth == null ||
-                    (_lastViewportWidth! - viewW).abs() > 0.5) &&
-                _pages.isNotEmpty) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (!mounted) return;
-                _rebuildRenderedLayout(viewW);
-                _notifySystemsChanged();
-                setState(() {});
-              });
-            }
-            final layout = _layout;
-            final docW = math.max(viewW, _documentWidth);
-            final docH = math.max(viewH, _documentHeight);
-            return Stack(
-              children: [
-                if (_parseError != null && _pages.isEmpty)
-                  _ScoreError(message: _parseError!)
-                else if (_pages.isEmpty)
-                  const Center(child: CircularProgressIndicator())
-                else
-                  Listener(
-                    behavior: HitTestBehavior.opaque,
-                    onPointerDown: _handlePointerDown,
-                    onPointerMove: _handlePointerMove,
-                    onPointerHover: _handlePointerHover,
-                    onPointerSignal: _handlePointerSignal,
-                    onPointerUp: _handlePointerUp,
-                    onPointerCancel: _handlePointerCancel,
-                    child: InteractiveViewer(
-                      transformationController: _transform,
-                      constrained: false,
-                      boundaryMargin: const EdgeInsets.all(48),
-                      clipBehavior: Clip.hardEdge,
-                      minScale: 0.35,
-                      maxScale: 4,
-                      scaleFactor: _mouseScrollScaleFactor,
-                      // Trackpad scroll is a pan in MuseScore/forScore-style
-                      // score navigation. Pinch remains the zoom gesture.
-                      trackpadScrollCausesScale: false,
-                      panEnabled:
-                          widget.oneFingerPan ||
-                          widget.inputMode == 'off' ||
-                          _multiPointerGesture,
-                      scaleEnabled: true,
-                      onInteractionEnd: (_) => setState(() {}),
-                      child: SizedBox(
-                        width: docW,
-                        height: docH,
-                        child: Stack(
-                          children: [
-                            _VerovioPages(
-                              pages: _pages,
-                              width: docW,
-                              onHeightChanged: (height) {
-                                if ((_documentHeight - height).abs() > 0.5 &&
-                                    mounted) {
-                                  setState(() => _documentHeight = height);
-                                }
-                              },
-                            ),
-                            if (layout != null)
-                              Positioned.fill(
-                                child: IgnorePointer(
-                                  child: CustomPaint(
-                                    painter: _VerovioOverlayPainter(
-                                      layout: layout,
-                                      keyNames: measureKeyNames(widget.score),
-                                      chordRects: _chordRects,
-                                      highlightedMeasureIndex:
-                                          widget.highlightedMeasureIndex,
-                                      highlightedRange:
-                                          widget.highlightedMeasureRange,
-                                      selectedNoteAddress:
-                                          widget.selectedNoteAddress,
-                                      playbackMeasure:
-                                          widget.playbackVisible &&
-                                              widget.playback.state.playing
-                                          ? widget
-                                                    .playback
-                                                    .state
-                                                    .measureNumber -
-                                                1
-                                          : null,
-                                      ghostCenter: _ghostCenter,
-                                      ghostRest: _ghostRest,
-                                      ghostLineGap: _ghostLineGap,
-                                      ghostDurationType: _ghostDurationType,
-                                      ghostAlter: _ghostAlter,
-                                      ghostDots: widget.inputDots,
-                                      caret: _caretRect(layout),
-                                      measureDragTo: _measureDragTo,
+      child: Theme(
+        data: AppTheme.light,
+        child: ColoredBox(
+          color: AppColors.canvas,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final viewW = constraints.maxWidth.isFinite
+                  ? constraints.maxWidth
+                  : 360.0;
+              final viewH = constraints.maxHeight.isFinite
+                  ? constraints.maxHeight
+                  : 600.0;
+              _viewport = Size(viewW, viewH);
+              if ((_lastViewportWidth == null ||
+                      (_lastViewportWidth! - viewW).abs() > 0.5) &&
+                  _pages.isNotEmpty) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  _rebuildRenderedLayout(viewW);
+                  _notifySystemsChanged();
+                  setState(() {});
+                });
+              }
+              final layout = _layout;
+              final docW = math.max(viewW, _documentWidth);
+              final docH = math.max(viewH, _documentHeight);
+              return Stack(
+                children: [
+                  if (_parseError != null && _pages.isEmpty)
+                    _ScoreError(message: _parseError!)
+                  else if (_pages.isEmpty)
+                    const Center(child: CircularProgressIndicator())
+                  else
+                    Listener(
+                      behavior: HitTestBehavior.opaque,
+                      onPointerDown: _handlePointerDown,
+                      onPointerMove: _handlePointerMove,
+                      onPointerHover: _handlePointerHover,
+                      onPointerSignal: _handlePointerSignal,
+                      onPointerUp: _handlePointerUp,
+                      onPointerCancel: _handlePointerCancel,
+                      child: InteractiveViewer(
+                        transformationController: _transform,
+                        constrained: false,
+                        boundaryMargin: const EdgeInsets.all(48),
+                        clipBehavior: Clip.hardEdge,
+                        minScale: 0.35,
+                        maxScale: 4,
+                        scaleFactor: _mouseScrollScaleFactor,
+                        // Trackpad scroll is a pan in MuseScore/forScore-style
+                        // score navigation. Pinch remains the zoom gesture.
+                        trackpadScrollCausesScale: false,
+                        panEnabled:
+                            widget.oneFingerPan ||
+                            widget.inputMode == 'off' ||
+                            _multiPointerGesture,
+                        scaleEnabled: true,
+                        onInteractionEnd: (_) => setState(() {}),
+                        child: SizedBox(
+                          width: docW,
+                          height: docH,
+                          child: Stack(
+                            children: [
+                              _VerovioPages(
+                                pages: _pages,
+                                width: docW,
+                                onHeightChanged: (height) {
+                                  if ((_documentHeight - height).abs() > 0.5 &&
+                                      mounted) {
+                                    setState(() => _documentHeight = height);
+                                  }
+                                },
+                              ),
+                              if (layout != null)
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: CustomPaint(
+                                      painter: _VerovioOverlayPainter(
+                                        layout: layout,
+                                        keyNames: measureKeyNames(widget.score),
+                                        chordRects: _chordRects,
+                                        highlightedMeasureIndex:
+                                            widget.highlightedMeasureIndex,
+                                        highlightedRange:
+                                            widget.highlightedMeasureRange,
+                                        selectedNoteAddress:
+                                            widget.selectedNoteAddress,
+                                        // The bar being played, and when
+                                        // paused the bar it stopped in.
+                                        playbackMeasure:
+                                            widget.playbackVisible &&
+                                                (widget
+                                                        .playback
+                                                        .state
+                                                        .playing ||
+                                                    widget
+                                                            .playback
+                                                            .state
+                                                            .currentTimeMs >
+                                                        0)
+                                            ? widget
+                                                      .playback
+                                                      .state
+                                                      .measureNumber -
+                                                  1
+                                            : null,
+                                        ghostCenter: _ghostCenter,
+                                        ghostRest: _ghostRest,
+                                        ghostLineGap: _ghostLineGap,
+                                        ghostDurationType: _ghostDurationType,
+                                        ghostAlter: _ghostAlter,
+                                        ghostDots: widget.inputDots,
+                                        caret: _caretRect(layout),
+                                        measureDragTo: _measureDragTo,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: SafeArea(
-                    left: false,
-                    top: false,
-                    minimum: const EdgeInsets.only(right: 8, bottom: 8),
-                    child: Material(
-                      color: AppColors.canvas.withValues(alpha: 0.92),
-                      borderRadius: BorderRadius.circular(24),
-                      clipBehavior: Clip.antiAlias,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            tooltip: '확대',
-                            onPressed: () => _zoomBy(1.35, constraints),
-                            icon: const Icon(Icons.add_rounded),
+                  if (widget.showZoomControls)
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: SafeArea(
+                        left: false,
+                        top: false,
+                        minimum: const EdgeInsets.only(right: 8, bottom: 8),
+                        child: Material(
+                          color: AppColors.canvas.withValues(alpha: 0.92),
+                          borderRadius: BorderRadius.circular(24),
+                          clipBehavior: Clip.antiAlias,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                tooltip: '확대',
+                                onPressed: () => _zoomBy(1.35, constraints),
+                                icon: const Icon(Icons.add_rounded),
+                              ),
+                              IconButton(
+                                tooltip: '축소',
+                                onPressed: () => _zoomBy(1 / 1.35, constraints),
+                                icon: const Icon(Icons.remove_rounded),
+                              ),
+                              IconButton(
+                                tooltip: '화면에 맞춤',
+                                onPressed: () {
+                                  _transform.value = Matrix4.identity();
+                                  setState(() {});
+                                },
+                                icon: const Icon(Icons.fit_screen_rounded),
+                              ),
+                            ],
                           ),
-                          IconButton(
-                            tooltip: '축소',
-                            onPressed: () => _zoomBy(1 / 1.35, constraints),
-                            icon: const Icon(Icons.remove_rounded),
-                          ),
-                          IconButton(
-                            tooltip: '화면에 맞춤',
-                            onPressed: () {
-                              _transform.value = Matrix4.identity();
-                              setState(() {});
-                            },
-                            icon: const Icon(Icons.fit_screen_rounded),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
-                  ),
-                ),
-              ],
-            );
-          },
+                ],
+              );
+            },
+          ),
         ),
       ),
     );

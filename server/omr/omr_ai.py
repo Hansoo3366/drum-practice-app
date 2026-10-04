@@ -461,8 +461,10 @@ def _arrange_style(raw) -> dict | None:
     return {"pattern": raw["pattern"], "register": raw["register"]}
 
 
-def _arrange_clean(answer: dict, bars: int) -> dict:
-    """Keep what fits a score of `bars` bars: known styles, bars that exist, readable chords."""
+def _arrange_clean(answer: dict, bars: int, first: int = 1) -> dict:
+    """Keep what fits a score of `bars` bars numbered from `first` (0 when the brief starts with
+    a pickup): known styles, bars that exist, readable chords."""
+    last = first + bars - 1
     sections = []
     seen = set()
     for raw in answer.get("sections") or []:
@@ -470,7 +472,7 @@ def _arrange_clean(answer: dict, bars: int) -> dict:
         bar = raw.get("bar") if isinstance(raw, dict) else None
         if style is None or not isinstance(bar, int) or isinstance(bar, bool):
             continue
-        if bar < 1 or bar > bars or bar in seen:
+        if bar < first or bar > last or bar in seen:
             continue
         seen.add(bar)
         role = raw.get("role") if raw.get("role") in ARRANGE_ROLES else "other"
@@ -484,7 +486,7 @@ def _arrange_clean(answer: dict, bars: int) -> dict:
         suggested = str(raw.get("suggested") or "").strip()
         if not isinstance(bar, int) or not isinstance(index, int) or isinstance(bar, bool):
             continue
-        if bar < 1 or bar > bars or index < 1 or _parse_chord_text(suggested, 0) is None:
+        if bar < first or bar > last or index < 1 or _parse_chord_text(suggested, 0) is None:
             continue
         chords.append({"bar": bar, "index": index, "suggested": suggested,
                        "reason": str(raw.get("reason") or "")[:200]})
@@ -496,7 +498,7 @@ def _arrange_clean(answer: dict, bars: int) -> dict:
     }
 
 
-def _arrange_advice(brief: str, bars: int, model: str | None = None) -> dict:
+def _arrange_advice(brief: str, bars: int, model: str | None = None, first: int = 1) -> dict:
     """Ask the model for accompaniment advice on the lead sheet described by `brief`."""
     import ai_verify
 
@@ -504,6 +506,6 @@ def _arrange_advice(brief: str, bars: int, model: str | None = None) -> dict:
     result = ai_verify.complete_json(ARRANGE_INSTRUCTIONS, brief, ARRANGE_SCHEMA, "arrangement", model)
     if result["answer"] is None:
         raise RuntimeError("the model did not answer in JSON")
-    advice = _arrange_clean(result["answer"], bars)
+    advice = _arrange_clean(result["answer"], bars, first)
     advice["usage"] = {key: result[key] for key in ("model", "latency", "input_tokens", "output_tokens")}
     return advice

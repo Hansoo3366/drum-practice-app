@@ -474,7 +474,7 @@ PlaybackSequence nameSectionPick(
   final startsSection =
       !extended &&
       scoreSections(score, sequence).any((s) => s.startMeasureIndex == start);
-  final last = end == null ? null : end.clamp(start, score.measureCount - 1);
+  final last = end?.clamp(start, score.measureCount - 1);
   if (startsSection || last == null) {
     return setSectionBoundary(score, sequence, measureIndex: start, name: name);
   }
@@ -548,9 +548,6 @@ PlaybackSequence remapSectionMarks(
   if (sequence.marks.isEmpty) return sequence;
   final position = {for (var i = 0; i < after.length; i++) after[i]: i};
   final moved = <String, int>{};
-  // Bars before the first boundary form an unnamed first section; whatever
-  // happens to its bars, a first section starts at the first bar.
-  if (sequence.marks.first.startMeasureIndex > 0) moved[sectionIdAt(0)] = 0;
   final marks = <SectionMark>[];
   for (var index = 0; index < sequence.marks.length; index++) {
     final mark = sequence.marks[index];
@@ -572,6 +569,17 @@ PlaybackSequence remapSectionMarks(
         continued: mark.continued,
       ),
     );
+  }
+  // Bars before the first boundary form an unnamed first section. It is
+  // still there when bars come before the first boundary that is left; when
+  // the first boundary now stands on the first bar, or no boundary is left
+  // at all, there is no such section and its steps go with it: they would
+  // play a section that is not there, or another one.
+  final starts = [for (final mark in marks) mark.startMeasureIndex]..sort();
+  if (sequence.marks.first.startMeasureIndex > 0 &&
+      starts.isNotEmpty &&
+      starts.first > 0) {
+    moved[sectionIdAt(0)] = 0;
   }
   return PlaybackSequence(
     marks: marks,
@@ -709,6 +717,41 @@ List<SectionMark> performanceSectionMarks(
                 steps[step].section.startMeasureIndex,
       ),
   ];
+}
+
+/// The written bars each step of [sequence] plays, in the order it plays
+/// them: what a step is, said in bars. A step through a first ending and
+/// the same step through the second differ in nothing else. A step whose
+/// section is gone plays nothing.
+List<List<int>> playbackStepBars(MusicScore score, PlaybackSequence sequence) {
+  final sections = {
+    for (final section in scoreSections(score, sequence)) section.id: section,
+  };
+  final endings = _endingNumbers(score.parts.first.measures);
+  return [
+    for (final step in sequence.steps)
+      if (sections[step.sectionId] case final section?)
+        _sectionPasses(section, step.repeats, step.pass, endings)
+      else
+        const <int>[],
+  ];
+}
+
+/// Bars as the runs they form, by their printed numbers: "5–7, 10".
+String barRuns(List<int> bars, {int firstBarNumber = 1}) {
+  final runs = <String>[];
+  var i = 0;
+  while (i < bars.length) {
+    var j = i;
+    while (j + 1 < bars.length && bars[j + 1] == bars[j] + 1) {
+      j++;
+    }
+    final from = bars[i] + firstBarNumber;
+    final to = bars[j] + firstBarNumber;
+    runs.add(from == to ? '$from' : '$from–$to');
+    i = j + 1;
+  }
+  return runs.join(', ');
 }
 
 /// Plays each step's section [repeats] times. The last pass takes the last
@@ -1159,6 +1202,36 @@ int writtenMeasureAt(
     if (target < elapsed) return index;
   }
   return map.last;
+}
+
+/// Where in the performance (0..1) the written bar [measureIndex] starts,
+/// or null when the order never plays it. A bar that is played more than
+/// once (a repeat, a section played twice) answers with the time nearest
+/// to [near], so pressing a bar while the music plays stays in the pass
+/// that is playing.
+double? performanceStartOf(
+  List<int> map,
+  List<double> quarterLengths,
+  int measureIndex, {
+  double near = 0,
+}) {
+  final total = map.fold<double>(
+    0,
+    (sum, index) => sum + quarterLengths[index],
+  );
+  if (total <= 0) return map.contains(measureIndex) ? 0 : null;
+  double? best;
+  var elapsed = 0.0;
+  for (final index in map) {
+    if (index == measureIndex) {
+      final start = elapsed / total;
+      if (best == null || (start - near).abs() < (best - near).abs()) {
+        best = start;
+      }
+    }
+    elapsed += quarterLengths[index];
+  }
+  return best;
 }
 
 String normalizePlaybackSection(String raw) {

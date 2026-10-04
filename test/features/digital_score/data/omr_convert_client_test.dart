@@ -250,8 +250,8 @@ void main() {
             'progress': 1,
             'step': 'queued',
           }),
-        )
-        ..close();
+        );
+      await request.response.close();
     });
 
     final client = OmrConvertClient(
@@ -285,8 +285,8 @@ void main() {
         ..headers.contentType = ContentType.json
         ..write(
           '{"id":"job-2","status":"queued","progress":1,"profile":"chords_lyrics"}',
-        )
-        ..close();
+        );
+      await request.response.close();
     });
 
     final client = OmrConvertClient(

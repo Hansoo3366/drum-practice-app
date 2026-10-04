@@ -4,12 +4,11 @@ import 'package:go_router/go_router.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
 import 'package:page_a_diddle/app/widgets/app_layout.dart';
-import 'package:page_a_diddle/features/digital_score/domain/note_input_feature.dart';
 
 /// Navigation shell for the piano product.
 ///
-/// Piano deliberately has fewer destinations than the drum product: scores
-/// and the MusicXML editor are the product surface. Practice-only drum tools
+/// Piano deliberately has fewer destinations than the drum product: the
+/// score library is the product surface. Practice-only drum tools
 /// and group-performance flows stay out of this shell.
 class PianoAppShell extends StatelessWidget {
   const PianoAppShell({required this.navigationShell, super.key});
@@ -30,12 +29,6 @@ class PianoAppShell extends StatelessWidget {
       selectedIcon: const Icon(Icons.library_music),
       label: context.l10n.library,
     ),
-    if (noteInputEnabled)
-      NavigationDestination(
-        icon: const Icon(Icons.edit_note_outlined),
-        selectedIcon: const Icon(Icons.edit_note),
-        label: context.l10n.editSong,
-      ),
   ];
 
   @override

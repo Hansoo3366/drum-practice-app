@@ -58,6 +58,34 @@ void main() {
     );
   });
 
+  test('bars are numbered as the screens number them, a pickup being 0', () {
+    final pickup = _xml.replaceFirst(
+      '<measure number="1">',
+      '<measure number="0" implicit="yes">',
+    );
+    expect(pickup, isNot(_xml));
+
+    final brief = arrangementBrief(pickup);
+    expect(brief, contains('bars: 0-3 (bar 0 is a pickup)\n'));
+    expect(brief, contains('\n0: F Em7 |'));
+    expect(brief, contains('\n3: - | rest\n'));
+
+    // What comes back in those numbers lands on the same bars.
+    final advice = ArrangementAdvice.fromJson({
+      'base': {'pattern': 'held', 'register': 'middle'},
+      'sections': [
+        {'bar': 0, 'role': 'intro', 'pattern': 'held', 'register': 'middle'},
+        {'bar': 3, 'role': 'verse', 'pattern': 'beats', 'register': 'low'},
+        {'bar': 4, 'role': 'verse', 'pattern': 'beats', 'register': 'low'},
+      ],
+      'chords': [
+        {'bar': 0, 'index': 1, 'suggested': 'G', 'reason': ''},
+      ],
+    }, pickup);
+    expect(advice.plan.sections.keys, [0, 3]);
+    expect(advice.corrections.single.measureIndex, 0);
+  });
+
   test('advice that does not fit the score is dropped', () {
     final advice = ArrangementAdvice.fromJson({
       'base': {'pattern': 'broken', 'register': 'low'},

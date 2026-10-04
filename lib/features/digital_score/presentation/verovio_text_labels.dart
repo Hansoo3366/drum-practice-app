@@ -31,12 +31,29 @@ const _leipzigChordGlyphs = <int, String>{
   0xEA64: '♭',
   0xEA65: '♮',
   0xEA66: '♯',
-  // Metronome marks ("♩ = 115") write their note as a SMuFL glyph.
+  // Metronome marks ("♩ = 115") write their note as a SMuFL glyph: the
+  // note glyphs, or the smaller ones made for metronome marks.
   0xE1D2: '𝅝',
   0xE1D3: '𝅗𝅥',
   0xE1D5: '♩',
   0xE1D7: '♪',
   0xE1E7: '.',
+  0xECA2: '𝅝',
+  0xECA3: '𝅗𝅥',
+  0xECA4: '𝅗𝅥',
+  0xECA5: '♩',
+  0xECA6: '♩',
+  0xECA7: '♪',
+  0xECA8: '♪',
+  0xECB7: '.',
+  // Dynamics letters inside a written direction ("sf", "fz", "rfz").
+  0xE520: 'p',
+  0xE521: 'm',
+  0xE522: 'f',
+  0xE523: 'r',
+  0xE524: 's',
+  0xE525: 'z',
+  0xE526: 'n',
 };
 
 /// Groups whose text the viewer leaves out: the part name printed before
@@ -119,6 +136,9 @@ VerovioTextLabel? _chordLabel(
   final y = _parseLength(text.getAttribute('y')) ?? 0;
   final buffer = StringBuffer();
   double? fontSize;
+  // The size of engraving-font text: it is written larger than the words
+  // around it, at 16/9 of their size.
+  double? glyphSize;
   void collect(XmlNode node, double? inheritedSize, bool inheritedGlyphFont) {
     if (node is XmlText) {
       if (node.value.trim().isEmpty) return;
@@ -137,8 +157,12 @@ VerovioTextLabel? _chordLabel(
           buffer.writeCharCode(rune);
         }
       }
-      if (!inheritedGlyphFont && inheritedSize != null && inheritedSize > 0) {
-        fontSize = math.max(fontSize ?? 0, inheritedSize);
+      if (inheritedSize != null && inheritedSize > 0) {
+        if (inheritedGlyphFont) {
+          glyphSize = math.max(glyphSize ?? 0, inheritedSize);
+        } else {
+          fontSize = math.max(fontSize ?? 0, inheritedSize);
+        }
       }
       return;
     }
@@ -154,11 +178,17 @@ VerovioTextLabel? _chordLabel(
   }
 
   collect(text, null, false);
-  final value = buffer
+  var value = buffer
       .toString()
       .replaceAll(RegExp(' +'), compact ? '' : ' ')
       .trim();
-  final size = fontSize;
+  // A dotted metronome note is written as two glyphs: the dot belongs to
+  // the note ("♩. = 50", not "♩ . = 50").
+  for (final note in const ['♩', '♪', '𝅗𝅥', '𝅝']) {
+    value = value.replaceAll('$note .', '$note.');
+  }
+  // A text of engraving glyphs alone ("sf") has no word size of its own.
+  final size = fontSize ?? (glyphSize == null ? null : glyphSize! * 9 / 16);
   if (value.isEmpty || size == null) return null;
   final origin = transform.apply(x, y);
   return VerovioTextLabel(
@@ -179,6 +209,38 @@ VerovioTextLabel? _chordLabel(
 /// crowds the lines, so labels are drawn a little smaller.
 const verovioTextScale = 0.85;
 
+/// Accidentals in a chord name, as the bundled engraving font draws them
+/// beside text. The device's own "♭" comes from whatever symbol font it
+/// falls back to, with a gap before it ("B ♭").
+const _accidentalGlyphs = {'♭': '\uED60', '♮': '\uED61', '♯': '\uED62'};
+final _accidentals = RegExp('[♭♮♯]');
+
+/// [text] at [style], its accidentals in the engraving font.
+InlineSpan verovioLabelSpan(String text, TextStyle style) {
+  if (!text.contains(_accidentals)) return TextSpan(text: text, style: style);
+  final glyphStyle = style.copyWith(
+    fontFamily: 'Bravura',
+    fontSize: style.fontSize! * verovioAccidentalScale,
+  );
+  final children = <InlineSpan>[];
+  var from = 0;
+  for (final match in _accidentals.allMatches(text)) {
+    if (match.start > from) {
+      children.add(TextSpan(text: text.substring(from, match.start)));
+    }
+    children.add(
+      TextSpan(text: _accidentalGlyphs[match[0]], style: glyphStyle),
+    );
+    from = match.end;
+  }
+  if (from < text.length) children.add(TextSpan(text: text.substring(from)));
+  return TextSpan(style: style, children: children);
+}
+
+/// The engraving font's chord accidentals stand taller than a capital:
+/// this much of the text size sets them level with the letters beside.
+const verovioAccidentalScale = 0.9;
+
 /// Paints chord symbols and lyrics for one page. [scale] maps viewBox units to pixels.
 class VerovioTextLabelPainter extends CustomPainter {
   const VerovioTextLabelPainter({
@@ -195,9 +257,9 @@ class VerovioTextLabelPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     for (final label in labels) {
       final painter = TextPainter(
-        text: TextSpan(
-          text: label.text,
-          style: TextStyle(
+        text: verovioLabelSpan(
+          label.text,
+          TextStyle(
             color: color,
             fontSize: label.fontSize * scale * verovioTextScale,
             fontFamily: 'serif',

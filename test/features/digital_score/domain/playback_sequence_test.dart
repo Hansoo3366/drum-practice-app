@@ -877,16 +877,16 @@ void main() {
         sectionIdAt(3),
       ]);
 
-      // Even with its bars gone, a first section starts at the first bar.
+      // With its bars gone the first section is gone, and its steps with
+      // it: they would play the verse, which now starts at the first bar.
       editor
         ..undo()
         ..apply(const DeleteMeasureCommand(measureIndex: 0))
         ..apply(const DeleteMeasureCommand(measureIndex: 0));
       next = remapSectionMarks(first, base, editor.measureIds);
       expect(marksOf(next), [(0, 'VERSE')]);
-      expect(next.steps.map((s) => s.sectionId), [
-        sectionIdAt(0),
-        sectionIdAt(0),
+      expect(next.steps.map((s) => (s.sectionId, s.repeats)), [
+        (sectionIdAt(0), 1),
       ]);
     });
 
@@ -1040,6 +1040,21 @@ void main() {
       ]);
       expect(materialized.marks.map((m) => m.startMeasureIndex), [0, 2, 4]);
     });
+  });
+
+  test('a pressed bar starts where the order plays it, nearest to now', () {
+    // Bars 0..3 of one quarter, two, one and four quarters; the order plays
+    // bar 2, bar 3, then bar 2 again.
+    const lengths = [1.0, 2.0, 1.0, 4.0];
+    const map = [2, 3, 2];
+    expect(performanceStartOf(map, lengths, 2), 0);
+    expect(performanceStartOf(map, lengths, 3), 1 / 6);
+    // Pressed during the second pass: the second pass.
+    expect(performanceStartOf(map, lengths, 2, near: 0.9), 5 / 6);
+    // A bar the order skips cannot be played from.
+    expect(performanceStartOf(map, lengths, 0), isNull);
+    // The answer and the bar it names agree.
+    expect(writtenMeasureAt(map, lengths, 1 / 6 + 0.001), 3);
   });
 }
 

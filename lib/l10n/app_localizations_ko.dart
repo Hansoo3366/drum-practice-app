@@ -168,6 +168,26 @@ class AppLocalizationsKo extends AppLocalizations {
   String get emptyLibraryBody => 'PDF를 가져오면\n바로 연습할 수 있어요';
 
   @override
+  String get noMatchingScoresTitle => '찾는 악보가 없어요';
+
+  @override
+  String get noMatchingScoresBody => '검색어나 분류를\n바꿔 보세요';
+
+  @override
+  String get emptyLibraryBodyPiano => '악보 사진이나 PDF를 가져와\n전자악보로 바꿔 보세요';
+
+  @override
+  String copyTitle(String title) {
+    return '$title 사본';
+  }
+
+  @override
+  String get renameScoreVersion => '버전 이름 바꾸기';
+
+  @override
+  String get arrangementHint => '재생할 때만 들려요. 악보로 남기려면 ‘악기별 악보 만들기’를 쓰세요.';
+
+  @override
   String get emptyRecentTitle => '최근 연 악보가 없어요';
 
   @override
@@ -563,6 +583,103 @@ class AppLocalizationsKo extends AppLocalizations {
   String get noSongs => '곡이 없어요';
 
   @override
+  String convertDone(String title) {
+    return '$title 변환 완료';
+  }
+
+  @override
+  String get sortRecent => '최근순';
+
+  @override
+  String get sortTitle => '제목순';
+
+  @override
+  String get playbackTempo => '재생 속도';
+
+  @override
+  String get pianoTagline => '사진·PDF를 전자악보로';
+
+  @override
+  String get privacyBodyPiano =>
+      'Piano Score는 악보, 버전, 설정을 이 기기에 저장합니다. 계정은 없고, 이름이나 연락처를 받지 않습니다.\n\n‘전자악보로 변환’을 쓰면 고른 사진·PDF가 변환 서버로 전송됩니다(HTTPS). 서버는 악보를 읽고 검수하기 위해 악보 이미지의 일부를 AI 서비스(Google Gemini)에 보냅니다. 서버에 올라간 파일과 결과는 변환이 끝나고 6시간 뒤 지워집니다.\n\n‘AI 추천’을 쓰면 악보의 코드·구간 요약이 같은 서버와 AI 서비스로 전송됩니다.\n\n하루 사용량을 세기 위해 앱을 설치할 때 임의로 만든 식별값이 서버에 등록됩니다. 이 값은 사람을 알아보는 데 쓰이지 않습니다.\n\n클라우드(WebDAV, Google Drive, Dropbox)는 사용자가 연결한 곳과만 파일을 주고받습니다.\n\n광고·분석 도구는 쓰지 않습니다.\n\n문의: support@page-a-diddle.app';
+
+  @override
+  String get termsBodyPiano =>
+      'Piano Score를 사용하면 합법적인 개인·전문 음악 연습 목적에 앱을 쓰는 데 동의합니다.\n\n가져오거나 변환하는 악보·파일의 권리는 사용자 책임입니다. 사용 권한이 없는 자료를 가져오거나 변환하지 마세요.\n\n변환과 AI 보정 결과는 틀릴 수 있습니다. 원본과 대조해 확인한 뒤 사용하세요.\n\n앱은 중단 없는 동작을 보장하지 않으며 있는 그대로 제공됩니다.\n\n문의: support@page-a-diddle.app';
+
+  @override
+  String get convertHint => '악보 사진·PDF';
+
+  @override
+  String get omrProfileTitle => '어떤 악보인가요?';
+
+  @override
+  String get omrProfileStandardHint => '음표만 있는 악보 (피아노 악보)';
+
+  @override
+  String get omrProfileChordsLyricsHint => '코드 이름과 가사가 적힌 악보';
+
+  @override
+  String get omrPhotoTip => '악보가 반듯하고 또렷해야 잘 읽힙니다.';
+
+  @override
+  String barNumbers(String bars) {
+    return '$bars마디';
+  }
+
+  @override
+  String get barMenu => '마디';
+
+  @override
+  String get barMenuTooltip => '마디 편집';
+
+  @override
+  String get playBar => '이 마디 듣기';
+
+  @override
+  String barTooShort(String beats) {
+    return '박자보다 $beats박 짧음';
+  }
+
+  @override
+  String barTooLong(String beats) {
+    return '박자보다 $beats박 김';
+  }
+
+  @override
+  String get lyric => '가사';
+
+  @override
+  String get lyricNextHint => '‘다음’ 키로 다음 음으로';
+
+  @override
+  String get barEdit => '편집';
+
+  @override
+  String get listen => '듣기';
+
+  @override
+  String get erase => '지우기';
+
+  @override
+  String get toolsNote => '음표';
+
+  @override
+  String get toolsWords => '코드 · 가사';
+
+  @override
+  String get toolsLength => '길이';
+
+  @override
+  String get toolsPitch => '높이';
+
+  @override
+  String get proofreadNow => '지금 악보';
+
+  @override
+  String get proofreadPick => '음을 눌러 선택';
+
+  @override
   String songAdded(String title) {
     return '$title을(를) 추가했어요';
   }
@@ -669,7 +786,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get deleteSelectedBody => '선택한 악보를 삭제할까요? 이 작업은 되돌릴 수 없어요.';
 
   @override
-  String get editSong => '악보 편집';
+  String get editSong => '곡 정보 수정';
 
   @override
   String get codeCopied => '코드를 복사했어요';
@@ -1719,7 +1836,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get moveSectionLater => '구간 순서 아래로';
 
   @override
-  String get noSections => '마디를 눌러 구간을 나누세요';
+  String get noSections => '‘구간 나누기’에서 줄을 눌러 구간을 먼저 만드세요';
 
   @override
   String get noHarmony => '코드 없음';
@@ -1743,19 +1860,19 @@ class AppLocalizationsKo extends AppLocalizations {
   String get semitoneUp => '반음 올리기';
 
   @override
-  String get scoreArrangement => '반주';
+  String get scoreArrangement => '재생 반주';
 
   @override
   String get arrangementOff => '끔';
 
   @override
-  String get arrangementBlock => '코드';
+  String get arrangementBlock => '길게';
 
   @override
   String get arrangementPulse => '박마다';
 
   @override
-  String get arrangementBroken => '하나씩';
+  String get arrangementBroken => '분산';
 
   @override
   String get scoreProject => '프로젝트';
@@ -1962,7 +2079,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get pianoPartName => 'Piano';
 
   @override
-  String get pianoPattern => '오른손';
+  String get pianoPattern => '오른손 반주 모양';
 
   @override
   String get pianoPatternHeld => '길게';
@@ -1974,7 +2091,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get pianoPatternBroken => '분산';
 
   @override
-  String get pianoRegister => '음역';
+  String get pianoRegister => '반주 높이';
 
   @override
   String get pianoRegisterMiddle => '가운데';
@@ -2041,7 +2158,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get accompanimentOneScore => '한 악보에 모두';
 
   @override
-  String get accompanimentDensity => '두께';
+  String get accompanimentDensity => '화음 두께';
 
   @override
   String get accompanimentDensityLight => '얇게';
@@ -2053,7 +2170,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get accompanimentDensityFull => '두껍게';
 
   @override
-  String get pianoSplitPoint => '오른손 최저음(분할점)';
+  String get pianoSplitPoint => '양손 경계';
 
   @override
   String get pianoSplitAuto => '자동';

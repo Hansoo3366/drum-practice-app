@@ -154,6 +154,32 @@ class DigitalScoreEditorService {
     return next;
   }
 
+  /// Gives a version another name; its file and the rest stay as they are.
+  Future<ScoreVersionCatalog> renameVersion({
+    required String songId,
+    required String versionId,
+    required String name,
+    required ScoreVersionCatalog catalog,
+  }) async {
+    final trimmed = name.trim();
+    if (versionId == scoreVersionOriginalId || trimmed.isEmpty) return catalog;
+    final next = catalog.copyWith(
+      versions: [
+        for (final version in catalog.versions)
+          if (version.id == versionId)
+            ScoreVersionRef(
+              id: version.id,
+              name: trimmed,
+              origin: version.origin,
+            )
+          else
+            version,
+      ],
+    );
+    await saveVersionCatalog(songId, next);
+    return next;
+  }
+
   Future<void> saveVersionCatalog(String songId, ScoreVersionCatalog catalog) {
     return _storage.saveScoreVersionManifest(
       songId,

@@ -63,12 +63,15 @@ int? eventIndexForXmlNote(MusicMeasure measure, int noteIndex) {
 /// in so the bar reads as it does in context. Never saved.
 String isolateMeasureXml(String xml, int partIndex, int measureIndex) {
   final doc = _ScoreDoc(xml);
-  _isolate(doc, partIndex, measureIndex);
-  return doc.toXml();
+  final isolated = _isolated(doc, partIndex, measureIndex);
+  doc.keep(xml);
+  return isolated;
 }
 
-/// Reduces [doc] to one measure of one part (see [isolateMeasureXml]).
-void _isolate(_ScoreDoc doc, int partIndex, int measureIndex) {
+/// One measure of one part of [doc] as a score of its own (see
+/// [isolateMeasureXml]). [doc] is left as it is: the bar is copied out, so
+/// the score read for it can be used again.
+String _isolated(_ScoreDoc doc, int partIndex, int measureIndex) {
   final root = doc.document.rootElement;
   final parts = root.findElements('part').toList();
   final measures = doc._measures(partIndex);
@@ -76,39 +79,66 @@ void _isolate(_ScoreDoc doc, int partIndex, int measureIndex) {
     throw const FormatException('마디를 찾을 수 없습니다.');
   }
   final part = parts[partIndex];
-  final target = measures[measureIndex];
-  final carried = [
+  final bar = measures[measureIndex].copy();
+  bar.children.insertAll(0, [
     for (final measure in measures.take(measureIndex))
       for (final attributes in measure.findElements('attributes'))
         attributes.copy(),
-  ];
-  target.children.insertAll(0, carried);
-  target.children.removeWhere(
+  ]);
+  bar.children.removeWhere(
     (node) => node is XmlElement && node.name.local == 'print',
   );
-  part.children.removeWhere(
-    (node) =>
-        node is XmlElement &&
-        node.name.local == 'measure' &&
-        !identical(node, target),
-  );
-  root.children.removeWhere(
-    (node) =>
-        node is XmlElement &&
-        ((node.name.local == 'part' && !identical(node, part)) ||
-            node.name.local == 'credit' ||
-            node.name.local == 'defaults'),
-  );
-  root
-      .getElement('part-list')
-      ?.children
-      .removeWhere(
-        (node) =>
-            node is XmlElement &&
-            (node.name.local == 'part-group' ||
-                (node.name.local == 'score-part' &&
-                    node.getAttribute('id') != part.getAttribute('id'))),
-      );
+  final children = <XmlNode>[];
+  for (final node in root.children) {
+    if (node is XmlElement) {
+      final name = node.name.local;
+      if (name == 'credit' || name == 'defaults') continue;
+      if (name == 'part') {
+        if (!identical(node, part)) continue;
+        children.add(
+          XmlElement(
+            node.name.copy(),
+            node.attributes.map((attribute) => attribute.copy()),
+            [
+              // What stands between the bars (line breaks of the file)
+              // stays; the other bars go.
+              for (final child in node.children)
+                if (child is XmlElement && child.name.local == 'measure')
+                  if (identical(child, measures[measureIndex])) bar else ...[]
+                else
+                  child.copy(),
+            ],
+          ),
+        );
+        continue;
+      }
+      if (name == 'part-list') {
+        final list = node.copy();
+        list.children.removeWhere(
+          (entry) =>
+              entry is XmlElement &&
+              (entry.name.local == 'part-group' ||
+                  (entry.name.local == 'score-part' &&
+                      entry.getAttribute('id') != part.getAttribute('id'))),
+        );
+        children.add(list);
+        continue;
+      }
+    }
+    children.add(node.copy());
+  }
+  final document = XmlDocument([
+    for (final node in doc.document.children)
+      if (identical(node, root))
+        XmlElement(
+          root.name.copy(),
+          root.attributes.map((attribute) => attribute.copy()),
+          children,
+        )
+      else
+        node.copy(),
+  ]);
+  return document.toXmlString();
 }
 
 /// One bar as the proofreading screen needs it, read from the score in a
@@ -308,6 +338,40 @@ String withPositionMeasureNumbers(String xml) {
   });
 }
 
+final _partLabels = RegExp(
+  r'<(part-name|part-abbreviation|group-name|group-abbreviation)'
+  r'(-display)?(?=[\s>])[^>]*>[\s\S]*?</\1\2>',
+);
+final _noMeasureNumbers = RegExp(
+  r'<measure-numbering(?=[\s>])[^>]*>\s*none\s*</measure-numbering>',
+);
+
+/// A copy of [xml] as the app engraves it. For display only; the source
+/// string is never changed.
+///
+/// - Bars are numbered by position ([withPositionMeasureNumbers]) and the
+///   numbers show at the head of each line, whatever the file asks: a
+///   converted score often says "none".
+/// - Part and group names are taken out. The viewer does not draw them,
+///   but the engraver would still keep room for them left of every line,
+///   which pushes the music off the centre of the page.
+String engravingMusicXml(String xml) {
+  final numbered = withPositionMeasureNumbers(
+    xml,
+  ).replaceAll(_noMeasureNumbers, '');
+  final listEnd = numbered.indexOf('</part-list>');
+  if (listEnd < 0) return numbered;
+  final list = numbered.substring(0, listEnd).replaceAllMapped(_partLabels, (
+    match,
+  ) {
+    // A part must still have a name element; an empty one draws nothing.
+    return match.group(1) == 'part-name' && match.group(2) == null
+        ? '<part-name/>'
+        : '';
+  });
+  return '$list${numbered.substring(listEnd)}';
+}
+
 String expandMusicXml(String xml, List<int> measureMap) {
   if (measureMap.isEmpty) {
     throw const FormatException('연주할 마디가 없습니다.');
@@ -358,18 +422,17 @@ String expandMusicXml(String xml, List<int> measureMap) {
           ]),
         );
       }
-      // Context where playing arrives, and the one the bar starts with.
+      // What is in force where playing arrives.
       final arriving = previous == null ? null : contexts[previous + 1];
-      final starting = contexts[source + 1];
-      if (jumped && (arriving == null || !starting.sameAs(arriving))) {
-        // A jump into another key or time restates the whole context.
-        copy.findElements('attributes').toList().forEach(_remove);
-        copy.children.insert(
-          copy.children.indexWhere(
-                (n) => n is XmlElement && n.name.local == 'print',
-              ) +
-              1,
-          starting.toAttributes(),
+      if (jumped) {
+        // A bar taken from elsewhere is read in the clef, key and time it
+        // was written in: it says how it begins, as far as that is not in
+        // force where it lands. What it changes on its way (a clef printed
+        // at its end for the bar after it) stays where it is written.
+        _restate(
+          copy,
+          _beginning(measures[source], contexts[source]),
+          arriving ?? _unstated,
         );
       } else if (arriving != null) {
         // A copied bar brings its own clef, key and time; drop what is
@@ -408,6 +471,22 @@ String expandMusicXml(String xml, List<int> measureMap) {
       (node) => node is XmlElement && node.name.local == 'measure',
     );
     part.children.addAll(expanded);
+    // A tie over a barline holds a note into the bar written after it. At
+    // a seam of the new order that bar is no longer there: the tie would
+    // be drawn into another bar's note, and that note not struck.
+    final freed = <XmlElement>[];
+    for (var position = 0; position < expanded.length; position++) {
+      final source = measureMap[position];
+      final seamBefore = position == 0
+          ? source != 0
+          : source != measureMap[position - 1] + 1;
+      final seamAfter = position == expanded.length - 1
+          ? source != measures.length - 1
+          : measureMap[position + 1] != source + 1;
+      if (seamBefore) _dropTies(expanded[position], 'stop', freed);
+      if (seamAfter) _dropTies(expanded[position], 'start', freed);
+    }
+    _spellFreed(doc, partIndex, freed);
   }
   // Bars are now in playing order: where each came from follows it.
   if (_originsOf(doc.document) case final origins?
@@ -446,8 +525,13 @@ bool _sameOrder(List<int> measureMap) {
   return true;
 }
 
-int measureCountOf(String xml, int partIndex) =>
-    _ScoreDoc(xml).measureCount(partIndex);
+int measureCountOf(String xml, int partIndex) {
+  final doc = _ScoreDoc(xml);
+  final count = doc.measureCount(partIndex);
+  // Only read: whoever asks about this score next need not read it again.
+  doc.keep(xml);
+  return count;
+}
 
 class XmlEditResult {
   const XmlEditResult(this.xml, this.selection);
@@ -468,6 +552,8 @@ class XmlNoteSummary {
     required this.inTuplet,
     required this.chordSize,
     required this.harmony,
+    this.lyric,
+    this.leadsChord = true,
   });
 
   final bool isRest;
@@ -481,6 +567,12 @@ class XmlNoteSummary {
 
   /// Chord symbol text anchored at this note's onset, if any.
   final String? harmony;
+
+  /// The syllable of the first verse sung on this note, if any.
+  final String? lyric;
+
+  /// False for the second and later notes of a chord.
+  final bool leadsChord;
 }
 
 const noteDurationTypes = ['whole', 'half', 'quarter', 'eighth', '16th'];
@@ -508,13 +600,11 @@ class XmlMeasureEditor {
       for (final direction in _textDirections(measure.element))
         _directionText(direction),
     ];
-    // Last: this takes the rest of the score out of the document.
-    _isolate(doc, partIndex, measureIndex);
-    return XmlBarInspection(
-      isolatedXml: doc.toXml(),
-      notes: notes,
-      texts: texts,
-    );
+    final isolated = _isolated(doc, partIndex, measureIndex);
+    // Nothing was changed: the next edit of this score need not read it
+    // again.
+    doc.keep(xml);
+    return XmlBarInspection(isolatedXml: isolated, notes: notes, texts: texts);
   }
 
   XmlNoteSummary _summarize(_MeasureView measure, _NoteInfo info) {
@@ -531,6 +621,8 @@ class XmlMeasureEditor {
       inTuplet: info.element.getElement('time-modification') != null,
       chordSize: group.length,
       harmony: harmony == null ? null : harmonyText(harmony),
+      lyric: _lyricOf(head.element, 1)?.getElement('text')?.innerText,
+      leadsChord: identical(head, info),
     );
   }
 
@@ -1040,6 +1132,65 @@ class XmlMeasureEditor {
     if (existing != null) _remove(existing);
     final parent = head.element.parent!;
     parent.children.insert(parent.children.indexOf(head.element), harmony);
+    return XmlEditResult(doc.toXml(), ref);
+  }
+
+  /// Writes the syllable of [verse] sung on the selected note; an empty
+  /// [text] takes it away. A converted lead sheet often has a syllable
+  /// misread: the note is right and only its word is not.
+  ///
+  /// A syllable that is there keeps how it joins its neighbours (the hyphen
+  /// or the held line after it); a new one stands on its own.
+  XmlEditResult setLyric(
+    String xml,
+    XmlNoteRef ref,
+    String? text, {
+    int verse = 1,
+  }) {
+    final doc = _ScoreDoc(xml);
+    final measure = doc.measure(ref);
+    final info = measure.note(ref.noteIndex);
+    if (info.isRest) {
+      throw const FormatException('쉼표에는 가사를 넣을 수 없습니다.');
+    }
+    if (info.isGrace || info.isCue) {
+      throw const FormatException('꾸밈음에는 가사를 넣을 수 없습니다.');
+    }
+    // The words of a chord are written on its first note.
+    final head = measure.groupOf(info).first.element;
+    final existing = _lyricOf(head, verse);
+    final trimmed = text?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      if (existing == null) throw const FormatException('지울 가사가 없습니다.');
+      _remove(existing);
+      return XmlEditResult(doc.toXml(), ref);
+    }
+    if (trimmed.length > maxLyricLength) {
+      throw const FormatException('가사가 너무 깁니다.');
+    }
+    if (existing != null) {
+      final words = existing.getElement('text');
+      if (words != null) {
+        words.innerText = trimmed;
+      } else {
+        existing.children.add(
+          XmlElement(XmlName('text'), [], [XmlText(trimmed)]),
+        );
+      }
+      return XmlEditResult(doc.toXml(), ref);
+    }
+    _insertOrdered(
+      head,
+      XmlElement(
+        XmlName('lyric'),
+        [XmlAttribute(XmlName('number'), '$verse')],
+        [
+          XmlElement(XmlName('syllabic'), [], [XmlText('single')]),
+          XmlElement(XmlName('text'), [], [XmlText(trimmed)]),
+        ],
+      ),
+      _noteOrder,
+    );
     return XmlEditResult(doc.toXml(), ref);
   }
 
@@ -1782,7 +1933,7 @@ String harmonyText(XmlElement harmony) {
 // --- Document model -------------------------------------------------------
 
 class _ScoreDoc {
-  _ScoreDoc(String xml) : document = _parse(xml) {
+  _ScoreDoc(String xml) : document = _take(xml) {
     if (document.rootElement.name.local != 'score-partwise') {
       throw const FormatException('score-partwise MusicXML만 편집할 수 있습니다.');
     }
@@ -1796,9 +1947,40 @@ class _ScoreDoc {
     }
   }
 
+  // Reading a long score is most of the time an edit takes, and an editor
+  // edits the text the edit before it wrote. The document of the text
+  // written last is therefore kept, and handed to whoever asks for that
+  // very text next. It is handed out once: the taker changes it, and only
+  // what it writes with [toXml], or keeps unchanged with [keep], is kept
+  // again. An edit that fails half way leaves nothing behind.
+  static String? _keptXml;
+  static XmlDocument? _keptDocument;
+
+  static XmlDocument _take(String xml) {
+    final kept = _keptDocument;
+    if (kept != null && identical(xml, _keptXml)) {
+      _keptXml = null;
+      _keptDocument = null;
+      return kept;
+    }
+    return _parse(xml);
+  }
+
   final XmlDocument document;
 
-  String toXml() => document.toXmlString();
+  /// The score as text. The document must not be changed after this.
+  String toXml() {
+    final xml = document.toXmlString();
+    _keptXml = xml;
+    _keptDocument = document;
+    return xml;
+  }
+
+  /// Says the document was only read and still is what [xml] says.
+  void keep(String xml) {
+    _keptXml = xml;
+    _keptDocument = document;
+  }
 
   List<XmlElement> get parts =>
       document.rootElement.findElements('part').toList();
@@ -2884,6 +3066,19 @@ List<_Spelled> _spellGap(int start, int length, _MeasureView measure) {
 
 void _remove(XmlNode node) => node.parent?.children.remove(node);
 
+/// The longest syllable [XmlMeasureEditor.setLyric] takes.
+const maxLyricLength = 40;
+
+/// The lyric of [verse] on [note]. A lyric without a number is of the first
+/// verse.
+XmlElement? _lyricOf(XmlElement note, int verse) {
+  for (final lyric in note.findElements('lyric')) {
+    final number = int.tryParse(lyric.getAttribute('number') ?? '') ?? 1;
+    if (number == verse) return lyric;
+  }
+  return null;
+}
+
 Iterable<XmlElement> _textDirections(XmlElement measure) => measure
     .findElements('direction')
     .where((direction) => _directionText(direction).isNotEmpty);
@@ -3004,12 +3199,15 @@ const _originsField = 'page-a-diddle:bar-origins';
 /// Whatever was recorded against the bars as first read (a conversion's
 /// suspect measures) finds its bar by this.
 List<int>? barOrigins(String xml) {
-  final XmlDocument document;
+  final _ScoreDoc doc;
   try {
-    document = XmlDocument.parse(xml);
-  } on XmlException {
+    doc = _ScoreDoc(xml);
+  } on FormatException {
     return null;
   }
+  // Only read; a long score is read once for everything asked of it.
+  doc.keep(xml);
+  final document = doc.document;
   final origins = _originsOf(document);
   final bars = document.rootElement
       .findElements('part')
@@ -3022,9 +3220,12 @@ List<int>? barOrigins(String xml) {
 }
 
 List<int>? _originsOf(XmlDocument document) {
-  for (final field in document.rootElement.findAllElements(
-    'miscellaneous-field',
-  )) {
+  // The record is in the score's identification, not among its notes.
+  final root = document.rootElement;
+  for (final field
+      in (root.getElement('identification') ?? root).findAllElements(
+        'miscellaneous-field',
+      )) {
     if (field.getAttribute('name') != _originsField) continue;
     final values = [
       for (final value in field.innerText.split(','))

@@ -13,6 +13,8 @@ class ScorePlaybackBar extends StatefulWidget {
     this.onEditSequence,
     this.onTranspose,
     this.onEditArrangement,
+    this.tempoPercent = 100,
+    this.onTempo,
     this.sequenceSelected = false,
     this.arrangementSelected = false,
     this.padBottomSafeArea = true,
@@ -30,6 +32,11 @@ class ScorePlaybackBar extends StatefulWidget {
   final VoidCallback? onEditSequence;
   final VoidCallback? onTranspose;
   final VoidCallback? onEditArrangement;
+
+  /// How fast the score plays, in percent of its written tempo, and what
+  /// takes a new one. Without [onTempo] the bar has no tempo control.
+  final int tempoPercent;
+  final ValueChanged<int>? onTempo;
   final bool sequenceSelected;
   final bool arrangementSelected;
   final bool padBottomSafeArea;
@@ -110,6 +117,11 @@ class _ScorePlaybackBarState extends State<ScorePlaybackBar> {
                     onPressed: widget.onEditArrangement,
                     icon: Icons.piano_rounded,
                   ),
+                if (widget.onTempo != null)
+                  _TempoButton(
+                    percent: widget.tempoPercent,
+                    onChanged: widget.onTempo!,
+                  ),
                 const SizedBox(width: 8),
                 _ClockLabel(value: formatPlaybackClock(position.toDouble())),
                 Expanded(
@@ -154,6 +166,149 @@ class _ScorePlaybackBarState extends State<ScorePlaybackBar> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The slowest and the fastest practice tempo, in percent.
+const playbackTempoMin = 40;
+const playbackTempoMax = 150;
+
+/// The practice tempo, as a number to press: slowing a passage down is the
+/// first thing a player does with a score that plays.
+class _TempoButton extends StatelessWidget {
+  const _TempoButton({required this.percent, required this.onChanged});
+
+  final int percent;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final changed = percent != 100;
+    return Tooltip(
+      message: l10n.playbackTempo,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => showModalBottomSheet<void>(
+          context: context,
+          showDragHandle: true,
+          builder: (context) =>
+              _TempoSheet(percent: percent, onChanged: onChanged),
+        ),
+        child: Semantics(
+          button: true,
+          label: '${l10n.playbackTempo} $percent%',
+          excludeSemantics: true,
+          child: SizedBox(
+            width: 44,
+            height: 40,
+            child: Center(
+              child: Text(
+                '$percent%',
+                maxLines: 1,
+                style: TextStyle(
+                  fontFamily: AppFonts.mono,
+                  fontSize: 12,
+                  height: 1.2,
+                  fontWeight: FontWeight.w700,
+                  color: changed ? AppColors.accent : AppColors.ink,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TempoSheet extends StatefulWidget {
+  const _TempoSheet({required this.percent, required this.onChanged});
+
+  final int percent;
+  final ValueChanged<int> onChanged;
+
+  @override
+  State<_TempoSheet> createState() => _TempoSheetState();
+}
+
+class _TempoSheetState extends State<_TempoSheet> {
+  late int _percent = widget.percent;
+
+  void _set(int value) {
+    final next = value.clamp(playbackTempoMin, playbackTempoMax);
+    if (next == _percent) return;
+    setState(() => _percent = next);
+    widget.onChanged(next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    l10n.playbackTempo,
+                    style: theme.textTheme.titleMedium,
+                  ),
+                ),
+                Text('$_percent%', style: theme.textTheme.titleMedium),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                IconButton(
+                  tooltip: '-5%',
+                  onPressed: _percent > playbackTempoMin
+                      ? () => _set(_percent - 5)
+                      : null,
+                  icon: const Icon(Icons.remove_rounded),
+                ),
+                Expanded(
+                  child: Slider(
+                    value: _percent.toDouble(),
+                    min: playbackTempoMin.toDouble(),
+                    max: playbackTempoMax.toDouble(),
+                    divisions: (playbackTempoMax - playbackTempoMin) ~/ 5,
+                    label: '$_percent%',
+                    // The music is made again at the new tempo: once the
+                    // finger lets go, not at every step on the way.
+                    onChanged: (value) =>
+                        setState(() => _percent = value.round()),
+                    onChangeEnd: (value) => widget.onChanged(value.round()),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '+5%',
+                  onPressed: _percent < playbackTempoMax
+                      ? () => _set(_percent + 5)
+                      : null,
+                  icon: const Icon(Icons.add_rounded),
+                ),
+              ],
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _percent == 100 ? null : () => _set(100),
+                child: const Text('100%'),
+              ),
+            ),
+          ],
         ),
       ),
     );
