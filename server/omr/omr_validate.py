@@ -447,13 +447,17 @@ def _printed_measures(root: ET.Element) -> list[ET.Element]:
     return bars
 
 
-def _corrections(raw: ET.Element, fixed: ET.Element) -> dict:
+def _corrections(raw: ET.Element, fixed: ET.Element, restored: list[int] | None = None) -> dict:
     """Before/after items of what the server changed (OMR spec §19).
 
     Compared bar by bar on the first part (the printed measure where a staff
     was split into parts), so the app can list and undo automatic changes.
+    [restored] are the measure indices, in [fixed], of bars put back that the
+    engine left out: they have no bar in [raw], so the bars after them are
+    compared with the raw bar they came from, not the one beside them.
     """
     items = []
+    put_back = set(restored or [])
     raw_parts, fixed_parts = len(raw.findall("part")), len(fixed.findall("part"))
     if raw_parts != fixed_parts:
         items.append({"kind": "parts", "before": raw_parts, "after": fixed_parts})
@@ -462,7 +466,17 @@ def _corrections(raw: ET.Element, fixed: ET.Element) -> dict:
         items.append({"kind": "title", "before": raw_title, "after": fixed_title})
     before_bars = _printed_measures(raw)
     after_bars = fixed.find("part").findall("measure") if fixed.find("part") is not None else []
-    for index, (before, after) in enumerate(zip(before_bars, after_bars)):
+    pairs, source = [], iter(before_bars)
+    for index, after in enumerate(after_bars):
+        if index in put_back:
+            items.append({"kind": "bar", "measureIndex": index, "measure": after.get("number"),
+                          "before": "", "after": "restored"})
+            continue
+        before = next(source, None)
+        if before is None:
+            break
+        pairs.append((index, before, after))
+    for index, before, after in pairs:
         old, new = _measure_view(before), _measure_view(after)
         def rhythm(bar):
             return [{"pitch": [n.findtext("pitch/step"), n.findtext("pitch/alter") or "0", n.findtext("pitch/octave")],

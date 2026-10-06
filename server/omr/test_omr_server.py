@@ -700,6 +700,29 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual([r for r in found if r[0] == "L001"], [("L001", 4)])
 
 
+class DiminishedSeventhTest(unittest.TestCase):
+    def test_a_circle_seven_is_a_diminished_seventh(self):
+        # "D#o7" as lead sheets print it; a suggestion with it used to be turned down whole.
+        for text in ("D#o7", "D#°7", "D#dim7"):
+            chord = omr_rules._parse_chord_text(text, 3)
+            self.assertIsNotNone(chord, text)
+            harmony = omr_rules._harmony_element(chord, ET.Element("harmony"))
+            self.assertEqual(harmony.findtext("kind"), "diminished-seventh")
+            self.assertEqual((harmony.findtext("root/root-step"), harmony.findtext("root/root-alter")), ("D", "1"))
+        measure = ET.fromstring("<measure number='1'><harmony><root><root-step>D</root-step></root>"
+                                "<kind text='maj7'>major-seventh</kind></harmony>"
+                                "<note><pitch><step>D</step><octave>5</octave></pitch><duration>2</duration></note>"
+                                "<note><pitch><step>F</step><octave>4</octave></pitch><duration>2</duration></note></measure>")
+        applied = omr_ai._apply_ai_measure(measure, [{"field": "chords", "suggested": "Dmaj7, D#o7", "confidence": 0.95}], 3)
+        self.assertEqual(applied[0]["after"], ["Dmaj7", "D#o7"])
+
+    def test_a_lone_o_after_a_note_name_is_still_not_a_chord_word(self):
+        # "Do", "Go" in running text must not become diminished chords by this change.
+        self.assertEqual(omr_rules._chord_suffix("o7"), "o7")
+        self.assertIsNone(omr_rules._parse_chord_text("Dolce", 0))
+        self.assertIsNone(omr_rules._parse_chord_text("Go7x", 0))
+
+
 class CorrectionHistoryTest(unittest.TestCase):
     def test_changes_are_listed_bar_by_bar(self):
         raw = ET.fromstring(_lead_sheet([
@@ -717,6 +740,17 @@ class CorrectionHistoryTest(unittest.TestCase):
         self.assertIn(("words", 0, ["Fﬁm7"], []), kinds)
         self.assertIn(("lyrics", 0, "자격없는", "자 격"), kinds)
         self.assertEqual(len(kinds), 3)
+
+    def test_a_restored_bar_does_not_push_the_bars_after_it_out_of_step(self):
+        # Three bars read, a fourth put back after the first: bars 3 and 4 of the result
+        # are bars 2 and 3 of the raw score, unchanged.
+        raw = ET.fromstring(_lead_sheet([_sung(10, "가"), _sung(10, "나"), _sung(10, "다")]))
+        fixed = ET.fromstring(_lead_sheet([_sung(10, "가"), "", _sung(10, "나"), _sung(10, "다")]))
+        history = omr_validate._corrections(raw, fixed, [1])
+        self.assertEqual([(i["kind"], i["measureIndex"], i["after"]) for i in history["items"]],
+                         [("bar", 1, "restored")])
+        # Without being told, every bar after it looks changed.
+        self.assertGreater(len(omr_validate._corrections(raw, fixed)["items"]), 1)
 
     def test_split_parts_compare_the_printed_measure(self):
         raw = _split_score(_split_part("P1", {3, 4}), _split_part("P2", {1, 2}))
@@ -1189,6 +1223,17 @@ class EndingBracketTest(unittest.TestCase):
             self.tidy("[1;|:", "", "", ":|", "[1=P, HiHat only;]", "", "[1,,,,2;|:", ":|", "[1", "", "[1"),
             "1|: 4:| 7|: 8:|",
         )
+
+    def test_endings_labelled_with_words_stay_when_the_page_repeats_there(self):
+        # "더 원합니다": the brackets say "Repeat Vs." and "Go to Ch." instead of 1. and 2.
+        self.assertEqual(
+            self.tidy("|:", "", "[1=Repeat Vs.;];:|", "[2=Go to Ch."),
+            "1|: 3[1 3:| 4[2",
+        )
+        # Two word boxes side by side with no repeat sign are cues, and get no repeat.
+        self.assertEqual(self.tidy("|:", "[1=Synth in;]", "[2=Drums out;]", ":|"), "1|: 4:|")
+        # A word box alone at the end of a repeat is still a cue.
+        self.assertEqual(self.tidy("|:", "", "[1=Fill in;];:|", ""), "1|: 3:|")
 
     def test_the_bracket_after_a_first_ending_is_the_second(self):
         self.assertEqual(self.tidy("|:", "[1", "];:|", "[1"), "1|: 2[1 3:| 4[2")

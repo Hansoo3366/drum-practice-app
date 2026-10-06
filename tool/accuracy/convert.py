@@ -34,6 +34,8 @@ parser.add_argument('run')
 parser.add_argument('--client-run', help='reuse an EXISTING QA install; never register one to evade quota')
 parser.add_argument('--client-file', help='QA install secret OUTSIDE the repository (default: user cache)')
 parser.add_argument('--songs', nargs='+', help='explicit subset, otherwise all songs')
+parser.add_argument('--songs-file', default=os.path.join(HERE, 'songs.json'),
+                    help='the song list: songs.json (the 17 tuning songs) or holdout.json')
 args = parser.parse_args()
 RUN = args.run
 if not re.fullmatch(r'[A-Za-z0-9_-]+', RUN) or not re.fullmatch(r'[A-Za-z0-9_-]+', args.client_run or RUN):
@@ -127,7 +129,7 @@ def _run(song):
                 open(f'{DATA}/out{RUN}/{song}/{name}', 'wb').write(data); got.append(name.split('.')[0])
     print(song, job['status'], job.get('seconds'), 's', (job.get('error') or '')[:120], 'files:', ' '.join(got), flush=True)
 
-songs = sorted(json.load(open(f'{HERE}/songs.json')))
+songs = sorted(json.load(open(args.songs_file)))
 if args.songs:
     if not set(args.songs).issubset(songs):
         parser.error('unknown song')

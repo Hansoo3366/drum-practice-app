@@ -120,7 +120,11 @@ def score(song, version, truth):
     path = f'{DATA}/out{RUN}/{song}/{version}.mxl'
     if not os.path.exists(path): return None
     g_systems, counter = [], 0
-    for line in systems(load(path)):
+    lines = systems(load(path))
+    if truth.get('partial'):
+        # The answer key covers only the first lines of a long score.
+        lines = lines[:len(truth['systems'])]
+    for line in lines:
         g_systems.append([])
         for b in line:
             g_systems[-1].append(dict(view(b), index=counter)); counter += 1

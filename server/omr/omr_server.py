@@ -473,7 +473,10 @@ def _run_job_serial(job_id: str, source: Path, outgoing: Path, profile: str) -> 
                     candidate["repairs"] = repairs
                 candidate["raw_result"] = str(raw.relative_to(outgoing))
                 if result != raw:
-                    corrections = _corrections(_read_score(raw), _read_score(result))
+                    corrections = _corrections(
+                        _read_score(raw), _read_score(result),
+                        [bar["measureIndex"] for bar in repairs.get("bars_restored") or []],
+                    )
                     corrections_file = result.with_name("corrections.json")
                     corrections_file.write_text(
                         json.dumps(corrections, ensure_ascii=False, indent=2), encoding="utf-8",

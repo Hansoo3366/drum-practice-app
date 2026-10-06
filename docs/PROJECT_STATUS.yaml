@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-06T13:58:32+09:00"
+last_updated: "2026-10-06T16:58:00+09:00"
 current_phase:
   id: "RELEASE-4"
   name: "OMR 정확도 최소 95% 개선·검증"
@@ -352,7 +352,7 @@ next_actions:
     action: "불확실 표시가 있는 기존 정답을 원본 대조하고 음높이·음가 정답 MusicXML과 독립 표본을 마련한다. 기호의 인쇄/필기 판단 및 bare slash bass 표기를 검증한다. 현재 코드·가사·음표 수·기호 지표를 음높이/음가 정확도라고 부르지 않는다."
   - order: 3
     roadmap_id: "F-07v"
-    action: "구조적 후속 수정을 전체 고정 재생으로 확인한 뒤 최신 서버 17곡을 새 실행으로 실변환한다. 이번에는 live5(s07/s12)·최종 live6(s17) 3곡만 실검증 완료(추가 회귀 0), 전체 17곡 새 변환은 아님. 현재 도구의 최신 고정 검증은 out7/scores7(Validator 재계산), out5는 baseline flags라 탐지율에 쓰지 않는다. QA secret은 저장소 밖 ~/.cache/piano-score-qa/omr-client 하나 재사용, 한도 회피 금지. gate.py 728/766 이상 및 음높이/음가·독립 표본·False Correction 검증 전에는 완료 표시 금지."
+    action: "같은 17곡 전체 실변환을 마쳤다(outlive8, 529/766 69.1%)·독립 표본 3곡 79/91(86.8%). 다음 구조 수정 뒤에도 `convert.py <새 이름>`(기존 QA 설치본)과 `--songs-file tool/accuracy/holdout.json`으로 둘 다 다시 잰다. 독립 표본은 이전 개발에서 본 곡이므로 사용자가 주는 새 악보로 바꾼다. 95% 미달이라 F-07v는 미완료."
   - order: 4
     roadmap_id: "RELEASE-2"
     action: "물리 Android에서 재생·일시정지/탐색/속도/템포 변화·마디 듣기를 청취하고 교정→별도 저장→재열기→조옮김→내보내기를 확인한다. 이어 클라우드 실계정·필기 분리·태블릿, M8-11g AI 제안 연결을 검증한다."
@@ -1382,6 +1382,9 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-10-06T13:58:32+09:00"
   checks:
+    - name: "live_17_songs_and_holdout_20261006"
+      result: "passed_with_known_gaps"
+      detail: "최종 서버 17곡 전체 실변환(outlive8) 529/766(69.1%), 코드 92.5%, 가사 88.6%, 음표 수 83.6%, 기호 72.5%; 고정 재생 519보다 높고 내려간 곡 없음. 독립 표본 3곡 91마디(outh3) 79/91(86.8%), 코드 100%, 가사 91.3%. 서버 테스트 174 통과, 배포 해시 일치. '모두 맞음' 33마디의 음높이·길이를 원본과 대조해 일치. 한계: 독립 표본도 이전 개발에서 본 곡, 음높이·길이 전수 측정 없음, 95% 미달."
     - name: "rhythm_live_conversion_and_final_deploy_20261006"
       result: "partial_live_improvement_target_not_met"
       detail: "실제 HTTPS 업로드→300/400dpi→자동 보정→Gemini→원본/수정본/AI/이력 다운로드. live5 s07(293초)/s12(156초)는 17/29·19/34 그대로, 마디별 추가 정답 회귀 0. 초기 live5 s17에서는 phantom rest 정리가 monophony guard보다 늦어 복원 안 됨을 확인, 순서 수정·통합 테스트 추가 후 최종 배포하고 live6 s17(190초) 재실행. 13마디 복원·완전 일치 7→15/37(18.9→40.5%), 가사 57.5→83.6%, 음표 수 27.0→62.2%, 기존 정답 추가 회귀 0. 4/4와 14마디 10음표 음높이/음가, V003 추가 0 및 rhythm/time 이력 확인. 전체 17곡 최신 실측으로 합산하지 않는다. 최종 /home/hanso3366/omr_accuracy_20261006_1347/update.sh 배포, 백업 1347/1354, 수정 3모듈 SHA-256 일치·service active·HTTPS 200. 설치된 실제 postprocess도 13마디/14마디 10음표 smoke 통과, 원본 해시 b0f70f90…33171f7 일치. 서버 157·gate 6·Dart 22 통과. source Validator/diagnostics 복사 오류를 정정한 out7 전체 재생도 519/766·추가 회귀 0. 증거 live-recovery-summary.json·outlive5/outlive6·scoreslive5/scoreslive6·rhythm-report-7.json·scores7.json, server smoke /home/hanso3366/rhythm_smoke.ZWoyyG."

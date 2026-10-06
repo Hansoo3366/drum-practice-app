@@ -464,7 +464,9 @@ def _tidy_endings(root: ET.Element) -> list[dict]:
     the bracket after a first ending is numbered 1 again. A first ending is told apart by
     what follows it: the repeat sign at its end and the next ending right after. So
 
-    - a bracket labelled with words is not an ending;
+    - a bracket labelled with words is an ending only as one of a first and second
+      ending with the repeat sign between them ("Repeat Vs." / "Go to Ch."); alone it is a
+      cue box;
     - a bracket with the same number a few bars after another, or one that runs on from a
       first ending to the repeat sign, is that bracket going on;
     - endings one after another count up from the first, with the repeat sign that sends
@@ -519,10 +521,11 @@ def _tidy_endings(root: ET.Element) -> list[dict]:
         def closed(bracket: dict, before: int) -> bool:
             return any(index in backward for index in range(bracket["start"], before))
 
-        # Words in the bracket: a cue box, not an ending.
-        for bracket in [b for b in brackets if len(re.findall(r"[^\W\d_]", b["text"])) >= 3]:
-            drop(bracket)
-            brackets.remove(bracket)
+        # Words in the bracket ("P, HiHat only", but also "Repeat Vs." over a real first
+        # ending): the label does not say which it is, so only the page's own repeat
+        # sign and a second bracket right after it make it an ending.
+        for bracket in brackets:
+            bracket["words"] = len(re.findall(r"[^\W\d_]", bracket["text"])) >= 3
         # One bracket cut in two.
         position = 0
         while position + 1 < len(brackets):
@@ -551,6 +554,9 @@ def _tidy_endings(root: ET.Element) -> list[dict]:
             adjacent = first["end"] is not None and second["start"] == first["end"] + 1
             if not adjacent:
                 continue
+            if (first["words"] or second["words"]) and first["end"] not in backward:
+                # No repeat sign is supplied for brackets known only by their place.
+                continue
             if position not in chained:
                 size = max(1, len(first["numbers"]))
                 first["wanted"] = list(range(1, size + 1))
@@ -569,6 +575,9 @@ def _tidy_endings(root: ET.Element) -> list[dict]:
                                 "before": "", "after": "repeat"})
         for position, bracket in enumerate(brackets):
             if position in chained:
+                continue
+            if bracket["words"]:
+                drop(bracket)
                 continue
             if bracket["numbers"][:1] in ([], [1]):
                 real = (bracket["end"] is not None and bracket["end"] in backward

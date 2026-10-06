@@ -107,3 +107,21 @@ python3 tool/accuracy/gate.py score_sample/_accuracy/scores5.json
 Validator를 복사했으므로 검토 화면 탐지율에는 쓰지 않는다. 이 문제를 정정한 out7도
 같은 519/766·추가 회귀 0이며 `scores7.json`·`rhythm-report-7.json`이 최신 증거다.
 새 실변환 `live5`/`live6`는 캐시 재생과 합산하지 않고 별도 기록한다.
+
+## 독립 표본 (`holdout.json`)
+
+17곡에 맞춰 규칙을 고치면 그 17곡에서만 좋아질 수 있다. 고칠 때 쓰지 않은 곡을 따로 두고
+같은 방식으로 잰다. 데이터는 `score_sample/_accuracy/holdout/`(줄 그림, 정답지, 결과).
+
+```bash
+ACCURACY_DATA=$PWD/score_sample/_accuracy/holdout SSL_CERT_FILE=/etc/ssl/cert.pem \
+  python3 tool/accuracy/convert.py h1 --songs-file tool/accuracy/holdout.json
+ACCURACY_DATA=$PWD/score_sample/_accuracy/holdout RUN=h1 python3 tool/accuracy/score.py ai
+```
+
+정답지에 `"partial": true`가 있으면 그 곡은 앞쪽 줄만 채점한다(긴 악보의 앞 두 쪽만 읽은 경우).
+
+2026-10-06 첫 실행에서 "글자가 적힌 괄호는 엔딩이 아니다"라는 규칙이 "Repeat Vs." /
+"Go to Ch."라고 적힌 진짜 엔딩을 지우는 것을 이 표본이 잡았다. 17곡에서는 보이지 않던 문제다.
+지금 표본 3곡은 이전 개발에서 본 곡이라 완전히 새 악보가 아니다. 새 악보가 생기면 바꾼다.
+
