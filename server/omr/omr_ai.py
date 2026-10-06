@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 
 from pathlib import Path
@@ -180,10 +181,31 @@ def _chord_list(value) -> list[str]:
     """Chord symbols out of a model's answer, however it wrote the list. A
     chord in brackets, "(D7)", is an optional chord on the page: it counts."""
     if isinstance(value, list):
-        value = " ".join(str(v) for v in value)
-    for mark in "[]'\",()":
-        value = str(value).replace(mark, " ")
-    return value.split()
+        return [token for item in value for token in _chord_list(item)]
+    text = str(value or "").strip()
+    # Read JSON lists as lists; Python-style lists are handled below. Neither
+    # list punctuation nor a comma *inside* a chord splits its suffix.
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return _chord_list(parsed)
+        except (ValueError, TypeError):
+            pass
+    text = text.translate(str.maketrans("", "", "[]'\""))
+    tokens, start, depth = [], 0, 0
+    for i, char in enumerate(text):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        if depth == 0 and (char.isspace() or char == ","):
+            if text[start:i].strip():
+                tokens.append(text[start:i].strip())
+            start = i + 1
+    if text[start:].strip():
+        tokens.append(text[start:].strip())
+    return [t[1:-1] if re.fullmatch(r"\([^()]+\)", t) else t for t in tokens]
 
 
 def _apply_ai_measure(measure: ET.Element, corrections: list[dict], fifths: int) -> list[dict]:
@@ -193,8 +215,10 @@ def _apply_ai_measure(measure: ET.Element, corrections: list[dict], fifths: int)
     heads = [n for n in measure.findall("note") if n.find("chord") is None]
     for fix in corrections:
         if fix.get("field") == "chords":
-            chords = [c for c in (_parse_chord_text(t, fifths) for t in _chord_list(fix.get("suggested"))) if c]
-            if not chords:
+            chords = [_parse_chord_text(t, fifths) for t in _chord_list(fix.get("suggested"))]
+            if not chords or any(c is None for c in chords):
+                # Reject the whole suggestion: dropping an unparsed token
+                # would erase a valid symbol from the current measure.
                 continue
             before = _measure_view(measure)["chords"]
             template = measure.find("harmony")

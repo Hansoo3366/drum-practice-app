@@ -7,7 +7,6 @@ import 'package:page_a_diddle/core/storage/song_file_storage.dart';
 import 'package:page_a_diddle/features/digital_score/data/digital_score_editor_service.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_pdf_text.dart';
-import 'package:page_a_diddle/features/digital_score/domain/arrangement_profile.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_quality.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_quality_analyzer.dart';
@@ -25,7 +24,6 @@ class DigitalScoreData {
     this.activeVersionScore,
     this.activeVersionXml,
     this.sequence = PlaybackSequence.empty,
-    this.arrangement = ArrangementProfile.off,
     this.originalFifths = 0,
     this.quality,
     this.omrJobId,
@@ -46,7 +44,6 @@ class DigitalScoreData {
   final MusicScore? activeVersionScore;
   final String? activeVersionXml;
   final PlaybackSequence sequence;
-  final ArrangementProfile arrangement;
   final int originalFifths;
   final OmrQualityReport? quality;
 
@@ -72,7 +69,6 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
       final sourceXml = codec.xmlString(bytes, fileName: file.path);
       final score = await decodeMusicXmlInBackground(sourceXml, codec);
       final editor = ref.watch(digitalScoreEditorServiceProvider);
-      final arrangement = await editor.loadArrangement(songId);
       final originalFifths = await editor.loadOrCaptureOriginalFifths(
         songId: songId,
         score: score,
@@ -118,7 +114,6 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
         activeVersionScore: activeVersionScore,
         activeVersionXml: activeVersionXml,
         sequence: sequence,
-        arrangement: arrangement,
         originalFifths: originalFifths,
         quality: quality,
         omrJobId: await ref.watch(songFileStorageProvider).loadOmrJobId(songId),

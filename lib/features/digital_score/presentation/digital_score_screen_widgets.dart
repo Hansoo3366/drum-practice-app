@@ -320,7 +320,6 @@ enum _ScoreMenuAction {
   songInfo,
   transpose,
   threeStaff,
-  arrangement,
   exportMusicXml,
   exportMidi,
   exportPdf,

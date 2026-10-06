@@ -1,5 +1,60 @@
 # 작업 로그
 
+## 2026-10-06T13:52:00+09:00 — 음표 내보내기 누락·박자표·단선 성부 개선 및 전체 고정 회귀
+
+- 작업자: Codex
+- 목표: 사용자 요청의 정확도 개선을 실제 구현한다. 기존 정답지를 바꾸거나 불확실한 음표를 추측해 95%를 맞추지 않는다.
+- 변경 파일: `server/omr/omr_book.py`·`omr_server.py`·`omr_validate.py`·`test_omr_server.py`, `tool/accuracy/replay_rhythm.py`·`convert.py`·README, ROADMAP·PROJECT_STATUS·RELEASE_READINESS·WORK_LOG. 다른 작업자의 book/marks 수정과 원본 데이터를 보존했다.
+- 원인/수정: s17에는 book의 head-chord가 10개인데 MusicXML에는 3개만 있는 마디가 있다. 2/4 뒤 인쇄된 4/4를 음표로 읽고 voice/slot 실패로 내보내지 않았다. 같은 페이지의 확정 숫자 4 두 개와 원본 픽셀을 각각 0.92 이상 대조한 경우만 박자표 복원. 명시적 기호·정확한 박자 합계·기존 음표 음높이/음가 모두 일치할 때만 복원하고 다성부/큐/잇단/낮은 확신도는 거절한다. 원본 MXL/book은 유지하고 별도 fixed와 rhythm/time 이력·기호 ID를 기록. 한 멜로디 성부 번호 불연속으로 붙임줄이 끊기는 문제도 수정했다.
+- 검증: 서버 unittest 157 OK(새 테스트 14개), gate 6 OK, compile/diff-check 통과. 원본 한 마디의 10음표 음높이·음가 대조 통과(전체 검증 아님). 단선 붙임줄 V003 추가 오류는 성부 통일 후 0. 테스트에서 raw 파일 바이트 불변·placeholder rest 제거가 복원보다 먼저 실행되는 순서를 확인했다.
+- 같은 17곡·book/AI 응답·정답지 고정 out5: 512→519/766 완전 일치(66.8→67.8%), 추가 정답 회귀 0, s17 13마디 복원·7→14/37 완전 일치. 음표 수 오류 134→121, 가사 오류 366→341/2821(87.9%). 코드 92.1%, 합쳐진 마디 44개 그대로. out2→out3 코드 수정까지 합하면 500→519, 추가 회귀 0. 95%까지 209마디가 더 필요하다.
+- 진단: s07 첫 줄의 세로줄 x1038~1041/1267~1271/1855~1858을 엔진이 F4 hollow head(grade .52~.59)로 읽어 한 마디로 합쳤다. 단순 세로 픽셀 투영은 실제 음표 기둥도 잡으므로 자동 분할하지 않았다.
+- QA 도구: 새 실행 이름은 결과만 분리하고 같은 QA 설치본을 재사용한다. 새 QA secret은 저장소 밖 사용자 cache의 파일 0600에 보관하며 키/토큰 출력 없음. 등록으로 하루 한도를 회피하지 않는다. job cache 동시 저장은 lock+atomic replace로 변경. 기존 원본/정답지/결과는 덮어쓰지 않았다.
+- 증거/남은 일: `score_sample/_accuracy/rhythm-report-5.json`, `scores5.json`, `out5`, `books2`(gitignore). 실변환 live5/live6와 배포 최종 결과는 이어 기록한다. F-07t 전체는 진행 중, 체크리스트 101/137(74%) 유지. 전체 음높이/음가·독립 표본·오수정 검증 전에는 정확도 95% 또는 출시 완료로 표시하지 않는다.
+- 최종 2026-10-06T13:58:32+09:00: 실제 3곡 HTTPS 실변환/AI/결과 다운로드. live5 s07 293초·s12 156초는 17/29·19/34 그대로, 마디별 추가 정답 회귀 0. live5 s17에는 phantom rest 정리 전에 monophony guard가 실행돼 복원 0인 문제를 확인했다. 정리→복원 순서를 수정하고 통합 테스트를 추가한 뒤 실행 중인 QA 3개가 모두 끝난 후 재배포(작업 중단 없음). 최종 live6 s17 190초, 13마디 복원·7→15/37 완전 일치(18.9→40.5%), 가사 57.5→83.6%, 음표 수 27.0→62.2%, 추가 정답 회귀 0. 4/4·14마디 10음표 음높이/음가·V003 추가 오류 0·rhythm/time 이력 확인. 전체 최신 17곡 실측이라고 부르지 않는다.
+- 최종 배포: `/home/hanso3366/omr_accuracy_20261006_1347/update.sh`, 백업 `/home/hanso3366/omr_backup_20261006_1347`·`…_1354`. 수정 book/server/validate SHA-256 일치·service active·HTTPS 200. 설치된 실제 postprocess도 원본 엔진 MXL/book로 13마디·4/4·14마디 10음표 smoke 통과(`/home/hanso3366/rhythm_smoke.ZWoyyG`), raw hash `b0f70f90…33171f7` 일치. 키/토큰 출력 및 저장소 내 새 credential 생성 없음.
+- 최종 도구/회귀: replay의 예전 Validator/diagnostics는 source_*로 보존하고 새 규칙/book 검증을 재계산. out7 전체 17곡 재생도 519/766·추가 회귀 0. out5 flags는 탐지율 근거에서 제외한다. 최종 서버 157·gate 6·Dart codec/transpose 22 통과. 처음 Dart 명령의 파일명 오타로 경로 로딩 실패가 있었고 실제 `xml_transpose_test.dart`로 정정해 22 통과 확인(코드 실패 아님). YAML/체크리스트 101/137=74%·진행 작업 하나·next_actions≤5·compile/diff-check 확인. 최신 증거 `rhythm-report-7.json`·`scores7.json`·`live-recovery-summary.json`·`outlive6/`.
+
+## 2026-10-06T13:28:00+09:00 — 정확도 95% 목표, 코드 적용 회귀 수정·응답 고정 재측정·서버 배포
+
+- 작업자: Codex
+- 목표: 사용자 요청으로 OMR 마디 완전 일치 최소 95%를 우선한다(D-219). 이번 단계가 목표 달성이라고 표시하지 않는다.
+- 변경 파일: `server/omr/omr_ai.py`, `omr_rules.py`, `omr_text.py`, `omr_validate.py`, `test_omr_server.py`; `tool/accuracy/replay_ai.py`·`gate.py`·`test_gate.py`·README, `.gitignore`, OMR 기획서, ROADMAP·PROJECT_STATUS·RELEASE_READINESS·WORK_LOG. 앞선 다른 작업자의 서버 book/marks 수정은 보존.
+- 원인/수정: AI 목록 파서가 `D(sus4)`를 `D`·`sus4`로 분해해 major로 덮어씀. 확장음 b9/b13도 분해하거나 거절하고 일부만 파싱돼도 기존 전체 코드를 지웠다. 괄호·내부 쉼표를 보존하고 explicit 확장음 문법 및 kind/degree로 기록한다. 전체 토큰 파싱에 실패하면 변경하지 않는다. 기존 kind의 표시 text가 없을 때 minor 등 실제 kind를 읽는다. 원본 음표는 수정하지 않는다.
+- 검증: 새 회귀 6개를 수정 전 실행해 모두 실패 확인 후 수정. 최종 서버 unittest 143 OK, gate 테스트 6 OK, Python compile 및 git diff --check 통과. 앱 MusicXML codec/transpose 22 통과. 같은 17곡·기존 AI dataset/answers를 SSH로 받아 고정 재생(새 AI 요청 없음, out2·정답지 유지): 500/766→512/766(65.3→66.8%), 코드 오류 91→84/1060(92.1%), 가사 오류 366/2821 그대로(87.0%), 기존 정답 마디 추가 회귀 0. 이 수치는 재변환이 아니다.
+- 배포: 기존 서버 파일 해시와 로컬의 미수정 모듈 일치를 먼저 확인하고 `/home/hanso3366/omr_backup_20261006_1325`에 백업. `/home/hanso3366/omr_accuracy_20261006_1325/update.sh`로 설치, 수정 4개 모듈 해시 일치, service active·외부 HTTPS 200·설치된 모듈의 sus4/확장음 smoke 통과. 키·API 토큰은 출력하지 않았다.
+- 목표 미달: 95%는 최소 728/766마디(216마디 추가 정답)다. 음표 수 오류 134·합쳐진 44·누락 6·기호 오류 25/91, 음높이/음가·독립 표본·정답지 불확실 항목 검증이 남았다. gate.py exit 1은 정상이다. F-07s 완료, t~v 미완료로 101/137(74%). 현재 진행 작업은 정확도 개선 하나로 변경, M8-11 실기기/AI 연결은 대기.
+- 증거: `score_sample/_accuracy/replay-report-3.json`, `scores3.json`, `out3/`, `ai_cache2/`는 비공개 데이터 디렉터리로 gitignore. 상세 `docs/RELEASE_READINESS.md`, 실행 방법 `tool/accuracy/README.md`.
+
+## 2026-10-06T13:00:00+09:00 — 피아노 전체 회귀 QA·반주 메뉴 제거·악기 단일 생성
+
+- 작업자: Codex
+- 목표: 사용자 요청의 사용성·정상 동작·불필요 메뉴 검토와 명시한 범위 변경을 구현한다. 기존 서버 정확도 작업은 되돌리지 않는다.
+- 변경 파일: `digital_score_screen.dart`, `digital_score_screen_widgets.dart`, `piano_part_sheet.dart`, `score_playback_bar.dart`, `digital_score_data.dart`, `score_project_codec.dart`, `score_export_service.dart`, `note_input_feature.dart`, `setlist_detail_screen.dart`, `app_theme.dart`; 관련 단위/위젯 테스트, `tool/qa/ui.py`·`steps.py`, 두 기획서, `.omd/preferences.md`, ROADMAP·PROJECT_STATUS·RELEASE_READINESS·WORK_LOG. 미사용 `arrangement_panel.dart`와 전용 테스트 삭제(버전 관리로 복원 가능).
+- 완료: 별도 반주 메뉴·버튼·프로필 적용 제거; 한 요청에 한 악기·한 새 버전만 생성; 다중 선택·합주 총보 옵션 제거. 기존 생성 악보·원본은 유지. 악기 생성 중복 실행 방지. DESIGN 토큰을 유지하며 320dp·2배 글자 재생 막대의 탐색 영역·시간/속도 값 폭 확보. 프로젝트 zip raw XML 보존으로 가사·셈여림·아티큘레이션·악기 지정 손실 방지. 현재 SDK 재정렬 API 호환과 QA 스크립트의 stale UI dump/버튼 오탭 문제 수정.
+- 검증: 전체 Flutter 679 통과·1 건너뜀(외부 corpus 없음), OMR 서버 unittest 134 OK, 마지막 중복 실행 가드까지 `flutter analyze --no-pub` 0건, piano arm64 debug build 4055 및 versionCode 6055 업데이트 설치 성공. 에뮬레이터에서 메뉴 제거·단일 Strings 버전 생성(4→5)·+1 조옮김 별도 버전·교정 진입 확인. QA 전후 원본 MXL SHA-256 일치. 설치 때 기존 사용자 데이터 삭제 없이 공간 경고 임계값만 임시 조정 후 기본값 복원.
+- 정책: D-218에 사용자 결정 기록. M8-08을 완료에서 범위 제외로 정정해 체크리스트 100/133(75%). 요청 교정은 omd:remember로 기록했으며 별도 UI 스타일 재설계는 하지 않았다.
+- 최종 기기 QA: versionCode 6055, 320dp·글자 2배에서 재생 0:05/0:32와 마디 강조·탐색줄 표시를 확인했다. PID 23839 로그에서 화면 넘침·Unhandled Exception·FATAL·ANR 없음. QA 임시 Strings·A♭ 조옮김 두 버전만 삭제하고 Organ 활성화 복원. 원본 MXL·버전 manifest의 QA 전후 SHA-256 모두 일치. 화면 크기와 글자 배율 복원.
+- 남은 일: 실제 기기 소리·교정/재열기/내보내기, 클라우드 실계정·필기·태블릿 흐름, 프로젝트 zip 복원 UX의 범위 결정. OMR 17곡 결과는 정확도 작업 기록을 유지하며 음높이·음가는 미측정. 출시 가능 또는 버그 없음으로 판정하지 않음.
+- 증거: `/tmp/piano-qa-flutter-tests-final-20261006.log`, `/tmp/piano-qa-omr-tests-20261006.log`, `/tmp/piano-qa-20261006/shots/`; 상세 `docs/RELEASE_READINESS.md`.
+
+## 2026-10-06 11:24 KST — 출시 준비 4단계: 17곡 변환 정확도 측정, 서버 수정 2건 배포(재측정 진행 중)
+
+- 작업자: Claude (Opus 5.5)
+- 정정: 같은 날 앞선 답변에서 "10월 2일 이후 바뀐 것이 없다"고 했으나 틀렸다(확인 없이 말함). 10월 3~4일 커밋 2개로 0·1·3단계가 닫혀 있었다.
+- 측정 방법(`tool/accuracy/`, README 참고): `score_sample/` 17곡(22쪽, 766마디)을 앱과 같은 `imagesToPdf`로 PDF로 만들어 공개 HTTPS API로 변환. 정답지는 원본을 164줄로 잘라 변환 결과를 보지 않은 읽기 작업 6개가 작성(코드·가사·음표 수·기호). 채점은 줄→마디 순으로 맞춤. 다섯 곡의 차이 20여 건을 원본과 대조해 모두 정답지가 맞음을 확인. 데이터는 `score_sample/_accuracy/`(커밋 안 함).
+- 1차 결과(수정 전 서버, AI 보정 버전): 마디 736/766, 코드 86.4%, 가사 83.4%, 코드·가사·음표 수·기호가 모두 맞는 마디 52.7%. 자동 보정만은 코드 60.0%·가사 75.9%, 원본 OMR은 33.6%·11.8%. 검토 화면이 가리키는 마디가 전체의 58%라 "틀린 마디를 사용자가 볼 수 있다"는 기준은 의미가 약하다(틀린 181마디 중 156마디가 표시되지만 안 틀린 마디도 대부분 표시).
+- 찾은 근본 원인과 수정(서버 테스트 134 통과, 수정을 빼면 새 테스트가 실패함을 확인):
+  1. 줄 끝 예고 박자표 칸(엔진의 CAUTIONARY stack)을 마디로 세어, 그 줄 전체의 코드·가사 재인식과 AI 검수를 건너뜀(7곡 13줄) → 마디로 세지 않는다(`_system_stacks`).
+  2. 엔진이 음표를 못 읽은 줄 끝 마디를 예고 칸으로 오인해 내보내지 않음(4곡 7마디) → 빈 마디로 되살림(`_restore_dropped_bars`, 뒤 번호는 엔진 방식대로 한 칸씩 민다).
+  3. 악기 지시 상자("P, HiHat only")가 1번 엔딩이 됨, 한 괄호가 둘로 쪼개짐, 1번 뒤 괄호가 또 1번, 번호가 `1,,,,2`·`2,13`로 깨짐 → `_tidy_endings`. 로컬에서 17곡에 적용하면 문제 있던 6곡의 도돌이·엔딩 구조가 원본과 같아진다.
+- 배포: 서버 파일이 저장소와 같음을 해시로 확인(다른 것은 고친 3개뿐) → VM `~/omr_backup_20261006/`에 백업 → `update.sh`로 배포 → 해시 일치, 서비스 active, 외부 https 200.
+- 재측정(12:18, 수정 배포 후 같은 17곡): 마디 743/766(1차 736), 코드 91.4%(86.4), 가사 87.0%(83.4), 모두 맞는 마디 65.3%(52.7), 도돌이·엔딩 기호 72.5%(28.0), 합쳐진 마디 44(54). 크게 오른 곡: s08 모두 맞는 마디 16.5→91.3%, s14 가사 50.0→80.6%, s05 코드 50.0→85.0%, s15 코드 69.2→100%. 내려간 곳: s04 코드 84.1→81.0%, s02 코드 100→95.0%, s15 가사 87.1→82.8% — AI 검수가 실행마다 달라 생긴 것인지 수정 탓인지는 아직 가리지 않았다.
+- (끝남): 같은 17곡을 새 서버로 다시 변환(`convert.py 2`, 결과는 스크래치패드 `acc/out2`). 결과는 `score_sample/_accuracy/out2`, `scores2.json`.
+- 미수정으로 남긴 것: 엔진이 세로줄 자체를 못 본 합쳐진 마디(s07·s12 등), 줄 머리 음자리표 구역이 빈 첫 마디로 나오는 것(s05), 코드 확장음 누락(`F#7(b9)`→`F#7`), 코드가 한 마디 앞에 붙는 것, 색으로 인쇄된 세뇨·To Coda·D.S.가 필기로 분리되는 것(s17), 도돌이표 누락(s02), dpi-300/400 후보 선택.
+- 이 Mac에 `dart_defines.local.json`을 문서 절차대로 만들었다(gitignore, 키는 출력하지 않음). 측정 스크립트가 상태 조회 중 연결 끊김으로 한 번 멈춰 재시도·이어받기를 넣었다(앱은 이미 재시도함).
+- 커밋하지 않음.
+
 ## 2026-10-04 22:20 KST — 남겨 두던 것 정리: 테스트 실패 0, 분석 0건
 
 - 작업자: Claude (Opus 5.5)

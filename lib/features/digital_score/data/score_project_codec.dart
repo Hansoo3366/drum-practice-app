@@ -17,6 +17,7 @@ class ScoreProjectCodec {
     required MusicScore written,
     required PlaybackSequence sequence,
     required ArrangementProfile arrangement,
+    String? sourceXml,
   }) {
     final archive = Archive();
     archive.add(
@@ -34,7 +35,9 @@ class ScoreProjectCodec {
     archive.add(
       ArchiveFile.bytes(
         'score.musicxml',
-        const MusicXmlCodec().encodeMusicXml(written),
+        sourceXml == null
+            ? const MusicXmlCodec().encodeMusicXml(written)
+            : Uint8List.fromList(utf8.encode(sourceXml)),
       ),
     );
     return ZipEncoder().encodeBytes(archive);

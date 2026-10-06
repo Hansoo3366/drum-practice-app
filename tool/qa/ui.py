@@ -8,23 +8,28 @@
 """
 import os
 import re
+import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
-ADB = os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe")
+ADB = os.environ.get("QA_ADB") or shutil.which("adb") or os.path.expandvars(
+    r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"
+)
 HERE = os.environ.get("QA_OUT", os.path.dirname(os.path.abspath(__file__)))
 SHOTS = os.path.join(HERE, "shots")
 os.makedirs(SHOTS, exist_ok=True)
 
 
 def adb(*args, binary=False):
-    out = subprocess.run([ADB, *args], capture_output=True)
+    out = subprocess.run([ADB, *args], capture_output=True, check=True, timeout=20)
     return out.stdout if binary else out.stdout.decode("utf-8", "replace")
 
 
 def nodes():
-    adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")
+    dumped = adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")
+    if "dumped to:" not in dumped:
+        raise RuntimeError(f"UI dump failed; refusing to read a stale screen: {dumped.strip()}")
     raw = adb("exec-out", "cat", "/sdcard/ui.xml", binary=True)
     root = ET.fromstring(raw.decode("utf-8", "replace"))
     found = []
@@ -39,13 +44,24 @@ def nodes():
     return found
 
 
+def matches(want):
+    current = nodes()
+    exact = [node for node in current if node[0] == want]
+    if exact:
+        return exact
+    contains = [node for node in current if want in node[0]]
+    return [node for node in contains if node[3]] or contains
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     cmd = sys.argv[1]
     if cmd == "shot":
         from PIL import Image
         import io
-        png = adb("exec-out", "screencap", "-p", binary=True)
+        display = os.environ.get("QA_DISPLAY")
+        display_args = ["-d", display] if display else []
+        png = adb("exec-out", "screencap", *display_args, "-p", binary=True)
         image = Image.open(io.BytesIO(png))
         image = image.resize((image.width // 2, image.height // 2))
         path = os.path.join(SHOTS, sys.argv[2] + ".png")
@@ -60,7 +76,7 @@ def main():
     elif cmd == "tap":
         want = sys.argv[2]
         nth = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-        hits = [n for n in nodes() if want in n[0]]
+        hits = matches(want)
         if len(hits) <= nth:
             print("NOT FOUND:", want, "| have", len(hits))
             sys.exit(1)

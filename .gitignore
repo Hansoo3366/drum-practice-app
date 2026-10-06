@@ -49,3 +49,6 @@ third_party/**/.cxx/
 
 # The conversion server app key for builds (see docs/OMR_SERVER_ACCESS.md).
 dart_defines.local.json
+
+# Accuracy outputs contain private score/lyric content and registered client secrets.
+/score_sample/_accuracy/

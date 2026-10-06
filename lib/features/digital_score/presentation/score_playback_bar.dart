@@ -12,11 +12,9 @@ class ScorePlaybackBar extends StatefulWidget {
     required this.onSeek,
     this.onEditSequence,
     this.onTranspose,
-    this.onEditArrangement,
     this.tempoPercent = 100,
     this.onTempo,
     this.sequenceSelected = false,
-    this.arrangementSelected = false,
     this.padBottomSafeArea = true,
     this.firstBarNumber = 1,
     super.key,
@@ -31,14 +29,12 @@ class ScorePlaybackBar extends StatefulWidget {
   final ValueChanged<double> onSeek;
   final VoidCallback? onEditSequence;
   final VoidCallback? onTranspose;
-  final VoidCallback? onEditArrangement;
 
   /// How fast the score plays, in percent of its written tempo, and what
   /// takes a new one. Without [onTempo] the bar has no tempo control.
   final int tempoPercent;
   final ValueChanged<int>? onTempo;
   final bool sequenceSelected;
-  final bool arrangementSelected;
   final bool padBottomSafeArea;
 
   @override
@@ -79,91 +75,110 @@ class _ScorePlaybackBarState extends State<ScorePlaybackBar> {
           bottom: widget.padBottomSafeArea,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
-            child: Row(
-              children: [
-                CompactIconButton(
-                  tooltip: l10n.stop,
-                  onPressed: canControl ? widget.onStop : null,
-                  icon: Icons.stop_rounded,
-                ),
-                CompactIconButton(
-                  tooltip: state.playing ? l10n.pause : l10n.play,
-                  selected: state.playing,
-                  selectedColor: AppColors.accent,
-                  onPressed: canControl ? widget.onPlayPause : null,
-                  icon: state.playing
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
-                ),
-                if (widget.onEditSequence != null)
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final controls = <Widget>[
                   CompactIconButton(
-                    tooltip: l10n.playbackSequence,
-                    selected: widget.sequenceSelected,
+                    tooltip: l10n.stop,
+                    onPressed: canControl ? widget.onStop : null,
+                    icon: Icons.stop_rounded,
+                  ),
+                  CompactIconButton(
+                    tooltip: state.playing ? l10n.pause : l10n.play,
+                    selected: state.playing,
                     selectedColor: AppColors.accent,
-                    onPressed: widget.onEditSequence,
-                    icon: Icons.playlist_play_rounded,
+                    onPressed: canControl ? widget.onPlayPause : null,
+                    icon: state.playing
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
                   ),
-                if (widget.onTranspose != null)
-                  CompactIconButton(
-                    tooltip: l10n.scoreTranspose,
-                    onPressed: widget.onTranspose,
-                    icon: Icons.swap_vert_rounded,
-                  ),
-                if (widget.onEditArrangement != null)
-                  CompactIconButton(
-                    tooltip: l10n.scoreArrangement,
-                    selected: widget.arrangementSelected,
-                    selectedColor: AppColors.accent,
-                    onPressed: widget.onEditArrangement,
-                    icon: Icons.piano_rounded,
-                  ),
-                if (widget.onTempo != null)
-                  _TempoButton(
-                    percent: widget.tempoPercent,
-                    onChanged: widget.onTempo!,
-                  ),
-                const SizedBox(width: 8),
-                _ClockLabel(value: formatPlaybackClock(position.toDouble())),
-                Expanded(
-                  child: SliderTheme(
-                    data: SliderTheme.of(context).copyWith(
-                      trackHeight: 3,
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 7,
-                      ),
-                      overlayShape: const RoundSliderOverlayShape(
-                        overlayRadius: 16,
-                      ),
-                      activeTrackColor: AppColors.accent,
-                      inactiveTrackColor: AppColors.border,
-                      thumbColor: AppColors.accent,
-                      overlayColor: AppColors.accent.withValues(alpha: 0.16),
+                  if (widget.onEditSequence != null)
+                    CompactIconButton(
+                      tooltip: l10n.playbackSequence,
+                      selected: widget.sequenceSelected,
+                      selectedColor: AppColors.accent,
+                      onPressed: widget.onEditSequence,
+                      icon: Icons.playlist_play_rounded,
                     ),
-                    child: Slider(
-                      value: position.toDouble(),
-                      max: duration,
-                      onChanged: canControl
-                          ? (value) => setState(() => _dragPositionMs = value)
-                          : null,
-                      onChangeEnd: canControl
-                          ? (value) {
-                              setState(() => _dragPositionMs = null);
-                              widget.onSeek(value);
-                            }
-                          : null,
+                  if (widget.onTranspose != null)
+                    CompactIconButton(
+                      tooltip: l10n.scoreTranspose,
+                      onPressed: widget.onTranspose,
+                      icon: Icons.swap_vert_rounded,
+                    ),
+                  if (widget.onTempo != null)
+                    _TempoButton(
+                      percent: widget.tempoPercent,
+                      onChanged: widget.onTempo!,
+                    ),
+                ];
+                final timeline = <Widget>[
+                  _ClockLabel(value: formatPlaybackClock(position.toDouble())),
+                  Expanded(
+                    child: SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 3,
+                        thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 7,
+                        ),
+                        overlayShape: const RoundSliderOverlayShape(
+                          overlayRadius: 16,
+                        ),
+                        activeTrackColor: AppColors.accent,
+                        inactiveTrackColor: AppColors.border,
+                        thumbColor: AppColors.accent,
+                        overlayColor: AppColors.accent.withValues(alpha: 0.16),
+                      ),
+                      child: Slider(
+                        value: position.toDouble(),
+                        max: duration,
+                        onChanged: canControl
+                            ? (value) => setState(() => _dragPositionMs = value)
+                            : null,
+                        onChangeEnd: canControl
+                            ? (value) {
+                                setState(() => _dragPositionMs = null);
+                                widget.onSeek(value);
+                              }
+                            : null,
+                      ),
                     ),
                   ),
-                ),
-                _ClockLabel(value: formatPlaybackClock(state.durationMs)),
-                const SizedBox(width: 8),
-                Semantics(
+                  _ClockLabel(value: formatPlaybackClock(state.durationMs)),
+                ];
+                final beat = Semantics(
                   label: l10n.measureBeat(barNumber, state.displayBeat),
                   child: _ClockLabel(
                     value: '$barNumber · ${state.displayBeat}',
                     width: 52,
                   ),
-                ),
-              ],
+                );
+                if (constraints.maxWidth < 480 ||
+                    MediaQuery.textScalerOf(context).scale(1) > 1.3) {
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [...controls, beat],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(children: timeline),
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    ...controls,
+                    const SizedBox(width: 8),
+                    ...timeline,
+                    const SizedBox(width: 8),
+                    beat,
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -187,7 +202,6 @@ class _TempoButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final changed = percent != 100;
     return Tooltip(
       message: l10n.playbackTempo,
       child: InkWell(
@@ -203,7 +217,7 @@ class _TempoButton extends StatelessWidget {
           label: '${l10n.playbackTempo} $percent%',
           excludeSemantics: true,
           child: SizedBox(
-            width: 44,
+            width: 44 * MediaQuery.textScalerOf(context).scale(1),
             height: 40,
             child: Center(
               child: Text(
@@ -214,7 +228,7 @@ class _TempoButton extends StatelessWidget {
                   fontSize: 12,
                   height: 1.2,
                   fontWeight: FontWeight.w700,
-                  color: changed ? AppColors.accent : AppColors.ink,
+                  color: AppColors.ink,
                   fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
@@ -324,7 +338,7 @@ class _ClockLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: width,
+      width: width * MediaQuery.textScalerOf(context).scale(1),
       child: Text(
         value,
         textAlign: TextAlign.center,

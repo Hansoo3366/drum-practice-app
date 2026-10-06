@@ -6,18 +6,18 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-04T22:20:00+09:00"
+last_updated: "2026-10-06T13:58:32+09:00"
 current_phase:
-  id: "M8-11"
-  name: "모바일 1마디 교정 에디터 (raw MusicXML)"
+  id: "RELEASE-4"
+  name: "OMR 정확도 최소 95% 개선·검증"
   status: "in_progress"
 
-summary: "피아노 제품은 PDF→MusicXML 변환, 원본 대조·AI 승인 보정, 조옮김, Verse/Chorus Section·Arrangement, 단선 멜로디 3단 변환, 악기별 편곡 순서로 개발한다. 2026-09-28 사용자 결정(D-171)으로 변환 결과를 폰·태블릿에서 직접 고치는 1마디 교정 에디터 M8-11을 시작했다. 편집은 raw MusicXML을 직접 바꿔 셈여림·아티큘레이션·가사·레이아웃을 보존하고 이름 있는 새 버전으로만 저장하며, Lomse 편집기는 동결했다. 엔진(음높이·임시표·붙임줄·화음·음↔쉼표·코드 심벌·음가 Replace·빔)과 확대 교정 화면, 전자악보 화면 진입·버전 저장을 구현해 Pixel Fold API 35의 Ditto 변환본에서 확인했다. 남은 일은 마디 추가·삭제, 물리 기기 확인, 교정 화면의 PDF·AI 대조 연결이다. F-07의 코드 심벌 인식(harmony 0개)과 정답률 검증은 계속 남아 있다. 드럼 앱에는 반영하지 않는다."
+summary: "OMR 95% 목표를 우선해 실제 코드를 개선한다. 코드 적용 괄호·확장음 회귀 수정에 이어, book에 읽힌 음표가 voice/slot 계산 실패로 내보내지지 않는 문제와 s17의 누락 4/4를 수정했다. 단선 보표에서 명시적 기호·마디 음가 합계·기존 음표가 모두 일치할 때만 별도 보정본으로 복원하며 낮은 확신도·다성부·잇단음표는 차단한다. 같은 17곡 766마디·book/AI 응답 고정 재생 out5는 500→512→519 완전 일치(65.3→66.8→67.8%), 음표 수 오류 134→121, 가사 오류 366→341/2821(87.9%), 기존 정답 추가 회귀 0. 새 종단간 전체 측정은 아니며 95% 미달(728마디까지 추가 209). 서버 157·게이트 6 테스트 통과. 단선 성부 번호 불연속·rhythm/time 이력도 수정했다. 합쳐진 44마디, 음높이/음가 전체 정답·독립 표본, 실기기/클라우드 QA는 미완료다. 앞선 앱 QA 679 통과·1 건너뜀과 반주 제거·악기 단일 생성은 유지한다. 출시 준비 완료로 판정하지 않는다."
 
 progress:
   completed_items: 101
-  total_items: 133
-  percent: 76
+  total_items: 137
+  percent: 74
   source: "docs/ROADMAP.md"
 
 completed:
@@ -272,13 +272,11 @@ completed:
   - id: "M8-05"
     result: "alphaTab 1.8.4 MIDI 합성기와 FreePats YDP 그랜드 피아노 SoundFont를 앱 자산으로 고정했다. 재생·일시정지·정지·탐색과 Bar/Beat Cursor는 같은 플레이어 타임라인을 사용하며, 기존 flutter_soloud 메트로놈/오디오 엔진과 별도의 Dart 음원 타이머는 쓰지 않는다. 악보 터치로 Web Audio를 열고, SoundFont 준비 전에 누른 재생은 준비되면 이어 받는다."
   - id: "M8-06"
-    result: "Section 구조 패널을 DigitalScoreScreen에 연결해 선택 마디의 시스템 범위에 INTRO/VERSE/PRE/CHORUS/BRIDGE/OUTRO를 지정하고, 반복 횟수·순서·삭제를 Playback Sequence sidecar에 저장할 수 있게 했다. Verovio SVG에서 제거한 텍스트를 보완하기 위해 Section 표식은 Flutter 오버레이로 표시한다. 저장된 sequence·arrangement를 화면·내보내기 경로에 전달하며, 실기기 저장·재열기 smoke는 진행 중이다."
+    result: "Section 구조 패널에서 구간과 반복·순서를 Playback Sequence sidecar로 저장하고 화면·재생·내보내기에 반영한다. Section 표식은 Flutter 오버레이로 표시한다. 별도 반주 프로필은 D-218로 적용하지 않는다. 물리 기기 저장·재열기 smoke는 남았다."
   - id: "M8-07"
     result: "반음(-24~24) 또는 목표 조로 음표·harmony·keyFifths를 한 명령으로 이조한다. 도착 조의 음이름 표기를 쓰고 같은 소리의 다른 조표(C♯/D♭)를 고를 수 있으며, 변경은 undo 가능한 편집본과 Grand Staff·재생 타임라인에 바로 반영한다."
-  - id: "M8-08"
-    result: "harmony 진행에서 코드·박마다·하나씩 피아노 반주를 만들고 프로필만 `arrangement_profiles/<songId>.json`에 저장한다. 코드 심벌이 없으면 반주를 적용하지 않고 `코드 없음`만 보여 준다. 원본 음표는 유지하고, 편집이 꺼져 있을 때 펼친 Sequence 위에 생성 반주를 올려 Grand Staff와 재생 타임라인에 연결한다."
   - id: "M8-09"
-    result: "내려받기 메뉴에서 PDF·MusicXML·프로젝트·MIDI 네 형식만 제공한다. MusicXML·MIDI·PDF는 펼친 Sequence와 반주를 반영하고, 프로젝트 zip은 편집 원본과 Sequence·반주 sidecar를 담는다. 원본은 덮어쓰지 않으며 Android 파일 재열기는 B-017로 남아 있다."
+    result: "PDF·MusicXML·프로젝트·MIDI 네 형식을 제공하고 현재 버전의 실제 파트와 Sequence를 반영한다. 프로젝트 zip은 raw MusicXML을 그대로 담아 가사·셈여림·아티큘레이션·악기 프로그램을 보존한다(회귀 테스트). 별도 재생 반주를 덧붙이지 않으며 원본은 덮어쓰지 않는다. Android 파일 재열기는 B-017로 남아 있다."
   - id: "M8-10-NATIVE-PACKAGING"
     result: "고정된 Lomse 0.30.0·FreeType 2.13.3 commit을 `native/.cache`에 준비하고 `native/lomse_bridge/build_android.ps1`로 Android arm64-v8a·x86_64 정적 bridge를 빌드했다. Gradle piano source set에 `libpage_lomse_bridge.so`와 `libc++_shared.so`를 연결해 piano APK에는 포함되고 drum APK에는 포함되지 않음을 zip 목록으로 확인했다."
   - id: "M8-10-LOMSE-FFI-VERTICAL-SLICE"
@@ -328,7 +326,7 @@ completed:
   - id: "F-08e"
     result: "accompanimentMusicXml: 피아노·오르간·스트링·패드·브라스 파트를 코드 기호로 만들어 멜로디 아래에 붙인다. 오르간·스트링·패드는 화음을 마디 너머로 이어 누르고, 브라스는 3성 한 박 히트. 파트마다 이름과 MIDI 프로그램을 기록한다."
   - id: "F-08b"
-    result: "threeStaffMusicXml: 멜로디 파트를 그대로 두고 코드 기호로 피아노 파트(오른손 밀집 보이싱, 왼손 베이스)를 덧붙여 새 버전으로 저장한다. 메뉴 \"피아노 반주 추가(3단)\"."
+    result: "악기별 악보 만들기: 멜로디·가사·코드를 보존하고 선택한 한 악기 파트를 붙여 한 새 버전으로 저장한다. 피아노는 오른손·왼손의 3단 악보, 다른 악기는 해당 파트를 만든다. 다중 선택·합주 총보 옵션은 D-218로 삭제했다."
   - id: "F-07l"
     result: "서버 omr_annotations: 사진·사진 PDF에서 색 펜·형광펜·색 글자를 색 분리로 떼어 정리본을 인식기에 넘기고, 필기 이미지·목록(annotations.json)을 결과에 남긴다. 업로드 파일은 그대로다. 인쇄와 겹친 필기는 A001로 표시하고 앱은 목록을 곡과 함께 저장한다."
   - id: "F-07n"
@@ -337,11 +335,36 @@ completed:
     result: "XmlMeasureEditor.insertMeasureAfter·duplicateMeasure·deleteMeasure: 모든 파트에서 마디를 추가·복제·삭제하고 조표·박자표·세로줄을 이웃으로 넘기며 끊긴 붙임줄을 정리한다. 교정 화면 버튼과 되돌리기, 저장 때 구간·연주 순서 이동, 파일 안 마디 출처 기록(barOrigins)."
   - id: "F-07m"
     result: "AI 검수 제안을 확신도(OMR_AI_APPLY_CONFIDENCE, 기본 0.9) 기준으로 자동 적용(코드·가사)과 검토 권장으로 나누고, 제안마다 status(applied·low_confidence·notes·no_fit)를 보고서와 변환 검토 화면에 둔다. 음표 제안은 표시만."
+  - id: "F-07s"
+    result: "AI 코드 목록에서 suffix 괄호·여러 확장음을 보존하고 MusicXML kind/degree로 기록한다. 일부 코드만 파싱됐을 때 기존 마디 전체를 덮어쓰지 않는다. 같은 17곡 응답 고정 재생에서 12마디 추가 정답·기존 정답 추가 회귀 0, 서버 143·gate 6 테스트와 실제 설치 모듈 smoke 통과. 서버 배포 완료. 95% 목표 완료를 뜻하지 않는다."
+  - id: "OMR-RHYTHM-RECOVERY"
+    result: "F-07t 일부: s17의 읽힌 음표 내보내기 누락·누락 4/4·단선 성부 번호 불연속 수정. 명시적 book 기호·기존 음표·정확한 박자 합계 확인, 낮은 확신도/다성부/잇단음표 거절, 원본 보존과 rhythm/time 이력. out5/7 17곡 고정 재생에서 13마디 복원·7마디 추가 완전 일치·기존 정답 회귀 0. 실변환 live6 s17은 7→15/37(18.9→40.5%), 가사 57.5→83.6%, 음표 수 27.0→62.2%, 추가 정답 회귀 0. live5 s07/s12는 17/29·19/34 그대로, 추가 회귀 0. 서버 157·gate 6·Dart codec/transpose 22 통과. 최종 배포 해시·health·설치 코드 실제 postprocess smoke 확인. F-07t 전체와 95%는 미완료."
 in_progress:
-  - roadmap_id: "M8-11"
-    action: "모바일 1마디 교정 에디터의 남은 범위(M8-11f 물리 기기 확인, M8-11g의 AI 제안 연결)를 진행한다. M8-11g의 원본 마디 대조는 완료. M8-11e(마디 추가·복제·삭제·이동)는 완료. F-07은 코드 심벌 인식과 정답률 검증이 남은 상태로 [~]를 유지한다."
+  - roadmap_id: "F-07t"
+    action: "95% 목표의 구조적 인식 오류 개선. 코드 회귀·s17 음표 내보내기/누락 박자표/단선 성부 복원은 수정했으나 519/766으로 목표 미달이다. 합쳐진 44마디와 나머지 음표 수 오류 121마디를 우선한다. M8-11f·g/실기기 QA는 대기."
 
 next_actions:
+  - order: 1
+    roadmap_id: "F-07t"
+    action: "scores5.json/rhythm-report-5.json과 books2를 기준으로 s07·s12 마디 병합을 개선한다. s07 첫 줄 실제 세로줄 x1038~1041/1267~1271/1855~1858을 엔진이 약한 F4 hollow head(grade .52~.59)로 읽어 한 마디로 합침을 확인. 단순 세로 픽셀 투영은 실제 음표 기둥도 잡으므로 그대로 자동 분할하지 않는다. 막대/머리/기둥 끝점·원본 픽셀로 검증한 전처리 또는 후보를 만들고 전체 17곡 회귀를 재검사한다."
+  - order: 2
+    roadmap_id: "F-07u"
+    action: "불확실 표시가 있는 기존 정답을 원본 대조하고 음높이·음가 정답 MusicXML과 독립 표본을 마련한다. 기호의 인쇄/필기 판단 및 bare slash bass 표기를 검증한다. 현재 코드·가사·음표 수·기호 지표를 음높이/음가 정확도라고 부르지 않는다."
+  - order: 3
+    roadmap_id: "F-07v"
+    action: "구조적 후속 수정을 전체 고정 재생으로 확인한 뒤 최신 서버 17곡을 새 실행으로 실변환한다. 이번에는 live5(s07/s12)·최종 live6(s17) 3곡만 실검증 완료(추가 회귀 0), 전체 17곡 새 변환은 아님. 현재 도구의 최신 고정 검증은 out7/scores7(Validator 재계산), out5는 baseline flags라 탐지율에 쓰지 않는다. QA secret은 저장소 밖 ~/.cache/piano-score-qa/omr-client 하나 재사용, 한도 회피 금지. gate.py 728/766 이상 및 음높이/음가·독립 표본·False Correction 검증 전에는 완료 표시 금지."
+  - order: 4
+    roadmap_id: "RELEASE-2"
+    action: "물리 Android에서 재생·일시정지/탐색/속도/템포 변화·마디 듣기를 청취하고 교정→별도 저장→재열기→조옮김→내보내기를 확인한다. 이어 클라우드 실계정·필기 분리·태블릿, M8-11g AI 제안 연결을 검증한다."
+  - order: 5
+    roadmap_id: "RELEASE-1"
+    action: "R-7 개인정보 처리방침·약관 초안을 사용자와 확정하고 공개 URL을 준비한다. R-8 피아노 전용 앱 아이콘은 사용자 선택 후 반영한다."
+
+# 이전 작업 순서는 이력으로만 보존한다. 현재 실행 순서는 위 next_actions를 따른다.
+historical_next_actions_20261006:
+  - order: -2
+    roadmap_id: "RELEASE-4"
+    action: "4단계 다음: 재측정에서 내려간 곳(s04·s02 코드, s15 가사)이 AI 검수의 실행 간 차이인지 수정 탓인지 가린다(같은 곡을 한 번 더 변환해 비교). 그다음 남은 원인: 엔진이 세로줄을 못 본 합쳐진 마디 44개(s07·s12), 코드 확장음 누락, 색 인쇄 기호(s17), 도돌이표 누락(s02), 빈 첫 마디(s05), dpi 후보 선택. 측정은 `tool/accuracy/README.md`."
   - order: -1
     roadmap_id: "RELEASE"
     action: "docs/RELEASE_READINESS.md: 0·1단계와 R-6 닫힘, 3단계 1~5차 통과(5차는 구성 변환과 교정 에디터 집중: 구성 버그 3개, 가사 고치기·마디 듣기·박자 경고, 편집 속도, 도구줄). 다음: (1) 2단계 실기기에서 release 2097(build/app/outputs/flutter-apk/app-piano-release.apk)으로 소리 듣기 — R-4의 네 가지와 에디터의 '이 마디 듣기'. 기기는 사용자. (2) R-7 개인정보 처리방침·약관 초안 확정과 웹 주소. (3) R-8 피아노 앱 아이콘. (4) 4차 표의 제안(촬영, 다른 앱에서 열기, 공유 창, 알림, 구간 반복·메트로놈)과 5차의 에디터 남은 것(음 바꿀 때 소리, 잇단음표 음가, 붙임줄 입력)을 넣을지 사용자 결정. (5) 4단계 10곡 정확도(악보는 사용자). (6) 3단계 남은 화면(클라우드, 필기 분리, 태블릿). 테스트는 D-213대로 뒤섞어서 한다(song_form_chaos_test, xml_measure_editor_chaos_test는 CHAOS_SCALE로 늘림). 빌드에는 dart_defines.local.json이 필요하고, release는 빌드 전 build/app/intermediates의 merged_jni_libs·merged_native_libs·stripped_native_libs/pianoRelease를 지우고 빌드 뒤 tool/qa/check_16kb.py와 libapp.so 내용을 확인한다."
@@ -445,7 +468,7 @@ blockers:
     blocks: []
   - id: "B-019"
     status: "open"
-    detail: "2026-09-28 최신 서버를 루트 파일 이동 후 `/update.sh`로 배포해 health HTTP 200 `ok=true, pipeline=pdf-multipass-v1`과 `chords_lyrics` diagnostics HTTP 200을 확인했다. Ditto 6페이지 결과는 104마디·1,302음표·2단이지만 harmony/lyric은 각각 0개이고 `accuracy_verified=false`, OCR 언어는 `Audiveris default`였다. Tesseract 언어 설정·Audiveris 코드 옵션의 실제 인식 효과(가사는 D-170으로 제외), 정답률·실행 비용, 수동 영역 AI 보정의 기기 조작·미리보기는 미검증이다. SSH는 배포 후 authorized_keys 재등록이 필요할 수 있으며 절차는 `docs/OMR_SERVER_ACCESS.md`에 있다."
+    detail: "이전 Ditto/OCR 미설정 기록은 이력이다. 현재 eng+kor 및 Gemini 검수는 동작하고 2026-10-06 같은 17곡 book/AI 응답 고정 재생은 519/766(67.8%), 95% 미달이다. 합쳐진 44마디·음표 수 오류 121·가사 오류 341/2821·기호 오류 25/91 및 음높이/음가 전체 정답·독립 표본·전체 오수정 검증이 남아 있다. 단일 마디 10음표 음높이/음가 대조는 통과했으나 전체 검증을 대체하지 않는다. 실기기 검수·수정·확정 흐름도 미완료."
     blocks:
       - "F-07 VM 실변환 정확도와 검수·수정·확정 흐름 검증"
   - id: "B-022"
@@ -493,6 +516,14 @@ setup_required:
       - "사용자 이름과 비밀번호"
 
 decisions:
+  - id: "D-219"
+    date: "2026-10-06"
+    status: "active"
+    decision: "사용자의 정확도 95% 목표를 우선 작업으로 한다. 기존 17곡 766마디의 코드·가사·음표 수·기호 완전 일치 최소 95%(728마디)를 달성하되 음높이·음가·독립 표본·False Correction을 추가 검증하기 전에는 제품 정확도 95%나 출시 완료로 표시하지 않는다. 응답 고정 재생과 새 서버 실변환을 구분하고 원본·정답지·기존 결과는 보존한다. 새로운 기능이나 반주 메뉴는 늘리지 않는다."
+  - id: "D-218"
+    date: "2026-10-06"
+    status: "active"
+    decision: "사용자 요청으로 기능 확장보다 피아노 전체 QA를 우선한다. 별도 재생 반주 메뉴·버튼·패널·자동 프로필 적용은 삭제하고 기획서에서도 범위 제외한다. 악기별 악보 생성은 한 번에 한 악기·한 새 버전만 제공하며 다중 선택·합주 총보 선택은 없앤다. 기존 원본·버전·프로필 파일은 삭제하지 않는다. 프로젝트 내보내기는 raw XML을 보존하고 실제 악보 파트·Sequence만 재생/내보낸다. D-122·D-123·D-196의 충돌 부분을 대체한다."
   - id: "D-001"
     date: "2026-08-19"
     decision: "모든 AI는 AGENTS.md를 공통 규칙으로 사용하고 Cursor, Claude, Gemini, Copilot용 진입 파일은 이 규칙을 참조한다."
@@ -958,11 +989,11 @@ decisions:
     decision: "M8-07 이조는 별도 미리듣기 레이어를 두지 않고 Score Document 전체를 undo 가능한 명령으로 바꾼다. 반음과 목표 조는 같은 간격이며, 조표는 원·5도 이동 후 -7~7로 맞춘다. 음이름 표기는 각 마디의 도착 조표를 따르고, 같은 반음이라도 C♯/D♭처럼 사용자가 고른 조표를 유지한다. 옥타브만 옮길 때는 조표를 바꾸지 않는다."
   - id: "D-122"
     date: "2026-09-19"
-    status: "active"
+    status: "superseded_by_D-218"
     decision: "M8-08 반주는 원본 MusicXML 음표를 덮어쓰지 않고 `arrangement_profiles/<songId>.json`에 끔/블록/박/분산만 저장한다. 생성 음표는 voice `arr`로 보기·재생 점수에만 붙이며, 편집 화면은 원본을 보여 준다. 스트링·오르간·브라스 AI 편곡은 Future로 남긴다."
   - id: "D-123"
     date: "2026-09-19"
-    status: "active"
+    status: "superseded_by_D-218"
     decision: "M8-09 성능 파일(`.musicxml`·`.xml`·MXL·MIDI·PDF)은 이조가 반영된 현재 편집본에 연주 순서와 반주를 펼친 점수를 쓴다. `.xml`은 구형 확장자이며 내용은 `.musicxml`과 같은 MusicXML 4.0이다. 프로젝트 zip은 편집 가능한 원본 MusicXML과 Sequence·반주 JSON만 담는다. PDF는 alphaTab 스크린샷이 아니라 `pdf` 패키지로 Grand Staff를 벡터 조판한다. 모두 새 파일이며 앱 내부 원본은 덮어쓰지 않는다."
   - id: "D-124"
     date: "2026-09-19"
@@ -1296,7 +1327,7 @@ decisions:
     decision: "내보내기는 버전의 파일에서 만든다(편집 중이거나 재생용 반주를 켠 경우만 예전처럼 편집 모델에서). MusicXML은 파일 원문에 사용자의 구간 이름을 연습 기호로 넣은 것, 순서를 정했으면 그 순서로 펼친 것. MIDI는 재생과 같은 시퀀스에 채널별 악기를 넣은 것. PDF는 뷰어와 같은 Verovio 조판을 A4로 다시 떠서 글자(가사·코드·마디 번호·구간 이름)를 SUIT TTF로 얹은 것. pdf 패키지가 OTF(CFF)를 유니코드로 내장하지 못해 SUIT-Regular.ttf를 자산에 추가했다."
   - id: "D-196"
     date: "2026-10-01"
-    status: "active"
+    status: "superseded_by_D-218"
     decision: "악기별 악보는 리드시트(멜로디+코드)를 구간 역할에 따라 각 악기의 연주 방식으로 다시 쓴 것이다. 역할은 구조 패널의 구간 이름에서 읽고(영어·한국어·연습 기호), AI 추천이 있으면 그 역할로 덮는다. 기본 결과는 악기마다 따로 된 버전(위에 멜로디·가사·코드, 아래에 그 악기 파트)이며 한 악보에 모두 넣는 합주 총보도 고를 수 있다. 음표는 규칙이 쓰고 AI는 역할·스타일·코드 교정만 추천한다."
   - id: "D-195"
     date: "2026-10-01"
@@ -1349,8 +1380,23 @@ decisions:
 
 verification:
   status: "passed_with_known_gaps"
-  checked_at: "2026-09-28T10:26:44+09:00"
+  checked_at: "2026-10-06T13:58:32+09:00"
   checks:
+    - name: "rhythm_live_conversion_and_final_deploy_20261006"
+      result: "partial_live_improvement_target_not_met"
+      detail: "실제 HTTPS 업로드→300/400dpi→자동 보정→Gemini→원본/수정본/AI/이력 다운로드. live5 s07(293초)/s12(156초)는 17/29·19/34 그대로, 마디별 추가 정답 회귀 0. 초기 live5 s17에서는 phantom rest 정리가 monophony guard보다 늦어 복원 안 됨을 확인, 순서 수정·통합 테스트 추가 후 최종 배포하고 live6 s17(190초) 재실행. 13마디 복원·완전 일치 7→15/37(18.9→40.5%), 가사 57.5→83.6%, 음표 수 27.0→62.2%, 기존 정답 추가 회귀 0. 4/4와 14마디 10음표 음높이/음가, V003 추가 0 및 rhythm/time 이력 확인. 전체 17곡 최신 실측으로 합산하지 않는다. 최종 /home/hanso3366/omr_accuracy_20261006_1347/update.sh 배포, 백업 1347/1354, 수정 3모듈 SHA-256 일치·service active·HTTPS 200. 설치된 실제 postprocess도 13마디/14마디 10음표 smoke 통과, 원본 해시 b0f70f90…33171f7 일치. 서버 157·gate 6·Dart 22 통과. source Validator/diagnostics 복사 오류를 정정한 out7 전체 재생도 519/766·추가 회귀 0. 증거 live-recovery-summary.json·outlive5/outlive6·scoreslive5/scoreslive6·rhythm-report-7.json·scores7.json, server smoke /home/hanso3366/rhythm_smoke.ZWoyyG."
+    - name: "book_rhythm_recovery_20261006"
+      result: "improved_target_not_met"
+      detail: "17곡 원본 book/기존 AI 응답/정답지 고정 out5. 완전 일치 512→519/766(66.8→67.8%), 추가 회귀 0, s17 13마디 복원·완전 일치 7→14/37. 음표 수 오류 134→121, 가사 오류 366→341/2821(87.9%), 코드 92.1%, 합쳐진 44마디 그대로. 서버 unittest 157·gate 6·compile/diff-check 통과. s17 p1-s04 두 번째 마디 10음표 음높이/음가 원본 대조 통과(전체 정답 아님). 복원된 붙임줄의 voice 1→2 불연속 수정 후 V003 추가 오류 0. 증거 rhythm-report-5.json/scores5.json/out5/books2. 실변환은 live5/live6로 분리해 추가 기록한다. 95%까지 209마디 추가 정답, release_ready=false."
+    - name: "accuracy_95_frozen_replay_20261006"
+      result: "target_not_met"
+      detail: "같은 17곡 766마디·기존 AI dataset/answers 고정, 정답지와 out2 보존. out3의 완전 일치 500→512(65.3→66.8%), 코드 오류 91→84/1060(92.1%), 가사 오류 366/2821(87.0%) 그대로, 이번 수정으로 기존 정답 마디 추가 회귀 0. 합쳐진 마디 44·누락 6·음표 수 오류 134·기호 오류 25/91 남음. gate.py exit 1이 정상(95%까지 추가 정답 216마디, 음높이/음가·독립 표본 미검증). 서버 143·gate 6·Dart codec/transpose 22 테스트 통과. 서버 백업 /home/hanso3366/omr_backup_20261006_1325, 업로드 /home/hanso3366/omr_accuracy_20261006_1325/update.sh 배포, 수정 4개 모듈 해시 일치·service active·HTTPS 200·설치 모듈 smoke 통과. 이 수치는 재변환이 아닌 응답 고정 적용 회귀 결과다. 증거 score_sample/_accuracy/replay-report-3.json·scores3.json, tool/accuracy/README.md."
+    - name: "piano_scope_and_regression_qa_20261006"
+      result: "passed_with_known_gaps"
+      detail: "Flutter 679 통과·1 건너뜀(외부 corpus 없음), 서버 unittest 134 OK, 최종 flutter analyze No issues found, piano arm64 debug build 4055·Android versionCode 6055 설치 성공. 에뮬레이터에서 반주 메뉴 없음, 악기 단일 선택→Strings 한 버전 생성, +1 조옮김→별도 버전, 교정 진입을 확인. 320dp·글자 2배 시트/재생 막대와 raw XML 프로젝트 보존 회귀 테스트 통과. 최종 APK에서 320dp·글자 2배 재생 0:05/0:32·강조·탐색줄 표시 확인, PID 23839 예외·overflow·FATAL·ANR 없음. QA 임시 두 버전만 삭제하고 Organ 활성화 복원; 원본 MXL·버전 manifest의 전후 해시 일치. 에뮬레이터 임시 설정 복원. 물리 기기 음질·클라우드 실계정·OMR 음높이/음가 정확도는 미확인. 증거: /tmp/piano-qa-flutter-tests-final-20261006.log, /tmp/piano-qa-omr-tests-20261006.log, /tmp/piano-qa-20261006/shots/."
+    - name: "conversion_accuracy_17_songs_20261006"
+      result: "in_progress_with_known_gaps"
+      detail: "17곡 766마디 1차(수정 전): AI 보정 코드 86.4%, 가사 83.4%, 마디 736/766, 모두 맞는 마디 52.7%. 서버 테스트 134 통과, 수정 3건 배포(해시 일치, https 200) 후 재측정: 코드 91.4%, 가사 87.0%, 마디 743/766, 모두 맞는 마디 65.3%, 기호 72.5%. 일부 곡은 소폭 내려갔고 원인 미확인. 음높이·음 길이는 재지 않음(음표 수만). 정답지는 표본 20여 건만 사람 대신 직접 대조."
     - name: "zero_open_findings_20261004"
       result: "passed"
       detail: "flutter test 674 통과·실패 0·2 건너뜀(외부 표본이 있을 때만 도는 테스트), flutter analyze No issues found, 서버 unittest 122개 OK(Windows). alphatab_asset_test의 SoundFont 테스트를 앱이 실제로 쓰는 GeneralUser-GS.sf2 검사로 교체하고 pubspec에서 assets/alphatab/vendor/soundfont/ 번들을 뺌(release 2097 APK의 soundfont 자산은 GeneralUser-GS 3개뿐). 에디터 6차의 남은 아쉬움 3가지 수정(358dp·글자 2배 확인). release 2097(149.9 MB, 16 KB 통과)을 에뮬레이터에 새로 설치해 실행·재생(Clair de lune 18초 6마디)·교정 화면 확인."

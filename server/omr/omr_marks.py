@@ -94,6 +94,8 @@ _NAVIGATION = [
     (re.compile(r"\bFine\b"), "Fine", {"fine": "yes"}),
 ]
 _ENDING_LABEL = re.compile(r"^(\d{1,2})(?:\s*[-–~]\s*(\d{1,2}))?\.?$")
+# "1.2." and "2.3.": one bracket for two passes.
+_ENDING_LIST = re.compile(r"^(\d)[.,]\s*(\d)\.?$")
 
 
 # Segno (U+E047) and coda (U+E048) from five SMuFL fonts (Bravura, Leland,
@@ -417,7 +419,7 @@ def _navigation_marks(book: dict, workdir: Path, photos: dict | None = None) -> 
             left, _right, _heads = staff["measures"][stack]
             interline = staff["interline"]
             for number, word in labels:
-                match = _ENDING_LABEL.match(word["text"])
+                match = _ENDING_LABEL.match(word["text"]) or _ENDING_LIST.match(word["text"])
                 if number != sheet or not match:
                     continue
                 if left - interline <= word["x0"] <= left + 5 * interline \
@@ -440,3 +442,152 @@ def _navigation_marks(book: dict, workdir: Path, photos: dict | None = None) -> 
         last_ending = ending.get("number", "").split(",")[-1]
         previous_last = int(last_ending) if last_ending.isdigit() else None
     return report
+
+
+def _ending_numbers(value: str | None) -> list[int]:
+    """The passes an ending is for, from its number attribute: the run that counts up
+    from the first number ("1,2" is [1, 2]; "2,13" and "1,,,2,9" keep what counts up)."""
+    numbers = [int(n) for n in re.findall(r"\d+", value or "")]
+    out = numbers[:1]
+    for number in numbers[1:]:
+        if number != out[-1] + 1:
+            break
+        out.append(number)
+    return out if out and 1 <= out[0] <= 12 else []
+
+
+def _tidy_endings(root: ET.Element) -> list[dict]:
+    """Make the ending brackets of each part ones a player could follow.
+
+    The engine takes any line with a hook above the staff for an ending: the boxes around
+    instrument cues ("P, HiHat only") become first endings, one bracket is cut in two, and
+    the bracket after a first ending is numbered 1 again. A first ending is told apart by
+    what follows it: the repeat sign at its end and the next ending right after. So
+
+    - a bracket labelled with words is not an ending;
+    - a bracket with the same number a few bars after another, or one that runs on from a
+      first ending to the repeat sign, is that bracket going on;
+    - endings one after another count up from the first, with the repeat sign that sends
+      the first back;
+    - a first ending on its own stays only where it ends at a repeat sign it did not
+      begin on; otherwise it is not one.
+
+    Returns what changed, for the correction history.
+    """
+    changes = []
+    for part in root.findall("part"):
+        measures = part.findall("measure")
+
+        def repeats(direction: str) -> set[int]:
+            return {
+                index for index, measure in enumerate(measures)
+                if any(r.get("direction") == direction for r in measure.findall("barline/repeat"))
+            }
+
+        backward, forward = repeats("backward"), repeats("forward")
+        brackets: list[dict] = []
+        for index, measure in enumerate(measures):
+            for barline in measure.findall("barline"):
+                ending = barline.find("ending")
+                if ending is None:
+                    continue
+                if ending.get("type") == "start":
+                    brackets.append({"start": index, "at": (measure, barline, ending), "end": None, "stop": None,
+                                     "numbers": _ending_numbers(ending.get("number")),
+                                     "text": (ending.text or "").strip()})
+                elif brackets and brackets[-1]["end"] is None:
+                    brackets[-1]["end"], brackets[-1]["stop"] = index, (measure, barline, ending)
+
+        def take_out(place) -> None:
+            if place is None:
+                return
+            measure, barline, ending = place
+            barline.remove(ending)
+            if len(barline) == 0 or (len(barline) == 1 and barline[0].tag == "bar-style"
+                                     and (barline[0].text or "").strip() == "regular"):
+                measure.remove(barline)
+
+        def note(bracket: dict, after: str) -> None:
+            changes.append({"measureIndex": bracket["start"], "measure": measures[bracket["start"]].get("number"),
+                            "before": bracket["at"][2].get("number"), "after": after})
+
+        def drop(bracket: dict) -> None:
+            note(bracket, "")
+            take_out(bracket["at"])
+            take_out(bracket["stop"])
+
+        def closed(bracket: dict, before: int) -> bool:
+            return any(index in backward for index in range(bracket["start"], before))
+
+        # Words in the bracket: a cue box, not an ending.
+        for bracket in [b for b in brackets if len(re.findall(r"[^\W\d_]", b["text"])) >= 3]:
+            drop(bracket)
+            brackets.remove(bracket)
+        # One bracket cut in two.
+        position = 0
+        while position + 1 < len(brackets):
+            first, second = brackets[position], brackets[position + 1]
+            third = brackets[position + 2] if position + 2 < len(brackets) else None
+            between = range(first["start"] + 1, second["start"] + 1)
+            # The same number again a few bars on, with no repeat sign in between.
+            same = ((not second["numbers"] or second["numbers"][:1] == first["numbers"][:1])
+                    and second["start"] - first["start"] <= 4 and not any(i in forward for i in between))
+            # "1" then "2" with no repeat sign between them, the "2" ending at the repeat
+            # sign the next bracket follows: the "2" is the first ending going on.
+            goes_on = (first["end"] is not None and second["start"] == first["end"] + 1
+                       and second["end"] is not None and second["end"] in backward
+                       and third is not None and third["start"] == second["end"] + 1)
+            if not closed(first, second["start"]) and (same or goes_on):
+                take_out(first["stop"])
+                take_out(second["at"])
+                first["end"], first["stop"] = second["end"], second["stop"]
+                del brackets[position + 1]
+                continue
+            position += 1
+        # Endings one after another count up, and all but the last send the player back.
+        chained: set[int] = set()
+        for position in range(len(brackets) - 1):
+            first, second = brackets[position], brackets[position + 1]
+            adjacent = first["end"] is not None and second["start"] == first["end"] + 1
+            if not adjacent:
+                continue
+            if position not in chained:
+                size = max(1, len(first["numbers"]))
+                first["wanted"] = list(range(1, size + 1))
+            chained.update((position, position + 1))
+            start = first.get("wanted", first["numbers"])[-1] + 1
+            second["wanted"] = list(range(start, start + max(1, len(second["numbers"]))))
+            if first["end"] not in backward:
+                measure = measures[first["end"]]
+                barline = next((b for b in measure.findall("barline") if b.get("location") == "right"), None)
+                if barline is None:
+                    barline = ET.SubElement(measure, "barline", location="right")
+                    ET.SubElement(barline, "bar-style").text = "light-heavy"
+                ET.SubElement(barline, "repeat", direction="backward")
+                backward.add(first["end"])
+                changes.append({"measureIndex": first["end"], "measure": measure.get("number"),
+                                "before": "", "after": "repeat"})
+        for position, bracket in enumerate(brackets):
+            if position in chained:
+                continue
+            if bracket["numbers"][:1] in ([], [1]):
+                real = (bracket["end"] is not None and bracket["end"] in backward
+                        and bracket["start"] not in forward)
+                if not real:
+                    drop(bracket)
+                    continue
+            bracket["wanted"] = bracket["numbers"] or [1]
+        for bracket in brackets:
+            wanted = bracket.get("wanted")
+            if not wanted:
+                continue
+            value = ",".join(str(n) for n in wanted)
+            ending = bracket["at"][2]
+            if ending.get("number") != value:
+                note(bracket, value)
+                ending.set("number", value)
+                if re.fullmatch(r"[\d.,\s–~-]*", bracket["text"]):
+                    ending.text = f"{wanted[0]}-{wanted[-1]}." if len(wanted) > 2 else "".join(f"{n}." for n in wanted)
+            if bracket["stop"] is not None:
+                bracket["stop"][2].set("number", value)
+    return changes

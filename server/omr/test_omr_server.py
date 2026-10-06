@@ -726,6 +726,177 @@ class CorrectionHistoryTest(unittest.TestCase):
         self.assertEqual(history["items"], [{"kind": "parts", "before": 2, "after": 1}])
 
 
+class ExportedRhythmRecoveryTest(unittest.TestCase):
+    def fixture(self):
+        system = ET.fromstring('''<system><stack left="0" right="400" expected="1"/>
+          <part id="1"><staff id="1"><header><clef>99</clef></header></staff>
+          <measure id="1" abnormal="true"><head-chords>c1 c2 c3 c4</head-chords>
+          <voice id="1"><slots><entry><value chord="c1" status="BEGIN"/></entry></slots></voice></measure></part>
+          <clef id="99" kind="TREBLE" shape="G_CLEF"><bounds x="0" y="0" w="10" h="40"/></clef>
+          <relations/></system>''')
+        relations = system.find("relations")
+        for i in range(1, 5):
+            ET.SubElement(system, "head-chord", id=f"c{i}").append(ET.Element("bounds", x=str(i*80), y="0", w="20", h="60"))
+            head = ET.SubElement(system, "head", id=f"h{i}", staff="1", pitch=str(1-i), shape="NOTEHEAD_BLACK", **{"ctx-grade": ".95"})
+            ET.SubElement(head, "bounds", x=str(i*80), y="0", w="20", h="20")
+            stem = ET.SubElement(system, "stem", id=f"s{i}")
+            ET.SubElement(stem, "bounds", x=str(i*80), y="0", w="3", h="60")
+            ET.SubElement(ET.SubElement(relations, "relation", source=f"c{i}", target=f"h{i}"), "containment")
+            ET.SubElement(ET.SubElement(relations, "relation", source=f"c{i}", target=f"s{i}"), "chord-stem")
+        root = ET.fromstring(_document(_note(4, '<voice>1</voice><type>quarter</type><lyric><text>가</text></lyric>') + '<backup><duration>4</duration></backup>'))
+        root.find(".//pitch/step").text = "B"
+        root.find(".//attributes").append(ET.fromstring('<clef><sign>G</sign><line>2</line></clef>'))
+        root.find(".//measure").set("width", "400")
+        staff = {"id": "1", "part": 0, "interline": 20, "measures": [(0,400,[90,170,250,330])], "top": 0}
+        sheet = ET.Element("sheet")
+        sheet.append(system)
+        book = {"parts": root.findall("part"), "placements": [[("1",0,0,[staff])]],
+                "sheets": [("1",sheet,None,20,[staff])]}
+        return root, system, book
+
+    def recover(self, root, book):
+        with patch.object(omr_book, "_load_book", return_value=book):
+            return omr_book._restore_exported_rhythm(root, Path("unused"))
+
+    def test_recovers_only_explicit_notes_and_preserves_existing_annotations(self):
+        root, _system, book = self.fixture()
+        before = ET.fromstring(ET.tostring(root))
+        self.assertEqual(len(self.recover(root, book)), 1)
+        notes = root.findall(".//measure/note")
+        self.assertEqual([n.findtext("pitch/step") for n in notes], ["B", "C", "D", "E"])
+        self.assertEqual([n.findtext("pitch/octave") for n in notes], ["4", "5", "5", "5"])
+        self.assertEqual([n.findtext("duration") for n in notes], ["4"] * 4)
+        self.assertEqual(notes[0].findtext("lyric/text"), "가")
+        self.assertIsNone(root.find(".//backup"))
+        self.assertEqual(omr_validate._validate_score(root), [])
+        self.assertIn("rhythm", [i["kind"] for i in omr_validate._corrections(before, root)["items"]])
+
+    def test_wrong_existing_pitch_is_not_corrected(self):
+        root, _system, book = self.fixture()
+        root.find(".//pitch/step").text = "F"
+        original = ET.tostring(root)
+        self.assertEqual(self.recover(root, book), [])
+        self.assertEqual(ET.tostring(root), original)
+
+    def test_incomplete_meter_does_not_get_guessed_notes(self):
+        root, system, book = self.fixture()
+        system.find("part/measure/head-chords").text = "c1 c2 c3"
+        original = ET.tostring(root)
+        self.assertEqual(self.recover(root, book), [])
+        self.assertEqual(ET.tostring(root), original)
+
+    def test_low_confidence_omitted_note_blocks_the_whole_recovery(self):
+        root, system, book = self.fixture()
+        system.find("head[@id='h4']").set("ctx-grade", ".6")
+        original = ET.tostring(root)
+        self.assertEqual(self.recover(root, book), [])
+        self.assertEqual(ET.tostring(root), original)
+
+    def test_tuplets_are_not_flattened(self):
+        root, system, book = self.fixture()
+        ET.SubElement(ET.SubElement(system.find("relations"), "relation", source="c2", target="t1"), "chord-tuplet")
+        original = ET.tostring(root)
+        self.assertEqual(self.recover(root, book), [])
+        self.assertEqual(ET.tostring(root), original)
+
+    def test_polyphonic_and_octave_clefs_are_not_flattened(self):
+        for extra in ('<voice id="2"><slots><entry><value chord="c4" status="BEGIN"/></entry></slots></voice>',):
+            root, system, book = self.fixture()
+            system.find("part/measure").append(ET.fromstring(extra))
+            self.assertEqual(self.recover(root, book), [])
+        root, _system, book = self.fixture()
+        ET.SubElement(root.find(".//clef"), "clef-octave-change").text = "-1"
+        self.assertEqual(self.recover(root, book), [])
+
+    def test_no_four_four_reference_means_no_image_inference(self):
+        root, system, book = self.fixture()
+        self.assertIsNone(omr_book._printed_four_four(book, "1", book["placements"][0][0][3][0], 0))
+
+    def test_duration_disagreement_does_not_rewrite_existing_note(self):
+        root, _system, book = self.fixture()
+        root.find(".//note/duration").text = "8"
+        original = ET.tostring(root)
+        self.assertEqual(self.recover(root, book), [])
+        self.assertEqual(ET.tostring(root), original)
+
+    def test_new_time_and_rhythm_have_separate_history(self):
+        root, _system, book = self.fixture()
+        raw = ET.fromstring(ET.tostring(root))
+        self.recover(root, book)
+        root.find(".//time/beats").text = "3"
+        kinds = {i["kind"] for i in omr_validate._corrections(raw, root)["items"]}
+        self.assertEqual(kinds, {"rhythm", "time"})
+
+    def test_a_single_melody_voice_is_normalized_without_changing_pitch(self):
+        root, _system, book = self.fixture()
+        root.find(".//note/voice").text = "2"
+        changes = self.recover(root, book)
+        self.assertEqual(changes[0]["singleMelodyVoiceNormalized"], [0])
+        self.assertEqual({n.findtext("voice") for n in root.findall(".//note")}, {"1"})
+        self.assertEqual(root.findtext(".//pitch/step"), "B")
+
+    def test_polyphony_elsewhere_blocks_melody_normalization(self):
+        root, _system, book = self.fixture()
+        other = ET.SubElement(root.find("part"), "measure", number="2")
+        other.append(ET.fromstring(_note(4, '<voice>1</voice>')))
+        other.append(ET.fromstring(_note(4, '<voice>2</voice>')))
+        book["placements"][0].append(None)
+        original = ET.tostring(root)
+        self.assertEqual(self.recover(root, book), [])
+        self.assertEqual(ET.tostring(root), original)
+
+    def test_missing_meter_requires_image_evidence_not_just_a_full_bar(self):
+        root, _system, book = self.fixture()
+        root.find(".//time/beats").text = "2"
+        original = ET.tostring(root)
+        with patch.object(omr_book, "_printed_four_four", return_value=None):
+            self.assertEqual(self.recover(root, book), [])
+        self.assertEqual(ET.tostring(root), original)
+        # Simulates independently verified SAME-page 4/4 digits.
+        with patch.object(omr_book, "_printed_four_four", return_value=(.97, (20,0,40,80))):
+            changes = self.recover(root, book)
+        self.assertEqual(root.findtext(".//time/beats"), "2")
+        # The existing explicit time must not be overwritten even with evidence.
+        self.assertEqual(changes, [])
+        target = root.find("part/measure")
+        prelude = ET.Element("measure", number="0")
+        prelude.append(ET.fromstring(ET.tostring(target.find("attributes"))))
+        target.find("attributes").remove(target.find("attributes/time"))
+        root.find("part").insert(0, prelude)
+        book["placements"][0].insert(0, None)
+        with patch.object(omr_book, "_printed_four_four", return_value=(.97, (20,0,40,80))):
+            changes = self.recover(root, book)
+        self.assertEqual(changes[0]["meterRecovered"], "4/4")
+        self.assertEqual(target.findtext("attributes/time/beats"), "4")
+
+    def test_new_note_uses_key_signature_without_inventing_accidental(self):
+        root, system, book = self.fixture()
+        ET.SubElement(ET.SubElement(root.find(".//attributes"), "key"), "fifths").text = "1"
+        system.find("head[@id='h2']").set("pitch", "3")
+        self.assertEqual(len(self.recover(root, book)), 1)
+        note = root.findall(".//note")[1]
+        self.assertEqual(note.findtext("pitch/step"), "F")
+        self.assertEqual(note.findtext("pitch/alter"), "1")
+        self.assertIsNone(note.find("accidental"))
+
+    def test_postprocess_removes_phantom_voice_before_recovery_and_keeps_raw(self):
+        root = ET.fromstring(_document(_note(16, '<voice>1</voice>') +
+            '<backup><duration>16</duration></backup><note><rest measure="yes"/><duration>16</duration><voice>2</voice></note>'))
+        def check(score, _folder):
+            self.assertEqual(len(score.findall(".//note")), 1)
+            self.assertIsNone(score.find(".//backup"))
+            return []
+        with tempfile.TemporaryDirectory() as directory:
+            raw = omr_score._write_mxl(root, Path(directory) / "raw.mxl")
+            before = raw.read_bytes()
+            with patch.object(omr_server, "_restore_exported_rhythm", side_effect=check) as recovery:
+                fixed, report = omr_server._postprocess(raw, "chords_lyrics")
+            recovery.assert_called_once()
+            self.assertNotEqual(raw, fixed)
+            self.assertEqual(raw.read_bytes(), before)
+            self.assertEqual(report["placeholder_rests_removed"], 1)
+
+
 class RepeatStartTest(unittest.TestCase):
     MEASURE = """<measure number="1" width="400"><attributes><divisions>12</divisions></attributes>
       <note default-x="90"><pitch><step>F</step><octave>4</octave></pitch><duration>36</duration><voice>1</voice><type>half</type><dot/></note>
@@ -863,6 +1034,190 @@ class NavigationTest(unittest.TestCase):
         self.assertEqual(sounds["2"], [{"dalsegno": "segno"}, {"fine": "yes"}])
         endings = [e.get("number") for e in part.iter("ending")]
         self.assertEqual(endings, ["1,2,3,4,5", "6"])
+
+
+def _omr_book(folder, systems, interline=20):
+    """A one-sheet .omr book: each system is a list of (left, right, special, content)
+    stacks, content being the XML inside that stack's measure."""
+    import io
+
+    from PIL import Image
+
+    body = ""
+    for number, stacks in enumerate(systems):
+        top = 100 + 200 * number
+        lines = "".join(f"<line><point x='0' y='{top + 20 * i}'/></line>" for i in range(5))
+        body += "<system>" + "".join(
+            f"<stack id='{i + 1}' left='{left}' right='{right}'" + (f" special='{special}'" if special else "") + "/>"
+            for i, (left, right, special, _content) in enumerate(stacks)
+        ) + f"<part id='1'><staff id='{number + 1}' left='0' right='{stacks[-1][1]}'><lines>{lines}</lines></staff>" + "".join(
+            f"<measure id='{i + 1}'>{content}</measure>" for i, (_l, _r, _s, content) in enumerate(stacks)
+        ) + "</part></system>"
+    sheet = f"<sheet><scale><interline main='{interline}'/></scale><page>{body}</page></sheet>"
+    picture = io.BytesIO()
+    Image.new("L", (1200, 200 * len(systems) + 200), 255).save(picture, format="PNG")
+    with zipfile.ZipFile(folder / "score.omr", "w") as archive:
+        archive.writestr("book.xml", "<book><sheet number='1'/></book>")
+        archive.writestr("sheet#1/sheet#1.xml", sheet)
+        archive.writestr("sheet#1/BINARY.png", picture.getvalue())
+
+
+def _system_score(*systems):
+    """A one-part score with the given number of measures in each system."""
+    measures, number = [], 0
+    for index, count in enumerate(systems):
+        for position in range(count):
+            number += 1
+            layout = "<print new-system='yes'/>" if index and position == 0 else ""
+            measures.append(f"<measure number='{number}' width='100'>{layout}"
+                            "<note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration></note></measure>")
+    return ET.fromstring(f"<score-partwise><part id='P1'>{''.join(measures)}</part></score-partwise>")
+
+
+class EndOfLineStackTest(unittest.TestCase):
+    """The engine's last stack of a line, when it read no note in it."""
+
+    def load(self, systems, score):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            _omr_book(folder, systems)
+            added = omr_book._restore_dropped_bars(score, folder)
+            return added, omr_book._load_book(score, folder, ocr=False)
+
+    def test_the_time_signature_announced_at_the_end_of_a_line_is_not_a_bar(self):
+        # Three bars and the 2/4 to come: the export has three measures, and the line
+        # is still tied to the page.
+        systems = [[(0, 300, None, ""), (300, 600, None, ""), (600, 900, None, ""), (900, 950, "CAUTIONARY", "<times>7</times>")],
+                   [(0, 450, None, ""), (450, 900, None, "")]]
+        score = _system_score(3, 2)
+        added, book = self.load(systems, score)
+        self.assertEqual(added, [])
+        self.assertEqual(len(score.find("part").findall("measure")), 5)
+        self.assertEqual(book["unmatched"], [])
+        self.assertEqual([entry[2] for entry in book["placements"][0]], [0, 1, 2, 0, 1])
+        self.assertEqual(len(book["placements"][0][0][3][0]["measures"]), 3)
+
+    def test_a_bar_the_engine_took_for_one_comes_back_empty(self):
+        # The last bar of the first line holds a note the engine did not read: it is as
+        # wide as a bar and has no signature in it.
+        systems = [[(0, 300, None, ""), (300, 600, None, ""), (600, 900, "CAUTIONARY", "<right-barline/>")],
+                   [(0, 450, None, ""), (450, 900, None, "")]]
+        score = _system_score(2, 2)
+        added, book = self.load(systems, score)
+        measures = score.find("part").findall("measure")
+        self.assertEqual(added, [{"measureIndex": 2, "measure": "3"}])
+        self.assertEqual([m.get("number") for m in measures], ["1", "2", "3", "4", "5"])
+        self.assertEqual(len(measures[2]), 0)
+        self.assertEqual(measures[2].get("width"), "100")
+        # The line break stays on the bar that began the second line.
+        self.assertIsNotNone(measures[3].find("print"))
+        self.assertEqual(book["unmatched"], [])
+        self.assertEqual([entry[2] for entry in book["placements"][0]], [0, 1, 2, 0, 1])
+
+    def test_a_wide_stack_with_the_key_to_come_is_still_not_a_bar(self):
+        systems = [[(0, 300, None, ""), (300, 600, None, ""), (600, 760, "CAUTIONARY", "<keys>3</keys><times>4</times>")]]
+        score = _system_score(2)
+        added, book = self.load(systems, score)
+        self.assertEqual(added, [])
+        self.assertEqual(book["unmatched"], [])
+
+    def test_numbers_after_a_restored_bar_move_along_as_the_engine_wrote_them(self):
+        part = ET.fromstring("<part><measure number='0'/><measure number='1'/><measure number=''/>"
+                             "<measure number='2'/><measure number='X2'/><measure number='3'/></part>")
+        omr_book._number_inserted(part, 2)
+        self.assertEqual([m.get("number") for m in part], ["0", "1", "2", "3", "X3", "4"])
+
+    def test_a_line_whose_bars_differ_otherwise_is_left_alone(self):
+        # Two bars on the page, one exported: nothing says which, so nothing is added
+        # and the line stays unplaced.
+        systems = [[(0, 300, None, ""), (300, 600, None, ""), (600, 900, "CAUTIONARY", "")]]
+        score = _system_score(1)
+        added, book = self.load(systems, score)
+        self.assertEqual(added, [])
+        self.assertEqual(len(book["unmatched"]), 1)
+
+
+class EndingBracketTest(unittest.TestCase):
+    @staticmethod
+    def score(*bars):
+        """Measures from strings of marks: "|:" ":|" repeat signs, "[1" "[2" a bracket
+        starting, "]" a bracket stopping, "[1=P, HiHat only" a bracket with words."""
+        measures = []
+        for number, bar in enumerate(bars, 1):
+            left = right = ""
+            for mark in filter(None, bar.split(";")):
+                if mark == "|:":
+                    left += "<repeat direction='forward'/>"
+                elif mark == ":|":
+                    right += "<repeat direction='backward'/>"
+                elif mark == "]":
+                    right = "<ending number='1' type='stop'/>" + right
+                else:
+                    value, _, text = mark[1:].partition("=")
+                    left = f"<ending number='{value}' type='start'>{text}</ending>" + left
+            measures.append(f"<measure number='{number}'>"
+                            + (f"<barline location='left'>{left}</barline>" if left else "")
+                            + "<note><rest/><duration>4</duration></note>"
+                            + (f"<barline location='right'>{right}</barline>" if right else "") + "</measure>")
+        return ET.fromstring(f"<score-partwise><part id='P1'>{''.join(measures)}</part></score-partwise>")
+
+    @staticmethod
+    def marks(root):
+        out = []
+        for index, measure in enumerate(root.find("part").findall("measure"), 1):
+            for barline in measure.findall("barline"):
+                for ending in barline.findall("ending"):
+                    if ending.get("type") == "start":
+                        out.append(f"{index}[{ending.get('number')}")
+                for repeat in barline.findall("repeat"):
+                    out.append(f"{index}{'|:' if repeat.get('direction') == 'forward' else ':|'}")
+        return " ".join(out)
+
+    def tidy(self, *bars):
+        root = self.score(*bars)
+        omr_marks._tidy_endings(root)
+        self.assertEqual(omr_marks._tidy_endings(root), [], "a second pass changes nothing")
+        return self.marks(root)
+
+    def test_first_and_second_endings_stay(self):
+        self.assertEqual(self.tidy("|:", "", "[1;];:|", "[2"), "1|: 3[1 3:| 4[2")
+
+    def test_cue_boxes_are_not_endings(self):
+        # "빈들에 마른 풀 같이": boxes above the staff read as first endings, one of
+        # them on the bar the repeat starts at, and none followed by a second ending.
+        self.assertEqual(
+            self.tidy("[1;|:", "", "", ":|", "[1=P, HiHat only;]", "", "[1,,,,2;|:", ":|", "[1", "", "[1"),
+            "1|: 4:| 7|: 8:|",
+        )
+
+    def test_the_bracket_after_a_first_ending_is_the_second(self):
+        self.assertEqual(self.tidy("|:", "[1", "];:|", "[1"), "1|: 2[1 3:| 4[2")
+        # A label misread as "3." and a number list that does not count up.
+        self.assertEqual(self.tidy("[1;];:|", "[3"), "1[1 1:| 2[2")
+        self.assertEqual(self.tidy("[1;];:|", "[2,13"), "1[1 1:| 2[2")
+
+    def test_a_first_ending_sends_the_player_back(self):
+        # The repeat sign at the end of the first ending was not read.
+        self.assertEqual(self.tidy("|:", "[1;]", "[2"), "1|: 2[1 2:| 3[2")
+
+    def test_one_bracket_read_as_two_is_one(self):
+        # "1" for a bar, then "2" up to the repeat sign, then the real second ending.
+        self.assertEqual(self.tidy("|:", "[1;]", "[2", "];:|", "[3"), "1|: 2[1 4:| 5[2")
+        # The same number again three bars on.
+        self.assertEqual(self.tidy("|:", "[1;]", "", "", "[1;]", "[2"), "1|: 2[1 5:| 6[2")
+
+    def test_a_first_ending_alone_stays_only_at_the_end_of_a_repeat(self):
+        self.assertEqual(self.tidy("|:", "", "[1;];:|", ""), "1|: 3[1 3:|")
+        self.assertEqual(self.tidy("|:", "", "[1;]", ""), "1|:")
+        self.assertEqual(self.tidy("", "[2", ""), "2[2")
+
+    def test_two_passes_under_one_bracket_keep_their_numbers(self):
+        self.assertEqual(self.tidy("|:", "[1,2;];:|", "[3"), "1|: 2[1,2 2:| 3[3")
+        self.assertEqual(omr_marks._ending_numbers("1,2,3,4,5"), [1, 2, 3, 4, 5])
+        self.assertEqual(omr_marks._ending_numbers("1,,,,,,2"), [1, 2])
+        self.assertEqual(omr_marks._ending_numbers("2,13"), [2])
+        self.assertEqual(omr_marks._ending_numbers(""), [])
+        self.assertIsNotNone(omr_marks._ENDING_LIST.match("2.3."))
 
 
 class SegnoCodaTest(unittest.TestCase):
@@ -1880,6 +2235,71 @@ class ClientLimitTest(unittest.TestCase):
         self.assertEqual(first, answer)
         self.assertEqual(second[1], 429)
         self.assertEqual(ask.call_count, 1)
+
+
+class ChordAccuracyRegressionTest(unittest.TestCase):
+    def test_extensions_follow_bass_and_are_not_printed_twice(self):
+        chord = omr_rules._parse_chord_text('Bb7(b9)/F', 0)
+        harmony = omr_rules._harmony_element(chord, ET.Element('words'))
+        self.assertEqual([child.tag for child in harmony], ['root', 'kind', 'bass', 'degree'])
+        self.assertEqual(harmony.find('degree').get('print-object'), 'no')
+        self.assertEqual(harmony.findtext('root/root-alter'), '-1')
+
+    def test_malformed_or_contradictory_extensions_are_rejected(self):
+        for value in ('C7(b9', 'C7(b9))', 'C7(b9,#9)', 'C7banana', 'C7add25'):
+            self.assertIsNone(omr_rules._parse_chord_text(value, 0), value)
+
+    def test_parenthesis_sus_and_added_degrees_are_structured(self):
+        for value, kind, degrees in [('D(sus4)', 'suspended-fourth', []),
+                                     ('C7add2', 'dominant', ['2']),
+                                     ('G7sus4', 'suspended-fourth', ['7'])]:
+            harmony = omr_rules._harmony_element(omr_rules._parse_chord_text(value, 0), ET.Element('words'))
+            self.assertEqual(harmony.findtext('kind'), kind)
+            self.assertEqual([d.findtext('degree-value') for d in harmony.findall('degree')], degrees)
+
+    def test_parenthesized_suffixes_survive_ai_tokenization(self):
+        self.assertEqual(omr_ai._chord_list('D(sus4), D'), ['D(sus4)', 'D'])
+        self.assertEqual(omr_ai._chord_list('["F#7(b9,b13)", "(D7)"]'),
+                         ['F#7(b9,b13)', 'D7'])
+
+    def test_altered_extensions_are_not_dropped(self):
+        for text, degree in [('F#7(b9)', (9, -1)), ('Eb7(#11)', (11, 1)),
+                             ('D7(b13)', (13, -1)), ('D#7(b5)', (5, -1))]:
+            chord = omr_rules._parse_chord_text(text, 0)
+            self.assertIsNotNone(chord, text)
+            harmony = omr_rules._harmony_element(chord, ET.Element('words'))
+            self.assertEqual(harmony.findtext('kind'), 'dominant')
+            self.assertEqual((int(harmony.findtext('degree/degree-value')),
+                              int(harmony.findtext('degree/degree-alter'))), degree)
+            self.assertEqual(harmony.findtext('degree/degree-type'), 'alter' if degree[0] == 5 else 'add')
+
+    def test_multiple_degrees_and_slash_bass_survive(self):
+        chord = omr_rules._parse_chord_text('A7(b9,b13)/E', 0)
+        self.assertIsNotNone(chord)
+        harmony = omr_rules._harmony_element(chord, ET.Element('words'))
+        self.assertEqual(harmony.findtext('bass/bass-step'), 'E')
+        self.assertEqual([d.findtext('degree-value') for d in harmony.findall('degree')], ['9', '13'])
+        self.assertEqual(harmony.find('kind').get('text'), '7(b9,b13)')
+
+    def test_partial_parse_never_erases_existing_chords(self):
+        measure = ET.fromstring('<measure>' + _harmony('G') + _sung(10) + '</measure>')
+        before = ET.tostring(measure)
+        self.assertEqual(omr_ai._apply_ai_measure(measure, [{
+            'field': 'chords', 'suggested': 'C nonsense D7', 'confidence': 0.99,
+        }], 0), [])
+        self.assertEqual(ET.tostring(measure), before)
+
+    def test_sus4_is_not_silently_replaced_with_major(self):
+        measure = ET.fromstring('<measure>' + _harmony('D') + _sung(10) + '</measure>')
+        omr_ai._apply_ai_measure(measure, [{
+            'field': 'chords', 'suggested': 'D(sus4)', 'confidence': 0.99,
+        }], 0)
+        self.assertEqual(measure.findtext('harmony/kind'), 'suspended-fourth')
+
+    def test_chord_kind_is_read_when_display_text_is_missing(self):
+        harmony = ET.fromstring('<harmony><root><root-step>C</root-step></root>'
+                                '<kind>minor-seventh</kind></harmony>')
+        self.assertEqual(omr_validate._harmony_label(harmony), 'Cm7')
 
 
 if __name__ == "__main__":

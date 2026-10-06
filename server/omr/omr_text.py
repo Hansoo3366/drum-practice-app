@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from omr_rules import _CHORD_KINDS, _LYRIC_MAX_BANDS, _TESSERACT_ENV, _chord_suffix, _harmony_element, _insert_lyric, _key_alter, _parse_chord_text
+from omr_rules import _LYRIC_MAX_BANDS, _TESSERACT_ENV, _chord_suffix, _harmony_element, _insert_lyric, _key_alter, _parse_chord_text, _set_harmony_suffix
 from omr_book import _align_verses, _chord_name_tops, _ocr_line, _text_bands, _tied_on
 
 
@@ -533,9 +533,7 @@ def _attach_stray_accidentals(parts) -> int:
                 alter = ET.SubElement(root, "root-alter")
                 alter.text = "-1" if sign in "b♭" else "1"
                 if suffix:
-                    kind = harmony.find("kind")
-                    kind.set("text", suffix)
-                    kind.text = _CHORD_KINDS[suffix]
+                    _set_harmony_suffix(harmony, suffix)
                 measure.remove(direction)
                 fixed += 1
     return fixed

@@ -38,7 +38,6 @@ import 'package:page_a_diddle/features/digital_score/domain/staff_note_input.dar
 import 'package:page_a_diddle/features/digital_score/domain/three_staff_arrangement.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_transpose.dart';
-import 'package:page_a_diddle/features/digital_score/presentation/arrangement_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/midi_duration.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/omr_correction_screen.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/omr_review_screen.dart';
@@ -55,23 +54,17 @@ import 'package:page_a_diddle/features/library/presentation/edit_song_sheet.dart
 
 part 'digital_score_screen_widgets.dart';
 
-/// The scores of [plans] (a name and what to write) over the melody of
+/// One instrument's score over the melody of
 /// [source], with [corrections] made to its chords first. A top-level
 /// function, so the isolate is sent these values and nothing of the screen.
-Future<List<({String name, String xml})>> _instrumentScoresInBackground(
+Future<String> _instrumentScoreInBackground(
   String source,
   List<ChordCorrection> corrections,
   Map<AccompanimentInstrument, String> names,
-  List<({String name, AccompanimentSetup setup})> plans,
+  AccompanimentSetup setup,
 ) => Isolate.run(() {
   final corrected = applyChordCorrections(source, corrections);
-  return [
-    for (final plan in plans)
-      (
-        name: plan.name,
-        xml: accompanimentMusicXml(corrected, setup: plan.setup, names: names),
-      ),
-  ];
+  return accompanimentMusicXml(corrected, setup: setup, names: names);
 });
 
 class DigitalScoreScreen extends ConsumerStatefulWidget {
@@ -95,12 +88,11 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   String? _loadedSongId;
   ScoreVersionCatalog _versionCatalog = ScoreVersionCatalog.empty;
   String _activeVersionId = scoreVersionOriginalId;
-  ArrangementProfile _arrangement = ArrangementProfile.off;
-  ArrangementProfile _savedArrangement = ArrangementProfile.off;
   List<ScoreSystemSpan> _systems = const [];
   bool _editing = false;
   bool _playbackEnabled = false;
   bool _saving = false;
+  bool _makingInstrument = false;
   String? _pendingVersionName;
   bool _exporting = false;
   bool _fetchingAi = false;
@@ -170,7 +162,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     final versionDirty = _versionEditors.values.any((editor) => editor.isDirty);
     return originalDirty ||
         versionDirty ||
-        _arrangement != _savedArrangement ||
         // The order panel saves as it goes; bar edits move sections and
         // are saved with the edited score.
         (_editing && !_structure.isSaved);
@@ -195,8 +186,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         _activeVersionId = scoreVersionOriginalId;
       }
       _loadedSongId = data.song.id;
-      _arrangement = data.arrangement;
-      _savedArrangement = data.arrangement;
       _structure.load(
         materializePlaybackSequence(
           data.activeVersionScore ?? data.score,
@@ -254,8 +243,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         identical(made.written, written) &&
         made.editing == editing &&
         made.playbackEnabled == _playbackEnabled &&
-        made.sequence == _sequence &&
-        made.arrangement == _arrangement) {
+        made.sequence == _sequence) {
       return made.score;
     }
     final score = displayedDigitalScore(
@@ -263,14 +251,12 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       editing: editing,
       playbackEnabled: _playbackEnabled,
       sequence: _sequence,
-      arrangement: _arrangement,
     );
     _performance = (
       written: written,
       editing: editing,
       playbackEnabled: _playbackEnabled,
       sequence: _sequence,
-      arrangement: _arrangement,
       score: score,
     );
     return score;
@@ -281,7 +267,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     bool editing,
     bool playbackEnabled,
     PlaybackSequence sequence,
-    ArrangementProfile arrangement,
     MusicScore score,
   })?
   _performance;
@@ -315,7 +300,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
           relativePath: data.song.sourcePath,
           score: editor.score,
           sequence: _sequence,
-          arrangement: _arrangement,
           versionId: _activeVersionId,
         );
       } else {
@@ -323,12 +307,11 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
           songId: data.song.id,
           versionId: _activeVersionId,
           sequence: _sequence,
-          arrangement: _arrangement,
+          arrangement: ArrangementProfile.off,
         );
       }
       editor.markSaved();
       _versionXml.remove(_activeVersionId);
-      _savedArrangement = _arrangement;
       _structure.markSaved();
       if (!mounted) return true;
       setState(() {});
@@ -387,7 +370,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         _activeVersionId = created.id;
         _pendingVersionName = null;
         _editing = false;
-        _savedArrangement = _arrangement;
         _structure.markSaved();
         _selectedAddress = null;
         _showMeasureTools = false;
@@ -421,7 +403,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
             written: written,
             title: data.song.title,
             sequence: _sequence,
-            arrangement: _arrangement,
             kind: kind,
           );
       final savedPath = await FilePicker.saveFile(
@@ -462,19 +443,15 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   /// in playing order when an order is set; MIDI as it plays; PDF as the
   /// viewer engraves it, every part and staff.
   ///
-  /// Null when there is no file to export from (unsaved edits, playback
-  /// accompaniment on, a project export): the model is exported then.
+  /// Null when there is no file to export from (unsaved edits): the model
+  /// is exported then.
   Future<ScoreExport?> _exportFromFile(
     DigitalScoreData data,
     MusicScore written,
     ScoreExportKind kind,
   ) async {
     final editor = _editor;
-    if (editor == null ||
-        kind == ScoreExportKind.project ||
-        _editing ||
-        editor.isDirty ||
-        _arrangement.isNotOff) {
+    if (editor == null || _editing || editor.isDirty) {
       return null;
     }
     final l10n = context.l10n;
@@ -484,6 +461,15 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       source = await _activeSourceXml(data, editor);
     } on Object {
       return null;
+    }
+    if (kind == ScoreExportKind.project) {
+      return const ScoreExportService().encode(
+        written: written,
+        title: data.song.title,
+        sequence: _sequence,
+        kind: kind,
+        sourceXml: source,
+      );
     }
     final title = safeExportFileName(data.song.title);
     if (kind == ScoreExportKind.midi) {
@@ -1059,10 +1045,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
 
   void _endEditing() {
     if (!_editing) return;
-    final hasPendingChanges =
-        _editor?.isDirty == true ||
-        _arrangement != _savedArrangement ||
-        !_structure.isSaved;
+    final hasPendingChanges = _editor?.isDirty == true || !_structure.isSaved;
     setState(() {
       _editing = false;
       if (!hasPendingChanges) _pendingVersionName = null;
@@ -1308,7 +1291,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   }) async {
     final l10n = context.l10n;
     final messenger = ScaffoldMessenger.of(context);
-    if (editor.isDirty || _arrangement != _savedArrangement) {
+    if (editor.isDirty) {
       messenger.showSnackBar(SnackBar(content: Text(l10n.saveBeforeProofread)));
       return;
     }
@@ -1403,16 +1386,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     }
   }
 
-  Future<void> _editArrangement(MusicScore score) async {
-    final next = await showArrangementSheet(
-      context,
-      profile: _arrangement,
-      score: score,
-    );
-    if (!mounted || next == null) return;
-    setState(() => _arrangement = next);
-  }
-
   void _onMenuSelected(
     _ScoreMenuAction action,
     DigitalScoreData data,
@@ -1435,8 +1408,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         unawaited(_transpose(data, score));
       case _ScoreMenuAction.threeStaff:
         unawaited(_makeThreeStaff(data, score));
-      case _ScoreMenuAction.arrangement:
-        _editArrangement(score);
       case _ScoreMenuAction.exportMusicXml:
         _export(data, score, ScoreExportKind.musicXml);
       case _ScoreMenuAction.exportMidi:
@@ -1505,7 +1476,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   /// version itself, and the original, are never changed.
   Future<void> _transpose(DigitalScoreData data, MusicScore score) async {
     final editor = _editor;
-    if (editor == null) return;
+    if (editor == null || _saving) return;
     final l10n = context.l10n;
     final messenger = ScaffoldMessenger.of(context);
     if (_isDirty || _editing) {
@@ -1560,14 +1531,17 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
   /// on screen, and the original, are never changed.
   Future<void> _makeThreeStaff(DigitalScoreData data, MusicScore score) async {
     final editor = _editor;
-    if (editor == null) return;
+    if (editor == null || _saving || _makingInstrument) return;
     final l10n = context.l10n;
     final messenger = ScaffoldMessenger.of(context);
     if (_isDirty || _editing) {
       messenger.showSnackBar(SnackBar(content: Text(l10n.saveBeforeProofread)));
       return;
     }
-    setState(() => _saving = true);
+    setState(() {
+      _makingInstrument = true;
+      _saving = true;
+    });
     try {
       final shown = await _activeSourceXml(data, editor);
       // A score that already has a generated piano part gets a new one, in
@@ -1605,42 +1579,27 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       if (!mounted || request == null) return;
       setState(() => _saving = true);
       final service = ref.read(digitalScoreEditorServiceProvider);
-      final names = {
-        for (final instrument in request.instruments)
-          instrument: accompanimentInstrumentLabel(l10n, instrument),
-      };
-      // One score per instrument, named after it, or one for them all.
-      // Written in the background: each score reads the melody again.
-      final scores = await _instrumentScoresInBackground(
+      final name = accompanimentInstrumentLabel(l10n, request.instrument);
+      final names = {request.instrument: name};
+      final xml = await _instrumentScoreInBackground(
         source,
         request.corrections,
         names,
-        request.separate
-            ? [
-                for (final instrument in request.instruments)
-                  (
-                    name: names[instrument]!,
-                    setup: request.setupFor(instrument),
-                  ),
-              ]
-            : [(name: l10n.threeStaffVersionName, setup: request.setup)],
+        request.setup,
       );
       if (!mounted) return;
-      var catalog = _versionCatalog;
-      for (final made in scores) {
-        catalog = await service.addXmlVersion(
-          songId: data.song.id,
-          musicXml: made.xml,
-          catalog: catalog,
-          name: _uniqueVersionName(made.name, catalog: catalog),
-        );
-        // Same bars: the sections and order carry over.
-        await service.saveSequence(
-          songId: data.song.id,
-          versionId: catalog.activeId,
-          sequence: _sequence,
-        );
-      }
+      final catalog = await service.addXmlVersion(
+        songId: data.song.id,
+        musicXml: xml,
+        catalog: _versionCatalog,
+        name: _uniqueVersionName(name),
+      );
+      // Same bars: the sections and order carry over.
+      await service.saveSequence(
+        songId: data.song.id,
+        versionId: catalog.activeId,
+        sequence: _sequence,
+      );
       if (!mounted) return;
       final opened = catalog.activeId;
       setState(() {
@@ -1651,7 +1610,12 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     } on Object {
       messenger.showSnackBar(SnackBar(content: Text(l10n.saveFailed)));
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) {
+        setState(() {
+          _makingInstrument = false;
+          _saving = false;
+        });
+      }
     }
   }
 
@@ -1783,7 +1747,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       builder: (context) => AlertDialog(
         title: Text(context.l10n.unsavedChangesTitle),
         content: Text(
-          editor.isDirty || _arrangement != _savedArrangement
+          editor.isDirty
               ? context.l10n.unsavedChangesBody
               : context.l10n.sequenceUnsavedBody,
         ),
@@ -2253,14 +2217,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                             title: Text(context.l10n.makeThreeStaff),
                           ),
                         ),
-                        PopupMenuItem(
-                          value: _ScoreMenuAction.arrangement,
-                          child: ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: const Icon(Icons.piano_rounded),
-                            title: Text(context.l10n.scoreArrangement),
-                          ),
-                        ),
                         const PopupMenuDivider(),
                         const PopupMenuItem(
                           value: _ScoreMenuAction.exportPdf,
@@ -2319,9 +2275,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                       playbackSequence: _playbackEnabled
                           ? _sequence
                           : PlaybackSequence.empty,
-                      playbackArrangement: _playbackEnabled
-                          ? _arrangement
-                          : ArrangementProfile.off,
                       tempoPercent: _tempoPercent,
                       semanticsLabel: value.song.title,
                       playback: _playback,
@@ -2398,13 +2351,10 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                             onStop: () => _playback.stop(),
                             onSeek: (positionMs) => _playback.seek(positionMs),
                             onEditSequence: _toggleSequencePanel,
-                            onEditArrangement: () =>
-                                unawaited(_editArrangement(score)),
                             tempoPercent: _tempoPercent,
                             onTempo: (percent) =>
                                 setState(() => _tempoPercent = percent),
                             sequenceSelected: _showSequencePanel,
-                            arrangementSelected: _arrangement.isNotOff,
                           ),
                         );
                       },

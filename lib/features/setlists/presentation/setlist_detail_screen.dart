@@ -287,7 +287,8 @@ class _SetlistSongList extends ConsumerWidget {
           child: child,
         );
       },
-      onReorderItem: (oldIndex, newIndex) {
+      onReorder: (oldIndex, newIndex) {
+        if (newIndex > oldIndex) newIndex -= 1;
         final ordered = [...items];
         final moved = ordered.removeAt(oldIndex);
         ordered.insert(newIndex, moved);

@@ -401,7 +401,19 @@ def _harmony_label(harmony: ET.Element) -> str:
     sign = {"1": "#", "-1": "b"}
     text = (harmony.findtext("root/root-step") or "") + sign.get(harmony.findtext("root/root-alter") or "", "")
     kind = harmony.find("kind")
-    text += (kind.get("text") if kind is not None and kind.get("text") is not None else "")
+    suffix = kind.get("text") if kind is not None else None
+    if not suffix and kind is not None:
+        suffix = {
+            "minor": "m", "dominant": "7", "major-seventh": "maj7",
+            "minor-seventh": "m7", "major-minor": "mM7", "diminished": "dim",
+            "diminished-seventh": "dim7", "augmented": "aug",
+            "augmented-seventh": "aug7", "half-diminished": "m7b5",
+            "suspended-second": "sus2", "suspended-fourth": "sus4",
+            "major-sixth": "6", "minor-sixth": "m6", "dominant-ninth": "9",
+            "major-ninth": "maj9", "minor-ninth": "m9", "dominant-11th": "11",
+            "minor-11th": "m11", "dominant-13th": "13", "power": "5",
+        }.get(kind.text, "")
+    text += suffix or ""
     bass = harmony.findtext("bass/bass-step")
     if bass:
         text += "/" + bass + sign.get(harmony.findtext("bass/bass-alter") or "", "")
@@ -452,6 +464,19 @@ def _corrections(raw: ET.Element, fixed: ET.Element) -> dict:
     after_bars = fixed.find("part").findall("measure") if fixed.find("part") is not None else []
     for index, (before, after) in enumerate(zip(before_bars, after_bars)):
         old, new = _measure_view(before), _measure_view(after)
+        def rhythm(bar):
+            return [{"pitch": [n.findtext("pitch/step"), n.findtext("pitch/alter") or "0", n.findtext("pitch/octave")],
+                     "rest": n.find("rest") is not None, "duration": n.findtext("duration"),
+                     "voice": n.findtext("voice") or "1", "staff": n.findtext("staff") or "1",
+                     "chord": n.find("chord") is not None, "grace": n.find("grace") is not None,
+                     "ties": sorted(t.get("type") or "" for t in n.findall("tie"))}
+                    for n in bar.findall("note")]
+        for kind, snapshots in (("rhythm", [rhythm(before), rhythm(after)]),
+                                ("time", [[ET.tostring(t, encoding="unicode") for t in bar.findall("attributes/time")]
+                                          for bar in (before, after)])):
+            if snapshots[0] != snapshots[1]:
+                items.append({"kind": kind, "measureIndex": index, "measure": after.get("number"),
+                              "before": snapshots[0], "after": snapshots[1]})
         repeats = [
             any(r.get("direction") == "forward" for r in bar.iter("repeat")) for bar in (before, after)
         ]

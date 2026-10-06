@@ -5,11 +5,17 @@ import 'package:page_a_diddle/features/digital_score/domain/arrangement_advice.d
 import 'package:page_a_diddle/features/digital_score/domain/three_staff_arrangement.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_part_sheet.dart';
 
-Widget _app(Widget home) {
+Widget _app(Widget home, {double textScale = 1}) {
   return MaterialApp(
     locale: const Locale('ko'),
     supportedLocales: const [Locale('ko')],
     localizationsDelegates: appLocalizationDelegates,
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: child!,
+    ),
     home: Scaffold(body: home),
   );
 }
@@ -19,8 +25,10 @@ Future<PianoPartRequest? Function()> _open(
   Future<ArrangementAdvice> Function() advise, {
   AccompanimentSetup initial = const AccompanimentSetup(),
   Map<int, SectionRole> roles = const {},
+  Size size = const Size(500, 900),
+  double textScale = 1,
 }) async {
-  await tester.binding.setSurfaceSize(const Size(500, 900));
+  await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   PianoPartRequest? result;
   await tester.pumpWidget(
@@ -38,6 +46,7 @@ Future<PianoPartRequest? Function()> _open(
           child: const Text('open'),
         ),
       ),
+      textScale: textScale,
     ),
   );
   await tester.tap(find.text('open'));
@@ -46,6 +55,34 @@ Future<PianoPartRequest? Function()> _open(
 }
 
 void main() {
+  for (final scale in [1.0, 2.0]) {
+    testWidgets('instrument sheet fits a 320px phone at text scale $scale', (
+      tester,
+    ) async {
+      final result = await _open(
+        tester,
+        () async => throw StateError('offline'),
+        size: const Size(320, 640),
+        textScale: scale,
+      );
+      expect(tester.takeException(), isNull);
+      final make = find.widgetWithText(FilledButton, '만들기');
+      expect(tester.getRect(make).bottom, lessThanOrEqualTo(640));
+      await tester.tap(find.text('Strings'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(
+        tester
+            .widgetList<ChoiceChip>(find.byType(ChoiceChip))
+            .where((chip) => chip.selected),
+        hasLength(1),
+      );
+      await tester.tap(make);
+      await tester.pumpAndSettle();
+      expect(result()?.instrument, AccompanimentInstrument.strings);
+    });
+  }
+
   testWidgets('makes the part in the chosen style without any advice', (
     tester,
   ) async {
@@ -176,10 +213,8 @@ void main() {
       const AccompanimentStyle(pattern: AccompanimentPattern.broken),
     );
     expect(result()?.plan.sections.keys, [8]);
-    expect(result()?.instruments, [
-      AccompanimentInstrument.piano,
-      AccompanimentInstrument.strings,
-    ]);
+    expect(result()?.instrument, AccompanimentInstrument.piano);
+    expect(result()?.setup.instruments, [AccompanimentInstrument.piano]);
   });
 
   testWidgets('instruments are chosen; the piano options go with the piano', (
@@ -190,19 +225,14 @@ void main() {
     expect(find.text('오른손 반주 모양'), findsOneWidget);
     await tester.tap(find.text('Brass'));
     await tester.tap(find.text('Organ'));
-    await tester.tap(find.text('Piano'));
     await tester.pumpAndSettle();
     expect(find.text('오른손 반주 모양'), findsNothing);
     expect(find.text('반주 높이'), findsNothing);
     await tester.tap(find.text('만들기'));
     await tester.pumpAndSettle();
 
-    // In score order, whatever the order of the taps.
-    expect(result()?.instruments, [
-      AccompanimentInstrument.organ,
-      AccompanimentInstrument.brass,
-    ]);
-    expect(result()?.setup.instruments, result()?.instruments);
+    expect(result()?.instrument, AccompanimentInstrument.organ);
+    expect(result()?.setup.instruments, [AccompanimentInstrument.organ]);
   });
 
   testWidgets('sections go with the request; a recommendation may rename '
@@ -234,35 +264,29 @@ void main() {
     expect(result()?.roles, {0: SectionRole.intro, 4: SectionRole.chorus});
     expect(result()?.setup.roles, result()?.roles);
     expect(
-      result()?.setupFor(AccompanimentInstrument.organ).roles,
+      result()?.setup.roles,
       named.map((k, v) => MapEntry(k, k == 4 ? SectionRole.chorus : v)),
     );
   });
 
-  testWidgets('several instruments: one score each, or all in one', (
+  testWidgets('choosing another instrument replaces the selection', (
     tester,
   ) async {
     final result = await _open(tester, () async => throw StateError('no'));
 
-    // With one instrument there is nothing to choose.
     expect(find.text('결과'), findsNothing);
     await tester.tap(find.text('Strings'));
     await tester.pumpAndSettle();
-    expect(find.text('결과'), findsOneWidget);
-    expect(find.text('악기마다 따로'), findsOneWidget);
-    await tester.tap(find.text('한 악보에 모두'));
-    await tester.pumpAndSettle();
+    expect(find.text('결과'), findsNothing);
+    expect(find.text('악기마다 따로'), findsNothing);
+    expect(find.text('한 악보에 모두'), findsNothing);
+    final chips = tester.widgetList<ChoiceChip>(find.byType(ChoiceChip));
+    expect(chips.where((chip) => chip.selected), hasLength(1));
     await tester.tap(find.text('만들기'));
     await tester.pumpAndSettle();
 
-    expect(result()?.separate, isFalse);
-    expect(result()?.instruments, [
-      AccompanimentInstrument.piano,
-      AccompanimentInstrument.strings,
-    ]);
-    expect(result()?.setupFor(AccompanimentInstrument.strings).instruments, [
-      AccompanimentInstrument.strings,
-    ]);
+    expect(result()?.instrument, AccompanimentInstrument.strings);
+    expect(result()?.setup.instruments, [AccompanimentInstrument.strings]);
   });
 
   testWidgets('density and split point go with the request', (tester) async {
@@ -278,7 +302,7 @@ void main() {
     expect(result()?.density, AccompanimentDensity.full);
     expect(result()?.splitPoint, 60);
     expect(result()?.setup.density, AccompanimentDensity.full);
-    expect(result()?.setupFor(AccompanimentInstrument.pad).splitPoint, 60);
+    expect(result()?.setup.splitPoint, 60);
   });
 
   testWidgets('the split point is the piano\'s: gone without the piano', (
@@ -287,14 +311,15 @@ void main() {
     await _open(tester, () async => throw StateError('no'));
 
     expect(find.text('양손 경계'), findsOneWidget);
-    await tester.tap(find.text('Piano'));
     await tester.tap(find.text('Organ'));
     await tester.pumpAndSettle();
     expect(find.text('양손 경계'), findsNothing);
     expect(find.text('화음 두께'), findsOneWidget);
   });
 
-  testWidgets('nothing can be made without an instrument', (tester) async {
+  testWidgets('tapping the selected instrument keeps it selected', (
+    tester,
+  ) async {
     final result = await _open(tester, () async => throw StateError('no'));
 
     await tester.tap(find.text('Piano'));
@@ -302,8 +327,8 @@ void main() {
     await tester.tap(find.text('만들기'));
     await tester.pumpAndSettle();
 
-    expect(result(), isNull);
-    expect(find.text('만들기'), findsOneWidget);
+    expect(result()?.instrument, AccompanimentInstrument.piano);
+    expect(result()?.setup.instruments, [AccompanimentInstrument.piano]);
   });
 
   testWidgets('"one style for all" drops the section styles', (tester) async {

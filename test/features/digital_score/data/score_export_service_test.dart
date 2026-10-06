@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/data/score_export_service.dart';
@@ -123,6 +124,41 @@ void main() {
     () {
       final written = _score();
       expect(identical(composePerformanceScore(written), written), isTrue);
+    },
+  );
+
+  test(
+    'project export preserves the version file and its instrument metadata',
+    () async {
+      const xml = '''<score-partwise version="4.0">
+<part-list><score-part id="P1"><part-name>Strings</part-name>
+<midi-instrument id="I1"><midi-channel>1</midi-channel><midi-program>49</midi-program></midi-instrument>
+</score-part></part-list><part id="P1"><measure number="1">
+<attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>
+<direction><direction-type><dynamics><p/></dynamics></direction-type></direction>
+<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type>
+<notations><articulations><staccato/></articulations></notations>
+<lyric><syllabic>single</syllabic><text>가사</text></lyric></note>
+</measure></part></score-partwise>''';
+      final score = const MusicXmlCodec().decodeXml(xml);
+      final sequence = PlaybackSequence(
+        steps: [PlaybackStep(sectionId: sectionIdAt(0), repeats: 2)],
+      );
+      final exported = await exporter.encode(
+        written: score,
+        title: 'Strings',
+        sequence: sequence,
+        kind: ScoreExportKind.project,
+        sourceXml: xml,
+      );
+      final archive = ZipDecoder().decodeBytes(exported.bytes);
+      expect(
+        utf8.decode(archive.findFile('score.musicxml')!.content as List<int>),
+        xml,
+      );
+      final project = const ScoreProjectCodec().decode(exported.bytes);
+      expect(project.sequence, sequence);
+      expect(project.arrangement.isOff, isTrue);
     },
   );
 }

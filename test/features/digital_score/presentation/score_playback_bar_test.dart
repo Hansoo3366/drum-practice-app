@@ -5,6 +5,66 @@ import 'package:page_a_diddle/features/digital_score/domain/score_playback.dart'
 import 'package:page_a_diddle/features/digital_score/presentation/score_playback_bar.dart';
 
 void main() {
+  testWidgets('large text keeps the seek control and clocks visible', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      _app(
+        const ScorePlaybackBar(
+          state: ScorePlaybackState(
+            ready: true,
+            currentTimeMs: 65000,
+            durationMs: 125000,
+          ),
+          onPlayPause: _noop,
+          onStop: _noop,
+          onSeek: _noopSeek,
+          onEditSequence: _noop,
+          onTempo: _noopTempo,
+        ),
+        textScale: 2,
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.getSize(find.byType(Slider)).width,
+      greaterThanOrEqualTo(100),
+    );
+    for (final label in ['1:05', '2:05', '100%']) {
+      final text = find.text(label);
+      expect(text, findsOneWidget);
+      final rect = tester.getRect(text);
+      expect(rect.left, greaterThanOrEqualTo(0));
+      expect(rect.right, lessThanOrEqualTo(320));
+    }
+  });
+
+  testWidgets('transport and seek remain usable on a 320px phone', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      _app(
+        const ScorePlaybackBar(
+          state: ScorePlaybackState(ready: true, durationMs: 10000),
+          onPlayPause: _noop,
+          onStop: _noop,
+          onSeek: _noopSeek,
+          onEditSequence: _noop,
+          onTempo: _noopTempo,
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.getSize(find.byType(Slider)).width,
+      greaterThanOrEqualTo(100),
+    );
+  });
+
   testWidgets('the practice tempo is a number to press, on a phone too', (
     tester,
   ) async {
@@ -24,7 +84,6 @@ void main() {
               onStop: _noop,
               onSeek: _noopSeek,
               onEditSequence: _noop,
-              onEditArrangement: _noop,
               tempoPercent: percent,
               onTempo: (value) => setState(() {
                 asked.add(value);
@@ -164,10 +223,9 @@ void main() {
     expect(transposeCount, 1);
   });
 
-  testWidgets('exposes accompaniment from the playback bar', (tester) async {
+  testWidgets('playback bar has no accompaniment menu', (tester) async {
     await tester.binding.setSurfaceSize(const Size(720, 180));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    var arrangementCount = 0;
 
     await tester.pumpWidget(
       _app(
@@ -176,13 +234,12 @@ void main() {
           onPlayPause: _noop,
           onStop: _noop,
           onSeek: _noopSeek,
-          onEditArrangement: () => arrangementCount++,
         ),
       ),
     );
 
-    await tester.tap(find.byTooltip('재생 반주'));
-    expect(arrangementCount, 1);
+    expect(find.byTooltip('재생 반주'), findsNothing);
+    expect(find.byIcon(Icons.piano_rounded), findsNothing);
   });
 }
 
@@ -190,11 +247,19 @@ void _noop() {}
 
 void _noopSeek(double _) {}
 
-Widget _app(Widget home) {
+void _noopTempo(int _) {}
+
+Widget _app(Widget home, {double textScale = 1}) {
   return MaterialApp(
     locale: const Locale('ko'),
     supportedLocales: const [Locale('ko')],
     localizationsDelegates: appLocalizationDelegates,
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: child!,
+    ),
     home: Scaffold(body: home),
   );
 }

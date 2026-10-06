@@ -38,7 +38,7 @@ def main():
             ui.adb("shell", "input", "text", step[5:])
         else:
             want, _, nth = step.partition("#")
-            hits = [node for node in ui.nodes() if want in node[0]]
+            hits = ui.matches(want)
             if len(hits) <= int(nth or 0):
                 print(f"[{step}] NOT FOUND")
                 continue

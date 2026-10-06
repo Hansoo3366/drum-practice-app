@@ -45,6 +45,7 @@ class ScoreExportService {
     PlaybackSequence sequence = PlaybackSequence.empty,
     ArrangementProfile arrangement = ArrangementProfile.off,
     required ScoreExportKind kind,
+    String? sourceXml,
   }) async {
     final safeTitle = safeExportFileName(title);
     final performance = kind == ScoreExportKind.project
@@ -75,6 +76,7 @@ class ScoreExportService {
           written: written,
           sequence: sequence,
           arrangement: arrangement,
+          sourceXml: sourceXml,
         ),
         fileName: '$safeTitle.zip',
         extension: 'zip',

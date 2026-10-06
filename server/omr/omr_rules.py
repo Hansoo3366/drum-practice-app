@@ -53,7 +53,9 @@ def _key_alter(step: str, fifths: int) -> int:
 
 def _parse_chord_text(text: str, fifths: int) -> dict | None:
     """Parse OCR text as a chord symbol, or None when it is not one."""
-    raw = text.strip().translate(_QUOTES).replace("♭", "b")
+    raw = "".join(text.strip().translate(_QUOTES).replace("♭", "b").split())
+    if raw.startswith("(") and raw.endswith(")"):
+        raw = raw[1:-1]
     match = re.fullmatch(r"([A-G])(.*?)(?:/([A-G])(#|♯|b)?)?", raw)
     if not match:
         return None
@@ -64,7 +66,7 @@ def _parse_chord_text(text: str, fifths: int) -> dict | None:
             alter, rest = 1, rest[len(glyph):]
             break
     else:
-        if rest.startswith("b") and rest[1:] in _CHORD_KINDS:
+        if rest.startswith("b") and _chord_suffix(rest[1:]) is not None:
             alter, rest = -1, rest[1:]
     suffix = _chord_suffix(rest)
     if suffix is None and alter == 0:
@@ -85,12 +87,76 @@ def _parse_chord_text(text: str, fifths: int) -> dict | None:
 
 
 def _chord_suffix(rest: str) -> str | None:
-    if rest in _CHORD_KINDS:
+    if _suffix_components(rest) is not None:
         return rest
     # A trailing 7 is often read as l, I or |.
     if rest and rest[-1] in "lI|" and rest[:-1] + "7" in _CHORD_KINDS:
         return rest[:-1] + "7"
     return None
+
+
+def _suffix_components(suffix: str) -> tuple[str, list[tuple[int, int, str]]] | None:
+    """Strict, explicit extensions only; never infer a missing chord tone.
+
+    MusicXML degrees add tones absent from the base kind, or alter existing
+    ones. Their display is already included in kind/@text.
+    """
+    if suffix in _CHORD_KINDS:
+        degrees = [(_ADDED_DEGREE[suffix], 0, "add")] if suffix in _ADDED_DEGREE else []
+        if suffix == "7sus4":
+            degrees.append((7, 0, "add"))
+        return suffix, degrees
+    # Parentheses qualify the suffix, not a separator between chords.
+    plain = suffix
+    if "(" in suffix or ")" in suffix:
+        match = re.fullmatch(r"([^()]*?)\(([^()]+)\)", suffix)
+        if match is None:
+            return None
+        plain = "".join(match.groups())
+        if plain in _CHORD_KINDS:
+            return _suffix_components(plain)
+    for base in sorted(_CHORD_KINDS, key=len, reverse=True):
+        if not plain.startswith(base) or base in _ADDED_DEGREE:
+            continue
+        tail = plain[len(base):]
+        if not tail or re.fullmatch(r"(?:add(?:2|4|5|6|9|11|13)|[#b](?:5|9|11|13))(?:,?(?:add(?:2|4|5|6|9|11|13)|[#b](?:5|9|11|13)))*", tail) is None:
+            continue
+        kind = _CHORD_KINDS[base]
+        highest = 13 if "13th" in kind else 11 if "11th" in kind else 9 if "ninth" in kind else 7 if kind in {
+            "dominant", "major-seventh", "minor-seventh", "major-minor",
+            "diminished-seventh", "augmented-seventh", "half-diminished",
+        } else 5
+        degrees = []
+        seen = set()
+        for sign, number in re.findall(r"(add|[#b])(2|4|5|6|9|11|13)", tail):
+            degree = int(number)
+            if degree in seen:
+                return None  # contradictory/duplicate degrees are not a safe repair
+            seen.add(degree)
+            alter = {"#": 1, "b": -1, "add": 0}[sign]
+            kind_of_change = "add" if sign == "add" or degree > highest else "alter"
+            degrees.append((degree, alter, kind_of_change))
+        return base, degrees
+    return None
+
+
+def _set_harmony_suffix(harmony: ET.Element, suffix: str) -> None:
+    spec = _suffix_components(suffix)
+    if spec is None:
+        raise ValueError("unrecognized chord suffix")
+    base, degrees = spec
+    kind = harmony.find("kind")
+    if kind is None:
+        kind = ET.SubElement(harmony, "kind")
+    kind.set("text", suffix)
+    kind.text = _CHORD_KINDS[base]
+    for old in harmony.findall("degree"):
+        harmony.remove(old)
+    for number, alter, degree_type in degrees:
+        degree = ET.SubElement(harmony, "degree", **{"print-object": "no"})
+        ET.SubElement(degree, "degree-value").text = str(number)
+        ET.SubElement(degree, "degree-alter").text = str(alter)
+        ET.SubElement(degree, "degree-type").text = degree_type
 
 
 def _harmony_element(chord: dict, template: ET.Element) -> ET.Element:
@@ -102,18 +168,13 @@ def _harmony_element(chord: dict, template: ET.Element) -> ET.Element:
     ET.SubElement(root, "root-step").text = chord["step"]
     if chord["alter"]:
         ET.SubElement(root, "root-alter").text = str(chord["alter"])
-    kind = ET.SubElement(harmony, "kind", text=chord["suffix"])
-    kind.text = _CHORD_KINDS[chord["suffix"]]
+    ET.SubElement(harmony, "kind")
     if chord["bass"]:
         bass = ET.SubElement(harmony, "bass")
         ET.SubElement(bass, "bass-step").text = chord["bass"]
         if chord["bass_alter"]:
             ET.SubElement(bass, "bass-alter").text = str(chord["bass_alter"])
-    if chord["suffix"] in _ADDED_DEGREE:
-        degree = ET.SubElement(harmony, "degree")
-        ET.SubElement(degree, "degree-value").text = str(_ADDED_DEGREE[chord["suffix"]])
-        ET.SubElement(degree, "degree-alter").text = "0"
-        ET.SubElement(degree, "degree-type").text = "add"
+    _set_harmony_suffix(harmony, chord["suffix"])
     return harmony
 
 
