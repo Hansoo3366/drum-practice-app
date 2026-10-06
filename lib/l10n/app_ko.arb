@@ -187,6 +187,7 @@
   "privacyBodyPiano": "Piano Score는 악보, 버전, 설정을 이 기기에 저장합니다. 계정은 없고, 이름이나 연락처를 받지 않습니다.\n\n‘전자악보로 변환’을 쓰면 고른 사진·PDF가 변환 서버로 전송됩니다(HTTPS). 서버는 악보를 읽고 검수하기 위해 악보 이미지의 일부를 AI 서비스(Google Gemini)에 보냅니다. 서버에 올라간 파일과 결과는 변환이 끝나고 6시간 뒤 지워집니다.\n\n‘AI 추천’을 쓰면 악보의 코드·구간 요약이 같은 서버와 AI 서비스로 전송됩니다.\n\n하루 사용량을 세기 위해 앱을 설치할 때 임의로 만든 식별값이 서버에 등록됩니다. 이 값은 사람을 알아보는 데 쓰이지 않습니다.\n\n클라우드(WebDAV, Google Drive, Dropbox)는 사용자가 연결한 곳과만 파일을 주고받습니다.\n\n광고·분석 도구는 쓰지 않습니다.\n\n문의: support@page-a-diddle.app",
   "termsBodyPiano": "Piano Score를 사용하면 합법적인 개인·전문 음악 연습 목적에 앱을 쓰는 데 동의합니다.\n\n가져오거나 변환하는 악보·파일의 권리는 사용자 책임입니다. 사용 권한이 없는 자료를 가져오거나 변환하지 마세요.\n\n변환과 AI 보정 결과는 틀릴 수 있습니다. 원본과 대조해 확인한 뒤 사용하세요.\n\n앱은 중단 없는 동작을 보장하지 않으며 있는 그대로 제공됩니다.\n\n문의: support@page-a-diddle.app",
   "convertHint": "악보 사진·PDF",
+  "multiPhotoHint": "사진이 여러 장이면 첫 사진을 길게 눌러 함께 고르세요. 한 악보로 묶입니다.",
   "omrProfileTitle": "어떤 악보인가요?",
   "omrProfileStandardHint": "음표만 있는 악보 (피아노 악보)",
   "omrProfileChordsLyricsHint": "코드 이름과 가사가 적힌 악보",

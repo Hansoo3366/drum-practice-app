@@ -1226,6 +1226,12 @@ abstract class AppLocalizations {
   /// **'A photo or PDF of a score'**
   String get convertHint;
 
+  /// How to pick several page photos in the system file picker
+  ///
+  /// In en, this message translates to:
+  /// **'For several pages, long-press the first photo and select them together. They become one score.'**
+  String get multiPhotoHint;
+
   /// omrProfileTitle
   ///
   /// In en, this message translates to:

@@ -611,6 +611,9 @@ class AppLocalizationsKo extends AppLocalizations {
   String get convertHint => '악보 사진·PDF';
 
   @override
+  String get multiPhotoHint => '사진이 여러 장이면 첫 사진을 길게 눌러 함께 고르세요. 한 악보로 묶입니다.';
+
+  @override
   String get omrProfileTitle => '어떤 악보인가요?';
 
   @override

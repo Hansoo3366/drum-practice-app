@@ -399,6 +399,8 @@
   "@termsBodyPiano": {"description": "termsBodyPiano"},
   "convertHint": "A photo or PDF of a score",
   "@convertHint": {"description": "convertHint"},
+  "multiPhotoHint": "For several pages, long-press the first photo and select them together. They become one score.",
+  "@multiPhotoHint": {"description": "How to pick several page photos in the system file picker"},
   "omrProfileTitle": "What kind of score is it?",
   "@omrProfileTitle": {"description": "omrProfileTitle"},
   "omrProfileStandardHint": "Notes only (a piano score)",

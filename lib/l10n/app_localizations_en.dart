@@ -615,6 +615,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get convertHint => 'A photo or PDF of a score';
 
   @override
+  String get multiPhotoHint =>
+      'For several pages, long-press the first photo and select them together. They become one score.';
+
+  @override
   String get omrProfileTitle => 'What kind of score is it?';
 
   @override

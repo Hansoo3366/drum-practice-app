@@ -56,7 +56,8 @@ class LibraryScreen extends ConsumerWidget {
     final action = await showModalBottomSheet<_LibraryAddAction>(
       context: context,
       useSafeArea: true,
-      builder: (context) => Padding(
+      // Large text on a small phone makes the list taller than the sheet.
+      builder: (context) => SingleChildScrollView(
         padding: sheetContentPadding(context, top: 16, bottom: 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -67,7 +68,11 @@ class LibraryScreen extends ConsumerWidget {
               ListTile(
                 leading: const Icon(Icons.document_scanner_outlined),
                 title: Text(context.l10n.convertToDigitalScore),
-                subtitle: Text(context.l10n.convertHint),
+                // The system picker takes several photos only after a long
+                // press on the first one, which nothing on its screen says.
+                subtitle: Text(
+                  '${context.l10n.convertHint}\n${context.l10n.multiPhotoHint}',
+                ),
                 onTap: () => Navigator.pop(context, _LibraryAddAction.convert),
               ),
             if (noteInputEnabled)
@@ -79,6 +84,10 @@ class LibraryScreen extends ConsumerWidget {
             ListTile(
               leading: const Icon(Icons.picture_as_pdf_outlined),
               title: Text(context.l10n.importPdf),
+              // Said once: the piano app says it on the entry above.
+              subtitle: isPianoProduct
+                  ? null
+                  : Text(context.l10n.multiPhotoHint),
               onTap: () => Navigator.pop(context, _LibraryAddAction.pdf),
             ),
             ListTile(
