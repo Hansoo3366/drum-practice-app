@@ -18,10 +18,9 @@ import 'package:page_a_diddle/features/digital_score/domain/score_editor.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/three_staff_arrangement.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
-import 'package:page_a_diddle/features/digital_score/presentation/articulation_icon.dart';
-import 'package:page_a_diddle/features/digital_score/presentation/note_duration_icon.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/omr_original_crop.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_score_view.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/score_editor_chrome.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_editor_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
 
@@ -39,6 +38,7 @@ class ScoreProofreadScreen extends ConsumerStatefulWidget {
     this.partIndex = 0,
     this.measureIndex = 0,
     this.sequence,
+    this.lineStarts,
     super.key,
   });
 
@@ -53,6 +53,11 @@ class ScoreProofreadScreen extends ConsumerStatefulWidget {
   /// removed. Read from storage (the catalog's active version) when null.
   final PlaybackSequence? sequence;
 
+  /// The bars that begin a line where the score was being read, for a
+  /// score that writes no line breaks of its own: the editor then shows the
+  /// same lines, and not a layout of its own.
+  final List<int>? lineStarts;
+
   @override
   ConsumerState<ScoreProofreadScreen> createState() =>
       _ScoreProofreadScreenState();
@@ -64,13 +69,6 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// Characters of score kept for undo (about 16 MB of memory): 100 steps of
   /// a short song, some 15 of a 500 KB score.
   static const _historyCharacters = 8 * 1000 * 1000;
-
-  /// A Verovio page narrower than A4 engraves the bar larger. Phones get the
-  /// narrowest page so notes stay big enough to tap. (Narrower still was
-  /// tried for bars of few notes: the notes grow, but chord names and words
-  /// then run into each other.)
-  static Size _pageSizeFor(double viewportWidth) =>
-      Size((viewportWidth * 1.1).clamp(800, 1100).roundToDouble(), 1400);
 
   static const _editor = XmlMeasureEditor();
   static const _codec = MusicXmlCodec();
@@ -101,8 +99,14 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// The number of the first bar, as printed scores count: a pickup is 0.
   int get _firstBarNumber => xmlFirstBarNumber(_xml);
   int? _noteIndex;
-  late String _preview;
+
+  /// The part as it is engraved: line by line, and the bars of all lines as
+  /// the score view counts them.
+  late List<String> _chunks;
   late MusicScore _previewScore;
+
+  /// The bar being worked on, read on its own.
+  late MusicScore _barScore;
   XmlNoteSummary? _summary;
   late XmlBarInspection _bar;
   late XmlBarSigns _signs;
@@ -119,13 +123,51 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// The verse whose words the lyric tool shows and writes.
   var _verse = 1;
 
-  /// The octave the keyboard palette shows, and whether a key moves on to
-  /// the next note, as when a melody is typed in.
+  /// The octave the keyboard begins at.
   var _keyboardOctave = 4;
-  var _advance = true;
 
-  /// Whether a tap on the staff puts the nearest note on that line.
-  var _pen = false;
+  /// What a tap on the score does: pick a note, rub one out, or write a
+  /// note or rest of the value in hand.
+  var _tool = _Tool.select;
+
+  /// The value the note and rest tools write.
+  var _entryType = 'quarter';
+  var _entryDots = 0;
+
+  /// What stands under the score: nothing, the keyboard, or a palette.
+  var _panel = _Panel.none;
+
+  /// The score view, asked to bring a bar into view.
+  final _scoreKey = GlobalKey<VerovioScoreViewState>();
+
+  /// The bars that begin the lines of the engraving for [xml]: the lines
+  /// the score writes, so the editor shows the page as the score does. A
+  /// score that writes none has the lines the viewer set for it; once bars
+  /// were added or removed, as many bars to a line as it had there.
+  List<int> _lineStartsFor(String xml) {
+    final written = writtenLineStarts(xml, widget.partIndex);
+    if (written.isNotEmpty) return written;
+    final count = measureCountOf(xml, widget.partIndex);
+    final shown = widget.lineStarts ?? const <int>[];
+    final usable =
+        shown.isNotEmpty && shown.first == 0 && shown.every((s) => s < count);
+    if (usable && count == _openedBars.length) return shown;
+    final perLine = usable && shown.length > 1
+        ? (shown.last / (shown.length - 1)).round().clamp(1, 8)
+        : 4;
+    return [for (var start = 0; start < count; start += perLine) start];
+  }
+
+  /// The lines of the part as they were last read: the text each was made
+  /// from, what is engraved for it, and its bars.
+  List<({String text, String shown, List<MusicMeasure> bars})> _lines =
+      const [];
+
+  /// The score the lines of [_lines] were last put together into, and for
+  /// which state.
+  ({String xml, List<String> chunks, MusicScore score})? _shown;
+
+  bool get _writing => _tool == _Tool.note || _tool == _Tool.rest;
 
   /// Bars copied with the bar range tool, to be pasted after another bar.
   MeasureClip? _clip;
@@ -156,7 +198,17 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   String get _xml => _history[_cursor];
   bool get _dirty => _cursor != _savedCursor;
-  MusicMeasure get _previewMeasure => _previewScore.parts.first.measures.first;
+
+  /// The bar being worked on, as decoded.
+  MusicMeasure get _previewMeasure => _barScore.parts.first.measures.first;
+
+  /// Bar [index] as the score view counts its notes: an address on screen
+  /// is an event of this bar.
+  MusicMeasure _shownMeasure(int index) {
+    final bars = _previewScore.parts.first.measures;
+    return bars[index.clamp(0, bars.length - 1)];
+  }
+
   XmlNoteRef? get _ref => _noteIndex == null
       ? null
       : XmlNoteRef(
@@ -219,27 +271,62 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// selected when it still exists.
   void _refresh({int? select}) => _show(_inspect(_xml), select: select);
 
-  /// Reads the current bar of [xml]: one pass over the score. Throws a
-  /// [FormatException] when the bar cannot be read.
-  ({XmlBarInspection bar, MusicScore score, XmlBarSigns signs}) _inspect(
-    String xml,
-  ) {
+  /// Reads [xml] for the screen: the whole part to show, and the current
+  /// bar to work on. Throws a [FormatException] when it cannot be read.
+  _Read _inspect(String xml) {
     final bar = _editor.inspect(xml, widget.partIndex, _measureIndex);
+    var shown = _shown;
+    if (shown == null || !identical(shown.xml, xml)) {
+      // Line by line: a line whose text is as it was keeps what was read
+      // of it, so an edit reads one line and not the score.
+      final starts = _lineStartsFor(xml);
+      final texts = partChunks(xml, widget.partIndex, starts);
+      final lines = <({String text, String shown, List<MusicMeasure> bars})>[];
+      MusicScore? first;
+      for (var i = 0; i < texts.length; i++) {
+        if (i < _lines.length && _lines[i].text == texts[i]) {
+          lines.add(_lines[i]);
+          continue;
+        }
+        final decoded = _codec.decodeXml(texts[i]);
+        if (i == 0) first = decoded;
+        final bars = decoded.parts.first.measures;
+        lines.add((
+          text: texts[i],
+          shown: chunkForDisplay(texts[i], bars, starts[i]),
+          bars: bars,
+        ));
+      }
+      _lines = lines;
+      final base = first ?? shown?.score ?? _codec.decodeXml(texts.first);
+      shown = (
+        xml: xml,
+        chunks: [for (final line in lines) line.shown],
+        score: base.copyWith(
+          parts: [
+            base.parts.first.copyWith(
+              measures: [for (final line in lines) ...line.bars],
+            ),
+          ],
+        ),
+      );
+      _shown = shown;
+    }
     return (
       bar: bar,
-      score: _codec.decodeXml(bar.isolatedXml),
+      barScore: _codec.decodeXml(bar.isolatedXml),
+      score: shown.score,
+      chunks: shown.chunks,
       signs: _editor.barSigns(xml, widget.partIndex, _measureIndex),
     );
   }
 
-  void _show(
-    ({XmlBarInspection bar, MusicScore score, XmlBarSigns signs}) read, {
-    int? select,
-  }) {
+  void _show(_Read read, {int? select}) {
     _bar = read.bar;
     _signs = read.signs;
     _previewScore = read.score;
-    _preview = tagIsolatedNotes(read.bar.isolatedXml, _previewMeasure);
+    _chunks = read.chunks;
+    _barScore = read.barScore;
     final count = _previewMeasure.notes.length;
     final index = select ?? _noteIndex;
     _noteIndex = count == 0 || index == null ? null : index.clamp(0, count - 1);
@@ -274,7 +361,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       final result = edit(_xml, ref);
       final before = _measureIndex;
       _measureIndex = result.selection.measureIndex;
-      final ({XmlBarInspection bar, MusicScore score, XmlBarSigns signs}) read;
+      final _Read read;
       try {
         // The edited bar must still read. A bar edit moves every bar after
         // it, so the whole score is read once more; saving reads it again.
@@ -337,6 +424,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       _measureIndex = edit.measure;
       _refresh(select: edit.before);
     });
+    _reveal();
   }
 
   void _redo() {
@@ -349,15 +437,56 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       _measureIndex = edit.measureAfter;
       _refresh(select: edit.after);
     });
+    _reveal();
   }
 
-  void _goToMeasure(int index) {
+  void _goToMeasure(int index, {int select = 0}) {
     if (index < 0 || index >= _measureCount || index == _measureIndex) return;
     setState(() {
       _measureIndex = index;
       _rangeTo = null;
-      _refresh(select: 0);
+      _refresh(select: select);
     });
+    _reveal();
+  }
+
+  /// Brings the current bar into view once the frame is drawn.
+  void _reveal() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _scoreKey.currentState?.showMeasure(_measureIndex);
+    });
+  }
+
+  /// Works on the bar a tap fell in, without moving the page: the bar is
+  /// under the finger.
+  bool _enterBar(int index) {
+    if (index == _measureIndex) return true;
+    if (index < 0 || index >= _measureCount) return false;
+    try {
+      setState(() {
+        _measureIndex = index;
+        _rangeTo = null;
+        _refresh(select: 0);
+      });
+      return true;
+    } on FormatException catch (error) {
+      _showMessage(error.message);
+      return false;
+    }
+  }
+
+  /// The note before (-1) or after (+1) the picked one, into the next bar
+  /// where the bar ends.
+  void _stepNote(int by) {
+    final index = _noteIndex;
+    final count = _previewMeasure.notes.length;
+    if (index != null && index + by >= 0 && index + by < count) {
+      _selectNote(index + by);
+    } else if (by < 0 && _measureIndex > 0) {
+      _goToMeasure(_measureIndex - 1, select: 1 << 20);
+    } else if (by > 0 && _measureIndex < _measureCount - 1) {
+      _goToMeasure(_measureIndex + 1);
+    }
   }
 
   void _selectNote(int index) {
@@ -371,10 +500,19 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   }
 
   void _onEventTapped(ScoreEventAddress address) {
-    final index = xmlNoteIndexForEvent(_previewMeasure, address.eventIndex);
+    if (!_enterBar(address.measureIndex)) return;
+    final index = xmlNoteIndexForEvent(
+      _shownMeasure(address.measureIndex),
+      address.eventIndex,
+    );
     if (index == null) return;
     if (_spanFrom != null) {
       _finishSpan(index);
+      return;
+    }
+    if (_tool == _Tool.eraser) {
+      _selectNote(index);
+      _erase();
       return;
     }
     if (_ranging && _noteIndex != null) {
@@ -388,6 +526,165 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         _keyboardOctave = pitch.octave.clamp(1, 7);
       }
     }
+  }
+
+  /// The eraser: a note becomes a rest, an ornament note goes. A rest
+  /// stays: taking it out would move every note after it.
+  void _erase() {
+    final summary = _summary;
+    if (summary == null || summary.isRest) return;
+    _apply(summary.isGrace ? _editor.removeNote : _editor.deleteNote);
+  }
+
+  void _setTool(_Tool tool) => setState(() {
+    _tool = tool;
+    if (tool != _Tool.select) {
+      _ranging = false;
+      _rangeTo = null;
+    }
+  });
+
+  /// Gives the picked note the value in hand before it is written, where
+  /// it can take it: a note of a tuplet keeps its own, and a value that does
+  /// not fit the bar leaves the note as long as it is.
+  XmlEditResult _withEntryValue(String xml, XmlNoteRef ref) {
+    final target = _editor.describe(xml, ref);
+    if (target.isGrace ||
+        target.inTuplet ||
+        (target.type == _entryType && target.dots == _entryDots)) {
+      return XmlEditResult(xml, ref);
+    }
+    try {
+      return _editor.setDuration(xml, ref, _entryType, _entryDots);
+    } on FormatException {
+      return XmlEditResult(xml, ref);
+    }
+  }
+
+  /// The dot: the picked note gets one, then two, then none; the value in
+  /// hand follows it.
+  void _dot() {
+    final summary = _summary;
+    if (summary == null || summary.isGrace || summary.inTuplet) {
+      setState(() => _entryDots = (_entryDots + 1) % 3);
+      return;
+    }
+    final type = summary.type;
+    if (type == null) return;
+    final dots = (summary.dots + 1) % 3;
+    setState(() => _entryDots = dots);
+    _apply((xml, ref) => _editor.setDuration(xml, ref, type, dots));
+  }
+
+  /// Opens the note values beside the note tool; the one picked is the
+  /// value the note and rest tools write.
+  Future<void> _pickEntryValue(BuildContext anchor) async {
+    final l10n = context.l10n;
+    final type = await showToolFlyout<String>(
+      anchor,
+      choices: [
+        for (final type in noteDurationTypes)
+          (
+            value: type,
+            tooltip: '${l10n.noteValue} ${_fractionOf[type]}',
+            selected: _entryType == type,
+            child: MusicGlyph(MusicGlyphs.duration(type)),
+          ),
+      ],
+    );
+    if (type == null || !mounted) return;
+    setState(() {
+      _entryType = type;
+      _entryDots = 0;
+      if (!_writing) _tool = _Tool.note;
+    });
+  }
+
+  /// Opens the accidentals beside their tool; the one picked goes on the
+  /// picked notes.
+  Future<void> _pickAccidental(BuildContext anchor) async {
+    final l10n = context.l10n;
+    final picked = _summary?.pitch?.alter;
+    final alter = await showToolFlyout<int>(
+      anchor,
+      choices: [
+        for (final (alter, label) in [
+          (1, l10n.noteSharp),
+          (-1, l10n.noteFlat),
+          (0, l10n.noteNatural),
+          (2, l10n.doubleSharp),
+          (-2, l10n.doubleFlat),
+        ])
+          (
+            value: alter,
+            tooltip: label,
+            selected: picked == alter,
+            child: MusicGlyph(MusicGlyphs.accidental(alter)),
+          ),
+      ],
+    );
+    if (alter == null || !mounted) return;
+    _applyEach(
+      (xml, ref) => _editor.setAlter(xml, ref, alter),
+      where: (note) => !note.isRest && !note.isGrace,
+    );
+  }
+
+  /// Opens the list of palettes; the one picked shows its tools under the
+  /// score.
+  Future<void> _choosePalette() async {
+    final l10n = context.l10n;
+    final palette = await showModalBottomSheet<_Palette>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final palette in _Palette.values)
+                _PaletteTile(
+                  label: _paletteLabel(l10n, palette),
+                  selected: _panel == _Panel.palette && _palette == palette,
+                  onTap: () => Navigator.of(context).pop(palette),
+                  child: switch (palette) {
+                    _Palette.note => const Icon(Icons.edit_note_rounded),
+                    _Palette.length => const MusicGlyph(MusicGlyphs.note8thUp),
+                    _Palette.pitch => const MusicGlyph(
+                      MusicGlyphs.accidentalSharp,
+                    ),
+                    _Palette.marks => const MusicGlyph(
+                      MusicGlyphs.fermataAbove,
+                    ),
+                    _Palette.words => const Text(
+                      'C7',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    _Palette.bar => const MusicGlyph(MusicGlyphs.repeatRight),
+                    _Palette.score => const MusicGlyph(MusicGlyphs.gClef),
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (palette == null || !mounted) return;
+    _openPalette(palette);
+  }
+
+  void _openPalette(_Palette palette) {
+    setState(() {
+      _palette = palette;
+      _panel = _Panel.palette;
+    });
+    // The panel takes room from the score: the bar worked on stays in view.
+    _reveal();
   }
 
   /// Begins drawing [kind] at the picked note, or takes away the one that
@@ -549,35 +846,85 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     final index = _noteIndex;
     final summary = _summary;
     if (index == null || summary == null) return;
-    if (summary.isRest || summary.pitch?.midi != midi) {
+    final value =
+        _tool == _Tool.note &&
+        !summary.isGrace &&
+        !summary.inTuplet &&
+        (summary.type != _entryType || summary.dots != _entryDots);
+    if (value || summary.isRest || summary.pitch?.midi != midi) {
       final before = _xml;
-      _apply((xml, ref) => _editor.enterPitch(xml, ref, midi));
+      _apply((xml, ref) {
+        // With the note tool a key writes a note of the value in hand.
+        final sized = _tool == _Tool.note
+            ? _withEntryValue(xml, ref)
+            : XmlEditResult(xml, ref);
+        final now = _editor.describe(sized.xml, sized.selection);
+        return now.isRest || now.pitch?.midi != midi
+            ? _editor.enterPitch(sized.xml, sized.selection, midi)
+            : sized;
+      });
       if (identical(before, _xml)) return;
     }
-    if (!_advance) return;
-    // On to the next note or rest, not to another note of the same chord.
+    // On to the next note or rest, not to another note of the same chord:
+    // a line is played in one key after the other.
     final notes = _bar.notes;
-    var next = index + 1;
+    var next = (_noteIndex ?? index) + 1;
     while (next < notes.length &&
         (!notes[next].leadsChord || notes[next].isGrace)) {
       next++;
     }
-    if (next < notes.length) _selectNote(next);
+    if (next < notes.length) {
+      _selectNote(next);
+    } else if (_measureIndex < _measureCount - 1) {
+      _goToMeasure(_measureIndex + 1);
+    }
   }
 
-  /// The pen: the note or rest nearest to the tap goes to the line or space
-  /// that was tapped.
+  /// The note and rest tools: the note or rest nearest to the tap becomes a
+  /// note on the line that was tapped, or a rest, of the value in hand.
   void _onNotePlaced(NativeStaffPlace place) {
-    final index = xmlNoteIndexForEvent(_previewMeasure, place.eventIndex);
+    if (!_enterBar(place.measureIndex)) return;
+    final index = xmlNoteIndexForEvent(
+      _shownMeasure(place.measureIndex),
+      place.eventIndex,
+    );
     if (index == null || index >= _bar.notes.length) return;
     _selectNote(index);
-    final pitch = _bar.notes[index].pitch;
-    if (pitch != null &&
-        pitch.step == place.step &&
-        pitch.octave == place.octave) {
-      return;
-    }
-    _apply((xml, ref) => _editor.placeNote(xml, ref, place.step, place.octave));
+    final target = _bar.notes[index];
+    final rest = _tool == _Tool.rest;
+    final value =
+        !target.isGrace &&
+        !target.inTuplet &&
+        (target.type != _entryType || target.dots != _entryDots);
+    final pitch = target.pitch;
+    final moves = rest
+        ? !target.isRest
+        : target.isRest ||
+              pitch == null ||
+              pitch.step != place.step ||
+              pitch.octave != place.octave;
+    if (!value && !moves) return;
+    _apply((xml, ref) {
+      final sized = _withEntryValue(xml, ref);
+      final now = _editor.describe(sized.xml, sized.selection);
+      if (rest) {
+        return now.isRest
+            ? sized
+            : _editor.deleteNote(sized.xml, sized.selection);
+      }
+      final at = now.pitch;
+      return !now.isRest &&
+              at != null &&
+              at.step == place.step &&
+              at.octave == place.octave
+          ? sized
+          : _editor.placeNote(
+              sized.xml,
+              sized.selection,
+              place.step,
+              place.octave,
+            );
+    });
   }
 
   void _showMessage(String message) {
@@ -630,14 +977,14 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     }
   }
 
-  /// Plays the bar from its start, or stops it.
+  /// Plays from the current bar on, or stops.
   Future<void> _playBar() async {
     if (_playback.state.playing) {
       await _playback.stop();
       return;
     }
     await _playback.stop();
-    await _playback.playPause();
+    await _playback.playFromMeasure(_measureIndex);
   }
 
   /// How the bar's notes fall short of or run over its time, in beats of
@@ -824,9 +1171,11 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   Widget _engraving(AppLocalizations l10n, int? selectedEvent) {
     return LayoutBuilder(
       builder: (context, constraints) => VerovioScoreView(
+        key: _scoreKey,
         score: _previewScore,
-        engravingXml: _preview,
-        engravingPageSize: _pageSizeFor(constraints.maxWidth),
+        // Line by line: an edit engraves the line it is in, not the score.
+        engravingChunks: _chunks,
+        playbackXml: () => partAloneXml(_xml, widget.partIndex),
         showZoomControls: false,
         semanticsLabel: l10n.proofreadBar(
           _measureIndex + _firstBarNumber,
@@ -834,30 +1183,195 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         ),
         playback: _playback,
         playbackVisible: true,
-        // With the pen a finger on the staff carries the note, so it must
-        // not move the page as well.
-        inputMode: _pen ? 'place' : 'select',
-        oneFingerPan: !_pen,
-        onEventTapped: _pen ? null : _onEventTapped,
+        // Every edit changes the score: the page stays while the new one
+        // is engraved.
+        keepPagesOnChange: true,
+        // Writing, a finger on the staff carries the note, so it must not
+        // move the page as well; two fingers do.
+        inputMode: _writing ? 'place' : 'select',
+        oneFingerPan: !_writing,
+        onEventTapped: _writing ? null : _onEventTapped,
         onNotePlaced: _onNotePlaced,
+        highlightedMeasureIndex: _measureIndex,
         selectedNoteAddress: selectedEvent == null
             ? null
             : ScoreEventAddress(
                 partIndex: 0,
-                measureIndex: 0,
+                measureIndex: _measureIndex,
                 eventIndex: selectedEvent,
               ),
         alsoSelectedNotes: [
           for (final index in _picked)
             if (index != _noteIndex)
-              if (eventIndexForXmlNote(_previewMeasure, index)
+              if (eventIndexForXmlNote(_shownMeasure(_measureIndex), index)
                   case final event?)
                 ScoreEventAddress(
                   partIndex: 0,
-                  measureIndex: 0,
+                  measureIndex: _measureIndex,
                   eventIndex: event,
                 ),
         ],
+      ),
+    );
+  }
+
+  /// The tools beside the score: what a tap does, the value in hand, and
+  /// the ways to the rest.
+  List<Widget> _railTools(AppLocalizations l10n) {
+    final summary = _summary;
+    final hasNote = summary != null && !summary.isRest && !summary.isGrace;
+    return [
+      EditorToolButton(
+        tooltip: l10n.toolSelect,
+        selected: _tool == _Tool.select,
+        onPressed: () => _setTool(_Tool.select),
+        child: const Icon(Icons.highlight_alt_rounded),
+      ),
+      EditorToolButton(
+        tooltip: l10n.toolEraser,
+        selected: _tool == _Tool.eraser,
+        onPressed: () => _setTool(_Tool.eraser),
+        child: const EraserIcon(),
+      ),
+      // The note tool shows the value it writes; in use, a tap on it
+      // opens the values.
+      Builder(
+        builder: (context) => EditorToolButton(
+          tooltip: l10n.toolNote,
+          selected: _tool == _Tool.note,
+          hasMore: true,
+          onPressed: () => _tool == _Tool.note
+              ? unawaited(_pickEntryValue(context))
+              : _setTool(_Tool.note),
+          onLongPress: () => unawaited(_pickEntryValue(context)),
+          child: MusicGlyph(MusicGlyphs.duration(_entryType)),
+        ),
+      ),
+      EditorToolButton(
+        tooltip: l10n.toolRest,
+        selected: _tool == _Tool.rest,
+        onPressed: () => _setTool(_Tool.rest),
+        child: MusicGlyph(MusicGlyphs.duration(_entryType, rest: true)),
+      ),
+      EditorToolButton(
+        tooltip: l10n.dottedDuration,
+        selected: _writing ? _entryDots > 0 : (summary?.dots ?? 0) > 0,
+        onPressed: _dot,
+        child: const MusicGlyph(MusicGlyphs.augmentationDot),
+      ),
+      Builder(
+        builder: (context) => EditorToolButton(
+          tooltip: l10n.toolAccidental,
+          hasMore: true,
+          onPressed: hasNote ? () => unawaited(_pickAccidental(context)) : null,
+          child: const MusicGlyph(MusicGlyphs.accidentalSharp),
+        ),
+      ),
+      const EditorRailDivider(),
+      EditorToolButton(
+        tooltip: l10n.paletteChooser,
+        selected: _panel == _Panel.palette,
+        hasMore: true,
+        onPressed: () => unawaited(_choosePalette()),
+        child: const Icon(Icons.apps_rounded),
+      ),
+      EditorToolButton(
+        tooltip: l10n.toolsKeys,
+        selected: _panel == _Panel.keys,
+        onPressed: () {
+          setState(
+            () => _panel = _panel == _Panel.keys ? _Panel.none : _Panel.keys,
+          );
+          _reveal();
+        },
+        child: const Icon(Icons.piano_rounded),
+      ),
+    ];
+  }
+
+  /// The bar under the score: playing, the bar, and the cursor.
+  Widget _transport(AppLocalizations l10n) {
+    final index = _noteIndex;
+    final count = _previewMeasure.notes.length;
+    // Seven keys and the bar: on a small phone they stand closer.
+    final compact = MediaQuery.sizeOf(context).width < 400;
+    return ColoredBox(
+      color: AppColors.canvas,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Row(
+          children: [
+            TransportButton(
+              compact: compact,
+              tooltip: l10n.toStart,
+              onPressed: _measureIndex > 0 ? () => _goToMeasure(0) : null,
+              child: const Icon(Icons.skip_previous_rounded),
+            ),
+            // The score from this bar on, as it sounds now: a correction is
+            // checked by ear as well as against the original.
+            TransportButton(
+              compact: compact,
+              tooltip: _barPlaying ? l10n.stop : l10n.playBar,
+              selected: _barPlaying,
+              onPressed: _playBar,
+              child: Icon(
+                _barPlaying
+                    ? Icons.stop_circle_outlined
+                    : Icons.play_circle_fill_rounded,
+              ),
+            ),
+            const Spacer(),
+            TransportButton(
+              compact: compact,
+              tooltip: l10n.previousBar,
+              onPressed: _measureIndex > 0
+                  ? () => _goToMeasure(_measureIndex - 1)
+                  : null,
+              child: const Icon(Icons.chevron_left_rounded),
+            ),
+            TransportButton(
+              compact: compact,
+              tooltip: l10n.goToBar,
+              onPressed: _measureCount > 1 ? () => unawaited(_askBar()) : null,
+              child: Text(
+                l10n.proofreadBar(
+                  _measureIndex + _firstBarNumber,
+                  _measureCount - 1 + _firstBarNumber,
+                ),
+                textScaler: MediaQuery.textScalerOf(
+                  context,
+                ).clamp(maxScaleFactor: 1.3),
+              ),
+            ),
+            TransportButton(
+              compact: compact,
+              tooltip: l10n.nextBar,
+              onPressed: _measureIndex < _measureCount - 1
+                  ? () => _goToMeasure(_measureIndex + 1)
+                  : null,
+              child: const Icon(Icons.chevron_right_rounded),
+            ),
+            const Spacer(),
+            TransportButton(
+              compact: compact,
+              tooltip: l10n.previousNote,
+              onPressed: (index ?? 0) > 0 || _measureIndex > 0
+                  ? () => _stepNote(-1)
+                  : null,
+              child: const Icon(Icons.arrow_back_rounded),
+            ),
+            TransportButton(
+              compact: compact,
+              tooltip: l10n.nextNote,
+              onPressed:
+                  (index != null && index < count - 1) ||
+                      _measureIndex < _measureCount - 1
+                  ? () => _stepNote(1)
+                  : null,
+              child: const Icon(Icons.arrow_forward_rounded),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -868,7 +1382,12 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     final summary = _summary;
     final selectedEvent = _noteIndex == null
         ? null
-        : eventIndexForXmlNote(_previewMeasure, _noteIndex!);
+        : eventIndexForXmlNote(_shownMeasure(_measureIndex), _noteIndex!);
+    final hint = switch (_tool) {
+      _Tool.note || _Tool.rest => l10n.penHint,
+      _Tool.eraser => l10n.eraserHint,
+      _Tool.select => _ranging ? l10n.rangeHint : null,
+    };
     return PopScope(
       canPop: !_dirty,
       onPopInvokedWithResult: (didPop, _) {
@@ -877,8 +1396,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       child: Scaffold(
         backgroundColor: AppColors.canvas,
         appBar: AppBar(
-          // No gap before the title: on a small phone the three buttons and
-          // Save would push the screen's name out.
+          // No gap before the title: on a small phone the buttons and Save
+          // would push the screen's name out.
           titleSpacing: 0,
           title: Text(l10n.proofread),
           actions: [
@@ -900,8 +1419,59 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
               onPressed: _cursor < _history.length - 1 ? _redo : null,
               icon: const Icon(Icons.redo_rounded),
             ),
+            // What is done to bars as a whole, by name.
+            _MenuIconButton(
+              tooltip: l10n.barMenuTooltip,
+              icon: Icons.more_vert_rounded,
+              items: [
+                _MenuItem(
+                  l10n.insertMeasureAfter,
+                  _insertBar,
+                  icon: Icons.add_box_outlined,
+                ),
+                _MenuItem(
+                  l10n.duplicateMeasure,
+                  _duplicateBar,
+                  icon: Icons.copy_all_rounded,
+                ),
+                _MenuItem(
+                  l10n.moveMeasureEarlier,
+                  _measureIndex > 0 ? () => _moveBar(-1) : null,
+                  icon: Icons.keyboard_double_arrow_left,
+                ),
+                _MenuItem(
+                  l10n.moveMeasureLater,
+                  _measureIndex < _measureCount - 1 ? () => _moveBar(1) : null,
+                  icon: Icons.keyboard_double_arrow_right,
+                ),
+                _MenuItem(
+                  l10n.barTexts,
+                  summary != null && _hasTexts
+                      ? () => unawaited(_editTexts())
+                      : null,
+                  icon: Icons.text_fields_rounded,
+                ),
+                _MenuItem(
+                  l10n.deleteMeasure,
+                  _measureCount > 1 ? _deleteBar : null,
+                  icon: Icons.delete_outline_rounded,
+                ),
+                _MenuItem(
+                  l10n.barRange,
+                  () => unawaited(_askBarRange()),
+                  icon: Icons.select_all_rounded,
+                ),
+                _MenuItem(
+                  _clip == null
+                      ? l10n.pasteBarsNone
+                      : l10n.pasteBars(_clip!.length),
+                  _clip == null ? null : _pasteBars,
+                  icon: Icons.content_paste_rounded,
+                ),
+              ],
+            ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
+              padding: const EdgeInsets.only(left: 2, right: 8),
               child: FilledButton(
                 onPressed: _dirty && !_saving ? () => unawaited(_save()) : null,
                 child: Text(l10n.save),
@@ -916,8 +1486,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, area) {
-                    // Beside the engraving where there is width for both,
-                    // above it on a phone held upright.
+                    // The original beside the score where there is width
+                    // for both, above it on a phone held upright.
                     final beside = area.maxWidth >= 700;
                     return Flex(
                       direction: beside ? Axis.horizontal : Axis.vertical,
@@ -925,12 +1495,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                       children: [
                         if (_showOriginal && _places != null)
                           SizedBox(
-                            width: beside ? area.maxWidth * 0.36 : null,
+                            width: beside ? area.maxWidth * 0.32 : null,
                             height: beside
                                 ? null
-                                : (area.maxHeight * 0.3).clamp(90.0, 190.0),
-                            // Two pictures of one bar: each says which it
-                            // is.
+                                : (area.maxHeight * 0.24).clamp(84.0, 170.0),
                             child: _Captioned(
                               caption: l10n.scoreOriginal,
                               child: _OriginalStrip(
@@ -946,15 +1514,27 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                         // make the engraving start over.
                         Expanded(
                           key: const ValueKey('engraving'),
-                          child: _Captioned(
-                            caption: _pen
-                                ? l10n.penHint
-                                : _ranging
-                                ? l10n.rangeHint
-                                : _showOriginal && _places != null
-                                ? '${l10n.proofreadNow} · ${l10n.proofreadPick}'
-                                : l10n.proofreadPick,
-                            child: _engraving(l10n, selectedEvent),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              EditorRail(children: _railTools(l10n)),
+                              Expanded(
+                                child: Stack(
+                                  children: [
+                                    Positioned.fill(
+                                      child: _engraving(l10n, selectedEvent),
+                                    ),
+                                    if (hint != null)
+                                      Positioned(
+                                        left: 8,
+                                        top: 6,
+                                        right: 8,
+                                        child: _HintChip(hint),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -974,7 +1554,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 ),
               if (_lengthOff case final off?)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
                   child: Row(
                     children: [
                       const Icon(
@@ -997,126 +1577,28 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                   ),
                 ),
               const Divider(height: 1, color: AppColors.border),
-              // Every tool has a group, and every group a name: a first
-              // look at the screen says what there is to do (the bar, the
-              // note, its words, its length, its pitch) before a single
-              // sign has to be understood.
-              _Toolbar(
-                children: [
-                  _ToolGroup(
-                    label: l10n.barMenu,
-                    children: [
-                      _ToolButton(
-                        tooltip: l10n.previousBar,
-                        onPressed: _measureIndex > 0
-                            ? () => _goToMeasure(_measureIndex - 1)
-                            : null,
-                        child: const Icon(Icons.chevron_left_rounded),
-                      ),
-                      _ToolButton(
-                        tooltip: l10n.goToBar,
-                        wide: true,
-                        onPressed: _measureCount > 1
-                            ? () => unawaited(_askBar())
-                            : null,
-                        child: Text(
-                          l10n.proofreadBar(
-                            _measureIndex + _firstBarNumber,
-                            _measureCount - 1 + _firstBarNumber,
-                          ),
-                        ),
-                      ),
-                      _ToolButton(
-                        tooltip: l10n.nextBar,
-                        onPressed: _measureIndex < _measureCount - 1
-                            ? () => _goToMeasure(_measureIndex + 1)
-                            : null,
-                        child: const Icon(Icons.chevron_right_rounded),
-                      ),
-                      _MenuButton(
-                        tooltip: l10n.barMenuTooltip,
-                        label: l10n.barEdit,
-                        items: [
-                          _MenuItem(
-                            l10n.insertMeasureAfter,
-                            _insertBar,
-                            icon: Icons.add_box_outlined,
-                          ),
-                          _MenuItem(
-                            l10n.duplicateMeasure,
-                            _duplicateBar,
-                            icon: Icons.copy_all_rounded,
-                          ),
-                          _MenuItem(
-                            l10n.moveMeasureEarlier,
-                            _measureIndex > 0 ? () => _moveBar(-1) : null,
-                            icon: Icons.keyboard_double_arrow_left,
-                          ),
-                          _MenuItem(
-                            l10n.moveMeasureLater,
-                            _measureIndex < _measureCount - 1
-                                ? () => _moveBar(1)
-                                : null,
-                            icon: Icons.keyboard_double_arrow_right,
-                          ),
-                          _MenuItem(
-                            l10n.barTexts,
-                            summary != null && _hasTexts
-                                ? () => unawaited(_editTexts())
-                                : null,
-                            icon: Icons.text_fields_rounded,
-                          ),
-                          _MenuItem(
-                            l10n.deleteMeasure,
-                            _measureCount > 1 ? _deleteBar : null,
-                            icon: Icons.delete_outline_rounded,
-                          ),
-                          _MenuItem(
-                            l10n.barRange,
-                            () => unawaited(_askBarRange()),
-                            icon: Icons.select_all_rounded,
-                          ),
-                          _MenuItem(
-                            _clip == null
-                                ? l10n.pasteBarsNone
-                                : l10n.pasteBars(_clip!.length),
-                            _clip == null ? null : _pasteBars,
-                            icon: Icons.content_paste_rounded,
-                          ),
-                        ],
-                      ),
-                      // The bar as it sounds now: a correction is checked
-                      // by ear as well as against the original.
-                      _ToolButton(
-                        tooltip: _barPlaying ? l10n.stop : l10n.playBar,
-                        selected: _barPlaying,
-                        onPressed: _playBar,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              _barPlaying
-                                  ? Icons.stop_rounded
-                                  : Icons.play_arrow_rounded,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 2),
-                            Text(_barPlaying ? l10n.stop : l10n.listen),
-                          ],
-                        ),
-                      ),
-                    ],
+              // Under the score: the tools of one palette, or the keyboard.
+              if (_panel == _Panel.palette)
+                _PalettePanel(
+                  title: _paletteLabel(l10n, _palette),
+                  close: l10n.close,
+                  onClose: () => setState(() => _panel = _Panel.none),
+                  children: _paletteTools(l10n),
+                ),
+              if (_panel == _Panel.keys)
+                PianoKeyboard(
+                  octave: _keyboardOctave,
+                  enabled: summary != null && !summary.isGrace,
+                  onKey: _enterKey,
+                  onOctave: (by) => setState(
+                    () => _keyboardOctave = (_keyboardOctave + by).clamp(1, 7),
                   ),
-                ],
-              ),
-              // The other tools come in palettes, one open at a time, so
-              // the score keeps the screen.
-              _PaletteTabs(
-                active: _palette,
-                labelOf: (palette) => _paletteLabel(l10n, palette),
-                onPick: (palette) => setState(() => _palette = palette),
-              ),
-              _PaletteRow(children: _paletteTools(l10n)),
+                  lowerTooltip: l10n.keyboardLower,
+                  higherTooltip: l10n.keyboardHigher,
+                ),
+              if (_panel != _Panel.none)
+                const Divider(height: 1, color: AppColors.border),
+              _transport(l10n),
             ],
           ),
         ),
@@ -1131,7 +1613,6 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         _Palette.pitch => l10n.toolsPitch,
         _Palette.marks => l10n.toolsMarks,
         _Palette.words => l10n.toolsWords,
-        _Palette.keys => l10n.toolsKeys,
         _Palette.bar => l10n.toolsBarSigns,
         _Palette.score => l10n.toolsScore,
       };
@@ -1160,46 +1641,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             onPressed: () => setState(() {
               _ranging = !_ranging;
               _rangeTo = null;
-              // The pen takes every tap on the staff for itself.
-              if (_ranging) _pen = false;
+              // A run of notes is picked with the select tool.
+              if (_ranging) _tool = _Tool.select;
             }),
             child: Text(l10n.rangeTool),
-          ),
-          _ToolButton(
-            tooltip: l10n.penTool,
-            selected: _pen,
-            onPressed: () => setState(() {
-              _pen = !_pen;
-              if (_pen) {
-                _ranging = false;
-                _rangeTo = null;
-              }
-            }),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.edit_outlined, size: 18),
-                const SizedBox(width: 2),
-                Text(l10n.penTool),
-              ],
-            ),
-          ),
-          const _ToolGap(),
-          _ToolButton(
-            tooltip: l10n.previousNote,
-            onPressed: (_noteIndex ?? 0) > 0
-                ? () => _selectNote(_noteIndex! - 1)
-                : null,
-            child: const Icon(Icons.chevron_left_rounded),
-          ),
-          _ToolButton(
-            tooltip: l10n.nextNote,
-            onPressed:
-                _noteIndex != null &&
-                    _noteIndex! < _previewMeasure.notes.length - 1
-                ? () => _selectNote(_noteIndex! + 1)
-                : null,
-            child: const Icon(Icons.chevron_right_rounded),
           ),
           const _ToolGap(),
           // One place for the two opposite things: a note becomes a rest,
@@ -1302,7 +1747,6 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
           ),
         ];
       case _Palette.length:
-        final dots = summary?.dots ?? 0;
         return [
           for (final type in noteDurationTypes)
             _ToolButton(
@@ -1313,36 +1757,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                       (xml, ref) => _editor.setDuration(xml, ref, type, 0),
                     )
                   : null,
-              child: NoteDurationIcon(
-                durationType: type,
-                rest: summary?.isRest ?? false,
-                color: canRetime ? AppColors.ink : AppColors.border,
+              child: MusicGlyph(
+                MusicGlyphs.duration(type, rest: summary?.isRest ?? false),
               ),
             ),
-          // One dot, two dots, none again.
-          _ToolButton(
-            tooltip: l10n.dottedDuration,
-            selected: dots > 0,
-            onPressed: canRetime && summary.type != null
-                ? () => _apply(
-                    (xml, ref) => _editor.setDuration(
-                      xml,
-                      ref,
-                      summary.type!,
-                      (dots + 1) % 3,
-                    ),
-                  )
-                : null,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (var i = 0; i < (dots == 2 ? 2 : 1); i++) ...[
-                  if (i > 0) const SizedBox(width: 3),
-                  const Icon(Icons.circle, size: 8),
-                ],
-              ],
-            ),
-          ),
           const _ToolGap(),
           _MenuButton(
             tooltip: l10n.tuplet,
@@ -1415,12 +1833,12 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             child: const _OctaveLabel(up: false),
           ),
           const _ToolGap(),
-          for (final (alter, glyph, label) in [
-            (1, '♯', l10n.noteSharp),
-            (-1, '♭', l10n.noteFlat),
-            (0, '♮', l10n.noteNatural),
-            (2, '♯♯', l10n.doubleSharp),
-            (-2, '♭♭', l10n.doubleFlat),
+          for (final (alter, label) in [
+            (1, l10n.noteSharp),
+            (-1, l10n.noteFlat),
+            (0, l10n.noteNatural),
+            (2, l10n.doubleSharp),
+            (-2, l10n.doubleFlat),
           ])
             _ToolButton(
               tooltip: label,
@@ -1431,20 +1849,21 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                       where: (note) => !note.isRest && !note.isGrace,
                     )
                   : null,
-              child: Text(
-                glyph,
-                style: const TextStyle(fontSize: 22, height: 1),
-              ),
+              child: MusicGlyph(MusicGlyphs.accidental(alter)),
             ),
         ];
       case _Palette.marks:
         return [
-          for (final (name, label) in [
-            ('staccato', l10n.staccato),
-            ('staccatissimo', l10n.staccatissimo),
-            ('tenuto', l10n.tenuto),
-            ('accent', l10n.accent),
-            ('strong-accent', l10n.marcato),
+          for (final (name, label, glyph) in [
+            ('staccato', l10n.staccato, MusicGlyphs.articStaccatoAbove),
+            (
+              'staccatissimo',
+              l10n.staccatissimo,
+              MusicGlyphs.articStaccatissimoAbove,
+            ),
+            ('tenuto', l10n.tenuto, MusicGlyphs.articTenutoAbove),
+            ('accent', l10n.accent, MusicGlyphs.articAccentAbove),
+            ('strong-accent', l10n.marcato, MusicGlyphs.articMarcatoAbove),
           ])
             _ToolButton(
               tooltip: label,
@@ -1452,10 +1871,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
               onPressed: hasNote
                   ? () => _toggleMark(name, restsToo: false)
                   : null,
-              child: ArticulationIcon(
-                name: name,
-                color: hasNote ? AppColors.ink : AppColors.border,
-              ),
+              child: MusicGlyph(glyph),
             ),
           _ToolButton(
             tooltip: l10n.fermata,
@@ -1463,10 +1879,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             onPressed: hasEvent
                 ? () => _toggleMark('fermata', restsToo: true)
                 : null,
-            child: ArticulationIcon(
-              name: 'fermata',
-              color: hasEvent ? AppColors.ink : AppColors.border,
-            ),
+            child: const MusicGlyph(MusicGlyphs.fermataAbove),
           ),
           _ToolButton(
             tooltip: l10n.breathMark,
@@ -1474,7 +1887,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             onPressed: hasNote
                 ? () => _toggleMark('breath-mark', restsToo: false)
                 : null,
-            child: Text(l10n.breathMark),
+            child: const MusicGlyph(MusicGlyphs.breathMarkComma),
           ),
           const _ToolGap(),
           _MenuButton(
@@ -1589,28 +2002,6 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             ],
           ),
         ];
-      case _Palette.keys:
-        return [
-          _KeyboardBar(
-            octave: _keyboardOctave,
-            enabled: hasEvent,
-            onKey: _enterKey,
-            lower: l10n.keyboardLower,
-            higher: l10n.keyboardHigher,
-            onLower: _keyboardOctave > 1
-                ? () => setState(() => _keyboardOctave--)
-                : null,
-            onHigher: _keyboardOctave < 7
-                ? () => setState(() => _keyboardOctave++)
-                : null,
-          ),
-          _ToolButton(
-            tooltip: l10n.keyAdvance,
-            selected: _advance,
-            onPressed: () => setState(() => _advance = !_advance),
-            child: Text(l10n.keyAdvance),
-          ),
-        ];
       case _Palette.bar:
         final signs = _signs;
         final attributes = _previewMeasure.attributes;
@@ -1663,7 +2054,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 start: true,
               ),
             ),
-            child: const Text('|:'),
+            child: const MusicGlyph(MusicGlyphs.repeatLeft),
           ),
           _ToolButton(
             tooltip: l10n.repeatEnd,
@@ -1676,7 +2067,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 start: false,
               ),
             ),
-            child: const Text(':|'),
+            child: const MusicGlyph(MusicGlyphs.repeatRight),
           ),
           _MenuButton(
             tooltip: l10n.barlineTool,
@@ -1977,7 +2368,205 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 }
 
 /// The palettes of tools under the bar.
-enum _Palette { note, length, pitch, keys, marks, words, bar, score }
+enum _Palette { note, length, pitch, marks, words, bar, score }
+
+/// What a tap on the score does.
+enum _Tool { select, eraser, note, rest }
+
+/// What stands under the score.
+enum _Panel { none, palette, keys }
+
+/// What [_ScoreProofreadScreenState._inspect] reads of a state of the score.
+typedef _Read = ({
+  XmlBarInspection bar,
+  MusicScore barScore,
+  MusicScore score,
+  List<String> chunks,
+  XmlBarSigns signs,
+});
+
+/// A palette to choose, in the list of palettes.
+class _PaletteTile extends StatelessWidget {
+  const _PaletteTile({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    required this.child,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? AppColors.accent : AppColors.ink;
+    return Material(
+      color: selected
+          ? AppColors.accent.withValues(alpha: 0.1)
+          : AppColors.surfaceSoft,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          width: 104,
+          height: 84,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                height: 34,
+                child: Center(
+                  child: IconTheme.merge(
+                    data: IconThemeData(color: color, size: 28),
+                    child: DefaultTextStyle.merge(
+                      style: TextStyle(color: color),
+                      child: child,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The tools of the open palette under the score, with the palette's name
+/// and a way to put them away.
+class _PalettePanel extends StatelessWidget {
+  const _PalettePanel({
+    required this.title,
+    required this.close,
+    required this.onClose,
+    required this.children,
+  });
+
+  final String title;
+  final String close;
+  final VoidCallback onClose;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: AppColors.canvas,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 16, right: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.mutedInk,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: close,
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onClose,
+                  icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                ),
+              ],
+            ),
+          ),
+          _PaletteRow(children: children),
+        ],
+      ),
+    );
+  }
+}
+
+/// A word over the score on what a tap does now.
+class _HintChip extends StatelessWidget {
+  const _HintChip(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: AppColors.ink.withValues(alpha: 0.78),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            child: Text(
+              text,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// An icon that opens a list of things to do, by name.
+class _MenuIconButton extends StatelessWidget {
+  const _MenuIconButton({
+    required this.tooltip,
+    required this.icon,
+    required this.items,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final List<_MenuItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<int>(
+      tooltip: tooltip,
+      icon: Icon(icon),
+      onSelected: (index) => items[index].onPressed?.call(),
+      itemBuilder: (context) => [
+        for (var i = 0; i < items.length; i++)
+          PopupMenuItem(
+            value: i,
+            enabled: items[i].onPressed != null,
+            child: Row(
+              children: [
+                Icon(items[i].icon, size: 20),
+                const SizedBox(width: 12),
+                Flexible(child: Text(items[i].label)),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
 
 enum _BarRangeAction { copy, cut, delete, transpose }
 
@@ -2181,162 +2770,6 @@ class _SpanBanner extends StatelessWidget {
   }
 }
 
-/// One octave of piano keys. A key names its pitch ("C4", "F#4"); the octave
-/// is that of middle C counted as 4.
-class _PianoKeys extends StatelessWidget {
-  const _PianoKeys({
-    required this.octave,
-    required this.enabled,
-    required this.onKey,
-  });
-
-  final int octave;
-  final bool enabled;
-  final ValueChanged<int> onKey;
-
-  static const _white = [0, 2, 4, 5, 7, 9, 11];
-  static const _names = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
-
-  /// Black keys by the white key they stand after, and their semitone.
-  static const _black = [(0, 1), (1, 3), (3, 6), (4, 8), (5, 10)];
-
-  @override
-  Widget build(BuildContext context) {
-    final height = _ToolSize.compactOf(context) ? 44.0 : 48.0;
-    final base = (octave + 1) * 12;
-    Widget key({
-      required String name,
-      required int midi,
-      required bool black,
-      Widget? child,
-    }) => Tooltip(
-      message: name,
-      child: Semantics(
-        button: true,
-        enabled: enabled,
-        label: name,
-        excludeSemantics: true,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: enabled ? () => onKey(midi) : null,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: black
-                  ? (enabled ? AppColors.ink : AppColors.border)
-                  : AppColors.canvas,
-              border: Border.all(
-                color: enabled ? AppColors.ink : AppColors.border,
-              ),
-              borderRadius: const BorderRadius.vertical(
-                bottom: Radius.circular(4),
-              ),
-            ),
-            child: child ?? const SizedBox.expand(),
-          ),
-        ),
-      ),
-    );
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth / 7;
-        return SizedBox(
-          height: height,
-          child: Stack(
-            children: [
-              for (var i = 0; i < 7; i++)
-                Positioned(
-                  left: width * i,
-                  top: 0,
-                  width: width,
-                  height: height,
-                  child: key(
-                    name: '${_names[i]}$octave',
-                    midi: base + _white[i],
-                    black: false,
-                    child: Align(
-                      alignment: Alignment.bottomCenter,
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 2),
-                        child: Text(
-                          i == 0 ? 'C$octave' : _names[i],
-                          textScaler: TextScaler.noScaling,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: i == 0
-                                ? FontWeight.w700
-                                : FontWeight.w500,
-                            color: enabled
-                                ? AppColors.mutedInk
-                                : AppColors.border,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              for (final (after, semitone) in _black)
-                Positioned(
-                  left: width * (after + 1) - width * 0.3,
-                  top: 0,
-                  width: width * 0.6,
-                  height: height * 0.58,
-                  child: key(
-                    name: '${_names[after]}#$octave',
-                    midi: base + semitone,
-                    black: true,
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-/// The names of the palettes, all in sight: on a narrow screen they take a
-/// second line rather than hide behind a sideways scroll.
-class _PaletteTabs extends StatelessWidget {
-  const _PaletteTabs({
-    required this.active,
-    required this.labelOf,
-    required this.onPick,
-  });
-
-  final _Palette active;
-  final String Function(_Palette palette) labelOf;
-  final ValueChanged<_Palette> onPick;
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: AppColors.canvas,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-        child: SizedBox(
-          width: double.infinity,
-          child: Wrap(
-            spacing: 6,
-            children: [
-              for (final palette in _Palette.values)
-                ChoiceChip(
-                  label: Text(labelOf(palette)),
-                  tooltip: labelOf(palette),
-                  selected: palette == active,
-                  onSelected: (_) => onPick(palette),
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  labelPadding: const EdgeInsets.symmetric(horizontal: 2),
-                  showCheckmark: false,
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// The tools of the open palette, on as many lines as they need: a tool
 /// that had to be scrolled to would be a tool nobody finds.
 class _PaletteRow extends StatelessWidget {
@@ -2363,56 +2796,6 @@ class _PaletteRow extends StatelessWidget {
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The keyboard with a key on either side for the octave below and above,
-/// as wide as the screen allows.
-class _KeyboardBar extends StatelessWidget {
-  const _KeyboardBar({
-    required this.octave,
-    required this.enabled,
-    required this.onKey,
-    required this.lower,
-    required this.higher,
-    required this.onLower,
-    required this.onHigher,
-  });
-
-  final int octave;
-  final bool enabled;
-  final ValueChanged<int> onKey;
-  final String lower;
-  final String higher;
-  final VoidCallback? onLower;
-  final VoidCallback? onHigher;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) => SizedBox(
-        width: math.min(constraints.maxWidth, 460),
-        child: Row(
-          children: [
-            _ToolButton(
-              tooltip: lower,
-              onPressed: onLower,
-              child: const Icon(Icons.remove_rounded),
-            ),
-            const SizedBox(width: 4),
-            Expanded(
-              child: _PianoKeys(octave: octave, enabled: enabled, onKey: onKey),
-            ),
-            const SizedBox(width: 4),
-            _ToolButton(
-              tooltip: higher,
-              onPressed: onHigher,
-              child: const Icon(Icons.add_rounded),
-            ),
-          ],
         ),
       ),
     );
@@ -2623,89 +3006,6 @@ class _ToolSize extends InheritedWidget {
 
   @override
   bool updateShouldNotify(_ToolSize oldWidget) => oldWidget.compact != compact;
-}
-
-/// The groups of tools, side by side where there is room and one under the
-/// other where there is not. A group is never broken in two.
-class _Toolbar extends StatelessWidget {
-  const _Toolbar({required this.children});
-
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: AppColors.canvas,
-      child: LayoutBuilder(
-        builder: (context, constraints) => _ToolSize(
-          compact: constraints.maxWidth < 400,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-            child: SizedBox(
-              width: double.infinity,
-              child: Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 16,
-                runSpacing: 6,
-                children: children,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Tools that belong together, under the name of what they work on.
-class _ToolGroup extends StatelessWidget {
-  const _ToolGroup({required this.label, required this.children});
-
-  final String label;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 2, bottom: 2),
-          child: Text(
-            label,
-            textScaler: MediaQuery.textScalerOf(
-              context,
-            ).clamp(maxScaleFactor: 1.3),
-            style: const TextStyle(
-              fontSize: 11,
-              height: 1.2,
-              fontWeight: FontWeight.w700,
-              color: AppColors.mutedInk,
-            ),
-          ),
-        ),
-        // Larger letters (the system's font size) make a group wider than
-        // a small phone: it is then drawn smaller, never cut off.
-        FittedBox(
-          fit: BoxFit.scaleDown,
-          alignment: Alignment.centerLeft,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final (index, child) in children.indexed) ...[
-                if (index > 0 &&
-                    child is! _ToolGap &&
-                    children[index - 1] is! _ToolGap)
-                  const SizedBox(width: 4),
-                child,
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
 }
 
 /// What is written at the note (a chord name, a syllable), or the name of
@@ -2919,65 +3219,23 @@ class _ToolButton extends StatelessWidget {
     required this.onPressed,
     required this.child,
     this.selected = false,
-    this.wide = false,
   });
 
   final String tooltip;
   final VoidCallback? onPressed;
   final Widget child;
   final bool selected;
-  final bool wide;
 
   @override
   Widget build(BuildContext context) {
-    final enabled = onPressed != null;
     final compact = _ToolSize.compactOf(context);
-    return Tooltip(
-      message: tooltip,
-      child: Semantics(
-        button: true,
-        enabled: enabled,
-        selected: selected,
-        label: tooltip,
-        excludeSemantics: true,
-        child: Material(
-          color: selected ? AppColors.surfaceSoft : AppColors.canvas,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(4),
-            side: BorderSide(
-              color: selected ? AppColors.accent : AppColors.border,
-            ),
-          ),
-          child: InkWell(
-            onTap: onPressed,
-            borderRadius: BorderRadius.circular(4),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minWidth: compact ? (wide ? 76 : 40) : (wide ? 88 : 48),
-                minHeight: compact ? 44 : 48,
-              ),
-              child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 8),
-                child: Center(
-                  widthFactor: 1,
-                  child: IconTheme.merge(
-                    data: IconThemeData(
-                      color: enabled ? AppColors.ink : AppColors.border,
-                    ),
-                    child: DefaultTextStyle.merge(
-                      style: TextStyle(
-                        color: enabled ? AppColors.ink : AppColors.border,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      child: child,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+    return EditorToolButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      selected: selected,
+      width: compact ? 42 : 46,
+      height: compact ? 42 : 46,
+      child: child,
     );
   }
 }

@@ -1608,5 +1608,21 @@
   "pasteBarsNone": "Paste (no bars copied)",
   "@pasteBarsNone": {"description": "pasteBarsNone"},
   "breaksReflow": "This score breaks its lines to fit the screen. Line breaks can be set in a score that has written lines.",
-  "@breaksReflow": {"description": "breaksReflow"}
+  "@breaksReflow": {"description": "breaksReflow"},
+  "toolSelect": "Select",
+  "@toolSelect": {"description": "toolSelect"},
+  "toolEraser": "Eraser",
+  "@toolEraser": {"description": "toolEraser"},
+  "toolNote": "Write notes",
+  "@toolNote": {"description": "toolNote"},
+  "toolRest": "Write rests",
+  "@toolRest": {"description": "toolRest"},
+  "toolAccidental": "Accidental",
+  "@toolAccidental": {"description": "toolAccidental"},
+  "paletteChooser": "Palettes",
+  "@paletteChooser": {"description": "paletteChooser"},
+  "toStart": "To the start",
+  "@toStart": {"description": "toStart"},
+  "eraserHint": "Tap the note to erase",
+  "@eraserHint": {"description": "eraserHint"}
 }

@@ -1835,6 +1835,8 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
             catalog: _versionCatalog,
             measureIndex: _reviewMeasureIndex ?? 0,
             sequence: _sequence,
+            // The editor shows the lines this screen shows.
+            lineStarts: [for (final line in _systems) line.startMeasureIndex],
           ),
         ),
       );

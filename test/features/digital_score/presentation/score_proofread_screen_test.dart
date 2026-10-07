@@ -18,6 +18,7 @@ import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/three_staff_arrangement.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/omr_original_crop.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/score_editor_chrome.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_proofread_screen.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
 import 'package:xml/xml.dart';
@@ -123,6 +124,7 @@ Future<List<bool?>> _open(
   String musicXml = _xml,
   PlaybackSequence? sequence,
   _Originals? originals,
+  List<int>? lineStarts,
   Size size = const Size(900, 1600),
 }) async {
   tester.view.physicalSize = size;
@@ -151,6 +153,7 @@ Future<List<bool?>> _open(
                       musicXml: musicXml,
                       catalog: ScoreVersionCatalog.empty,
                       sequence: sequence,
+                      lineStarts: lineStarts,
                     ),
                   ),
                 ),
@@ -186,8 +189,6 @@ const _barTools = {'다음 마디 추가', '마디 복제', '마디 삭제', '�
 
 /// The palette a tool is in; it is opened before the tool is tapped.
 const _paletteOf = {
-  '이전 음표': '음표',
-  '다음 음표': '음표',
   '화음': '음표',
   '음표로': '음표',
   '쉼표로': '음표',
@@ -197,10 +198,20 @@ const _paletteOf = {
   '한 칸 아래': '높이',
   '샤프': '높이',
   '플랫': '높이',
-  '내추럴': '높이',
+  '제자리표': '높이',
   '코드': '코드 · 가사',
   '가사': '코드 · 가사',
 };
+
+/// Opens a palette from the list of palettes: its tools then stand under
+/// the score.
+Future<void> _openPalette(WidgetTester tester, String name) async {
+  await tester.tap(find.byTooltip('팔레트'));
+  await _settle(tester);
+  // The list lies over the screen: its entry is the last of that name.
+  await tester.tap(find.text(name).last);
+  await _settle(tester);
+}
 
 Future<void> _tapTool(WidgetTester tester, String tooltip) async {
   if (_barTools.contains(tooltip)) {
@@ -209,12 +220,8 @@ Future<void> _tapTool(WidgetTester tester, String tooltip) async {
     await tester.tap(find.text(tooltip));
   } else {
     final palette =
-        _paletteOf[tooltip] ??
-        (tooltip.startsWith('음가') || tooltip == '점음표' ? '길이' : null);
-    if (palette != null) {
-      await tester.tap(find.byTooltip(palette));
-      await _settle(tester);
-    }
+        _paletteOf[tooltip] ?? (tooltip.startsWith('음가') ? '길이' : null);
+    if (palette != null) await _openPalette(tester, palette);
     await tester.tap(find.byTooltip(tooltip));
   }
   await _settle(tester);
@@ -365,11 +372,8 @@ void main() {
     // rest of bar 2 and not the neighbour that took the added tone's place).
     expect(find.text('1 / 2마디'), findsOneWidget);
     expect(enabled('이전 음'), isFalse);
-    await tester.tap(find.byTooltip('높이'));
-    await _settle(tester);
+    await _openPalette(tester, '높이');
     expect(enabled('한 칸 위'), isTrue);
-    await tester.tap(find.byTooltip('음표'));
-    await _settle(tester);
 
     await _tapTool(tester, '다음 마디');
     await _tapTool(tester, '다시 실행');
@@ -444,8 +448,7 @@ void main() {
     await _open(tester, _MemoryStorage());
 
     await _tapTool(tester, '다음 마디');
-    await tester.tap(find.byTooltip('높이'));
-    await _settle(tester);
+    await _openPalette(tester, '높이');
     final up = tester.widget<InkWell>(
       find.descendant(
         of: find.byTooltip('한 칸 위'),
@@ -453,8 +456,7 @@ void main() {
       ),
     );
     expect(up.onTap, isNull);
-    await tester.tap(find.byTooltip('음표'));
-    await _settle(tester);
+    await _openPalette(tester, '음표');
     final makeNote = tester.widget<InkWell>(
       find.descendant(
         of: find.byTooltip('음표로'),
@@ -818,8 +820,13 @@ void main() {
 
   group('lines, ornaments, keys and the pen', () {
     Future<void> palette(WidgetTester tester, String name) async {
-      await tester.tap(find.byTooltip(name));
-      await _settle(tester);
+      if (name == '건반') {
+        // The keyboard is a key of the rail, not a palette of the list.
+        await tester.tap(find.byTooltip(name));
+        await _settle(tester);
+      } else {
+        await _openPalette(tester, name);
+      }
     }
 
     Future<void> pick(WidgetTester tester, String menu, String item) async {
@@ -974,27 +981,25 @@ void main() {
         ('음표', '성부'),
         ('길이', '잇단음표'),
         ('높이', '겹내림표'),
-        ('건반', '다음 음으로'),
         ('기호', '꾸밈'),
         ('코드 · 가사', '절'),
         ('마디 기호', '쪽나눔'),
         ('악보', '보표'),
       ]) {
-        await tester.ensureVisible(find.byTooltip(name));
-        await tester.pump();
-        await tester.tap(find.byTooltip(name));
-        await _settle(tester);
+        await _openPalette(tester, name);
         final tool = tester.getRect(find.byTooltip(lastTool));
         expect(tool.right, lessThanOrEqualTo(360), reason: '$name: $lastTool');
         expect(tool.bottom, lessThanOrEqualTo(720), reason: '$name: $lastTool');
         expect(tester.takeException(), isNull, reason: name);
       }
-      // The keys fill the width between the two octave keys.
-      await tester.ensureVisible(find.byTooltip('건반'));
+      // The keyboard takes the whole width, an octave and more, with keys
+      // wide enough to hit.
       await tester.tap(find.byTooltip('건반'));
       await _settle(tester);
-      expect(tester.getRect(find.byTooltip('B4')).right, lessThan(360 - 40));
-      expect(tester.getRect(find.byTooltip('C4')).width, greaterThan(30));
+      expect(tester.getRect(find.byTooltip('C4')).left, 0);
+      expect(tester.getRect(find.byTooltip('C4')).width, greaterThan(40));
+      expect(tester.getRect(find.byTooltip('C5')).right, 360);
+      expect(tester.takeException(), isNull);
       await _close(tester);
     });
 
@@ -1007,6 +1012,7 @@ void main() {
           tester.widget<VerovioScoreView>(find.byType(VerovioScoreView));
       final bar = view().score.parts.first.measures.first;
 
+      await palette(tester, '음표');
       await tester.tap(find.byTooltip('범위'));
       await _settle(tester);
       expect(find.text('끝 음을 눌러 여러 음 고르기'), findsOneWidget);
@@ -1102,6 +1108,7 @@ void main() {
       final storage = _MemoryStorage();
       await _open(tester, storage);
 
+      await palette(tester, '음표');
       await pick(tester, '성부', '성부 추가');
       await _tapTool(tester, '다음 마디');
       await palette(tester, '마디 기호');
@@ -1143,7 +1150,7 @@ void main() {
           tester.widget<VerovioScoreView>(find.byType(VerovioScoreView));
 
       expect(view().inputMode, 'select');
-      await tester.tap(find.byTooltip('펜'));
+      await tester.tap(find.byTooltip('음표 넣기'));
       await _settle(tester);
       expect(view().inputMode, 'place');
       expect(view().oneFingerPan, isFalse);
@@ -1172,6 +1179,335 @@ void main() {
         (note.pitch?.step, note.pitch?.alter, note.pitch?.octave),
         (PitchStep.f, 1, 4),
       );
+      await _close(tester);
+    });
+  });
+
+  group('the score, a rail of tools, and what a tap does', () {
+    VerovioScoreView view(WidgetTester tester) =>
+        tester.widget<VerovioScoreView>(find.byType(VerovioScoreView));
+
+    ScoreEventAddress note(WidgetTester tester, int bar, int index) {
+      final measure = view(tester).score.parts.first.measures[bar];
+      return ScoreEventAddress(
+        partIndex: 0,
+        measureIndex: bar,
+        eventIndex: eventIndexForXmlNote(measure, index)!,
+      );
+    }
+
+    NativeStaffPlace place(
+      WidgetTester tester,
+      int bar,
+      int index,
+      PitchStep step,
+      int octave,
+    ) => NativeStaffPlace(
+      measureIndex: bar,
+      eventIndex: note(tester, bar, index).eventIndex,
+      staff: 1,
+      step: step,
+      octave: octave,
+      ghostCenter: Offset.zero,
+      lineGap: 10,
+    );
+
+    Future<List<MusicNote>> savedBar(
+      WidgetTester tester,
+      _MemoryStorage storage,
+      int bar,
+    ) async {
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await _settle(tester);
+      await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+      await _settle(tester);
+      final saved = utf8.decode(storage.versions.values.single);
+      return const MusicXmlCodec()
+          .decodeXml(saved)
+          .parts
+          .first
+          .measures[bar]
+          .notes
+          .toList();
+    }
+
+    testWidgets('the whole part is on screen and a tap picks a note anywhere', (
+      tester,
+    ) async {
+      await _open(tester, _MemoryStorage());
+
+      // Every bar is engraved, not the one being worked on alone.
+      expect(view(tester).score.parts.first.measures, hasLength(2));
+      expect(view(tester).inputMode, 'select');
+      expect(view(tester).oneFingerPan, isTrue);
+      expect(view(tester).selectedNoteAddress?.measureIndex, 0);
+      expect(find.text('1 / 2마디'), findsOneWidget);
+
+      view(tester).onEventTapped!(note(tester, 1, 0));
+      await _settle(tester);
+      expect(find.text('2 / 2마디'), findsOneWidget);
+      expect(view(tester).selectedNoteAddress?.measureIndex, 1);
+      expect(view(tester).highlightedMeasureIndex, 1);
+      await _close(tester);
+    });
+
+    testWidgets('the cursor keys go from note to note, over the barline', (
+      tester,
+    ) async {
+      await _open(tester, _MemoryStorage());
+
+      for (var i = 0; i < 4; i++) {
+        await _tapTool(tester, '다음 음');
+      }
+      expect(find.text('1 / 2마디'), findsOneWidget);
+      await _tapTool(tester, '다음 음');
+      expect(find.text('2 / 2마디'), findsOneWidget);
+      // Back from the first note of bar 2 is the last note of bar 1.
+      await _tapTool(tester, '이전 음');
+      expect(find.text('1 / 2마디'), findsOneWidget);
+      expect(
+        view(tester).selectedNoteAddress?.eventIndex,
+        note(tester, 0, 4).eventIndex,
+      );
+      await _tapTool(tester, '다음 마디');
+      await _tapTool(tester, '처음으로');
+      expect(find.text('1 / 2마디'), findsOneWidget);
+      await _close(tester);
+    });
+
+    testWidgets('the eraser makes a tapped note a rest and leaves rests', (
+      tester,
+    ) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+
+      await tester.tap(find.byTooltip('지우개'));
+      await _settle(tester);
+      expect(find.text('지울 음을 누르세요'), findsOneWidget);
+      view(tester).onEventTapped!(note(tester, 0, 1));
+      await _settle(tester);
+      // A rest stays a rest: the bar after has nothing to undo.
+      view(tester).onEventTapped!(note(tester, 1, 0));
+      await _settle(tester);
+
+      final notes = await savedBar(tester, storage, 0);
+      expect(
+        [for (final note in notes.take(4)) note.isRest],
+        [false, true, false, false],
+      );
+      expect(notes.take(4).map((n) => n.onset), [0, 1, 2, 3]);
+      await _close(tester);
+    });
+
+    testWidgets('the note tool writes a note of the value in hand', (
+      tester,
+    ) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+
+      // The first tap takes the tool up, the second opens its values.
+      await tester.tap(find.byTooltip('음표 넣기'));
+      await _settle(tester);
+      expect(view(tester).inputMode, 'place');
+      expect(view(tester).oneFingerPan, isFalse);
+      await tester.tap(find.byTooltip('음표 넣기'));
+      await _settle(tester);
+      await tester.tap(find.byTooltip('음가 1/8'));
+      await _settle(tester);
+
+      // On the third note (E5, a quarter): an eighth on the A space.
+      view(tester).onNotePlaced!(place(tester, 0, 2, PitchStep.a, 4));
+      await _settle(tester);
+      // On the rest of bar 2: a note where there was none.
+      view(tester).onNotePlaced!(place(tester, 1, 0, PitchStep.g, 4));
+      await _settle(tester);
+
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await _settle(tester);
+      await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+      await _settle(tester);
+      final saved = utf8.decode(storage.versions.values.single);
+      final bars = const MusicXmlCodec().decodeXml(saved).parts.first.measures;
+      final first = bars[0].notes.where((n) => n.staff == 1).toList();
+      // C5 D5 | A4 eighth, eighth rest | F♯5.
+      expect(
+        [
+          for (final note in first)
+            '${note.isRest ? 'r' : note.pitch!.step.name}${note.type}',
+        ],
+        ['cquarter', 'dquarter', 'aeighth', 'reighth', 'fquarter'],
+      );
+      final second = bars[1].notes.where((n) => n.staff == 1).first;
+      expect((second.pitch?.step, second.type), (PitchStep.g, 'eighth'));
+      await _close(tester);
+    });
+
+    testWidgets('the rest tool writes a rest where it is tapped', (
+      tester,
+    ) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+
+      await tester.tap(find.byTooltip('쉼표 넣기'));
+      await _settle(tester);
+      view(tester).onNotePlaced!(place(tester, 0, 0, PitchStep.b, 4));
+      await _settle(tester);
+
+      final notes = await savedBar(tester, storage, 0);
+      expect((notes[0].isRest, notes[0].type), (true, 'quarter'));
+      expect(notes[1].pitch?.step, PitchStep.d);
+      await _close(tester);
+    });
+
+    testWidgets('the dot and the accidentals of the rail work on the note', (
+      tester,
+    ) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+
+      // The last note of the upper staff, so the dot has nothing to cover.
+      view(tester).onEventTapped!(note(tester, 0, 3));
+      await _settle(tester);
+      await tester.tap(find.byTooltip('임시표'));
+      await _settle(tester);
+      await tester.tap(find.byTooltip('제자리표'));
+      await _settle(tester);
+      view(tester).onEventTapped!(note(tester, 0, 1));
+      await _settle(tester);
+      await tester.tap(find.byTooltip('점음표'));
+      await _settle(tester);
+
+      final notes = await savedBar(tester, storage, 0);
+      expect(notes[3].pitch?.alter ?? notes[2].pitch?.alter, 0);
+      expect((notes[1].type, notes[1].dots), ('quarter', 1));
+      await _close(tester);
+    });
+
+    testWidgets('an edit engraves the line it is in and no other', (
+      tester,
+    ) async {
+      // Six bars of a single staff, written as three lines of two bars.
+      String bar(String steps) => [
+        for (final step in steps.split(''))
+          '<note><pitch><step>$step</step><octave>4</octave></pitch>'
+              '<duration>1</duration><voice>1</voice><type>quarter</type></note>',
+      ].join();
+      final long =
+          '<score-partwise version="4.0"><part-list><score-part id="P1">'
+          '<part-name>Voice</part-name></score-part></part-list><part id="P1">'
+          '<measure number="1"><attributes><divisions>1</divisions>'
+          '<key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time>'
+          '<clef><sign>G</sign><line>2</line></clef></attributes>${bar('CDEF')}</measure>'
+          '${[for (var i = 2; i <= 6; i++) '<measure number="$i">${i.isOdd ? '<print new-system="yes"/>' : ''}${bar('GABC')}</measure>'].join()}'
+          '</part></score-partwise>';
+      await _open(
+        tester,
+        _MemoryStorage(),
+        musicXml: long,
+        size: const Size(400, 800),
+      );
+
+      final before = view(tester).engravingChunks!;
+      expect(before, hasLength(3));
+      expect(view(tester).engravingXml, isNull);
+      expect(view(tester).score.parts.first.measures, hasLength(6));
+
+      // A note of bar 4, in the second line.
+      view(tester).onEventTapped!(note(tester, 3, 0));
+      await _settle(tester);
+      await _tapTool(tester, '한 칸 위');
+
+      final after = view(tester).engravingChunks!;
+      expect(identical(after[0], before[0]), isTrue);
+      expect(identical(after[2], before[2]), isTrue);
+      expect(after[1], isNot(before[1]));
+      expect(
+        view(tester).score.parts.first.measures[3].notes.first.pitch?.step,
+        PitchStep.a,
+      );
+      // Undo brings the line back as it was read before.
+      await tester.tap(find.byTooltip('실행 취소'));
+      await _settle(tester);
+      expect(view(tester).engravingChunks![1], before[1]);
+      await tester.binding.handlePopRoute();
+      await _settle(tester);
+      await _close(tester);
+    });
+
+    testWidgets('the lines are those of the score, not the editor\'s own', (
+      tester,
+    ) async {
+      String bar(String steps) => [
+        for (final step in steps.split(''))
+          '<note><pitch><step>$step</step><octave>4</octave></pitch>'
+              '<duration>1</duration><voice>1</voice><type>quarter</type></note>',
+      ].join();
+      String score({required bool written}) =>
+          '<score-partwise version="4.0"><part-list><score-part id="P1">'
+          '<part-name>Voice</part-name></score-part></part-list><part id="P1">'
+          '<measure number="1"><attributes><divisions>1</divisions>'
+          '<key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time>'
+          '<clef><sign>G</sign><line>2</line></clef></attributes>${bar('CDEF')}</measure>'
+          '${[for (var i = 2; i <= 8; i++) '<measure number="$i">${written && i == 5 ? '<print new-system="yes"/>' : ''}${bar('GABC')}</measure>'].join()}'
+          '</part></score-partwise>';
+      List<int> barsPerLine(WidgetTester tester) => [
+        for (final chunk in view(tester).engravingChunks!)
+          XmlDocument.parse(chunk).findAllElements('measure').length,
+      ];
+
+      // A score that writes its lines (four bars each) keeps them on a
+      // phone too: the page is the viewer's, not a narrower one.
+      await _open(
+        tester,
+        _MemoryStorage(),
+        musicXml: score(written: true),
+        size: const Size(400, 800),
+      );
+      expect(barsPerLine(tester), [4, 4]);
+      expect(view(tester).engravingPageSize, isNull);
+      await _close(tester);
+
+      // A score that writes none has the lines it had where it was read.
+      await _open(
+        tester,
+        _MemoryStorage(),
+        musicXml: score(written: false),
+        lineStarts: const [0, 3, 6],
+        size: const Size(400, 800),
+      );
+      expect(barsPerLine(tester), [3, 3, 2]);
+      // With a bar more, as many bars to a line as before.
+      await _tapTool(tester, '다음 마디 추가');
+      expect(barsPerLine(tester), [3, 3, 3]);
+      await tester.binding.handlePopRoute();
+      await _settle(tester);
+      await tester.tap(find.text('버리기'));
+      await _settle(tester);
+      await _close(tester);
+    });
+
+    testWidgets('the tools of one palette stand under the score, or the keys', (
+      tester,
+    ) async {
+      await _open(tester, _MemoryStorage());
+
+      expect(find.byType(PianoKeyboard), findsNothing);
+      expect(find.byTooltip('스타카토'), findsNothing);
+      await _openPalette(tester, '기호');
+      expect(find.byTooltip('스타카토'), findsOneWidget);
+      // The keyboard takes the palette's place, and goes with its key.
+      await tester.tap(find.byTooltip('건반'));
+      await _settle(tester);
+      expect(find.byType(PianoKeyboard), findsOneWidget);
+      expect(find.byTooltip('스타카토'), findsNothing);
+      await tester.tap(find.byTooltip('건반'));
+      await _settle(tester);
+      expect(find.byType(PianoKeyboard), findsNothing);
+      // A palette is put away with its own key.
+      await _openPalette(tester, '높이');
+      await tester.tap(find.byTooltip('닫기'));
+      await _settle(tester);
+      expect(find.byTooltip('한 칸 위'), findsNothing);
       await _close(tester);
     });
   });

@@ -2539,4 +2539,28 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get breaksReflow =>
       'This score breaks its lines to fit the screen. Line breaks can be set in a score that has written lines.';
+
+  @override
+  String get toolSelect => 'Select';
+
+  @override
+  String get toolEraser => 'Eraser';
+
+  @override
+  String get toolNote => 'Write notes';
+
+  @override
+  String get toolRest => 'Write rests';
+
+  @override
+  String get toolAccidental => 'Accidental';
+
+  @override
+  String get paletteChooser => 'Palettes';
+
+  @override
+  String get toStart => 'To the start';
+
+  @override
+  String get eraserHint => 'Tap the note to erase';
 }

@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-07T15:43:00+09:00"
+last_updated: "2026-10-07T17:13:00+09:00"
 current_phase:
   id: "RELEASE-4"
   name: "OMR 정확도 최소 95% 개선·검증"
@@ -516,6 +516,14 @@ setup_required:
       - "사용자 이름과 비밀번호"
 
 decisions:
+  - id: "D-225"
+    date: "2026-10-07"
+    status: "active"
+    decision: "교정 화면은 파트를 악보의 줄(적힌 줄 나눔, 없으면 본 악보 화면이 보여 주던 줄)마다 조각으로 나눠 따로 읽고 조판한다. 쪽 폭도 본 악보와 같다 — 수정 화면에 들어가도 줄이 달라지지 않는다(2026-10-07 사용자 지적으로 '줄당 두 마디'에서 바꿈). 글자가 같은 조각은 다시 읽지도 조판하지도 않는다. 편집 비용은 악보 길이가 아니라 한 줄이다. 줄 경계를 넘는 이음줄이 화면에서 끊겨 보이는 것은 감수한다."
+  - id: "D-224"
+    date: "2026-10-07"
+    status: "active"
+    decision: "교정 화면의 구조는 Notion Mobile을 따른다: 악보 전체를 띄우고(한 마디 확대 방식 폐기), 왼쪽 세로 도구 레일의 도구가 탭이 하는 일(선택·지우개·음표 넣기·쉼표 넣기)을 정하며, 그 밖의 도구는 팔레트 목록에서 하나를 골라 악보 아래에 연다. 건반과 재생·커서 줄은 아래에 둔다. 아이콘은 악보 글꼴(Bravura) 기호를 쓴다. 글자 단추를 화면에 쌓지 않는다."
   - id: "D-223"
     date: "2026-10-07"
     status: "active"
@@ -1398,6 +1406,18 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-10-06T13:58:32+09:00"
   checks:
+    - name: "editor_same_lines_20261007"
+      result: "passed"
+      detail: "수정 화면의 줄 나눔을 본 악보와 같게: analyze 0건, 전체 테스트 796 통과, release 4084 에뮬레이터에서 변환한 32마디 악보의 본 악보·수정 화면 줄 구성이 같음(4·4·4·4·2·5·4·4), 앱 예외 0."
+    - name: "score_side_slide_20261007"
+      result: "passed"
+      detail: "악보가 옆으로 밀려 잘리던 문제: 4082에서 옆으로 쓸어 재현, 4083에서 같은 동작 뒤 제자리. analyze 0건, 전체 테스트 794 통과, 앱 예외 0."
+    - name: "editor_line_chunks_20261007"
+      result: "passed_with_known_gaps"
+      detail: "교정 화면 줄 단위 조판(D-225): analyze 0건, 전체 테스트 794 통과, release 4082 에뮬레이터에서 72마디 곡 편집 3회 동안 프레임 멈춤 0~1회(이전 매회 48~75프레임), 138마디 곡 열기·120마디 이동, 앱 예외 0. 공백: '악보가 안 뜬다'는 재현 못 함, 실기기 미측정, 줄 경계 이음줄은 화면에서 끊김."
+    - name: "editor_redesign_20261007"
+      result: "passed_with_known_gaps"
+      detail: "교정 화면 개편(D-224): analyze 0건, 전체 테스트 790 통과, release 4079 에뮬레이터에서 레일·전체 악보·팔레트·음가 펼침·건반·음표 도구·지우개·재생 확인, 앱 예외 0. 공백: 변환한 악보(원본 띠)의 실제 화면·실기기 다시 그리기 시간·가로 화면 미확인, 긴 악보는 편집마다 1~3초(에뮬레이터)."
     - name: "octave_line_rule_deploy_20261007"
       result: "passed_with_known_gaps"
       detail: "서버 배포(백업 ~/omr_backup_20261007_1536, MD5 일치, active, 외부 health 200)와 실변환: 선명한 원본의 보정본·AI 보정본에 옥타브 기호 0개, 2옥타브 이하 음 0개(원시 결과는 기호 4개·낮은 음 2개). release 4076 설치·실행. 공백: 사용자 실제 업로드 파일로 재변환 미확인, APK는 디버그 키 서명."

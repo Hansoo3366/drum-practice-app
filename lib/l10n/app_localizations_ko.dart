@@ -2526,4 +2526,28 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get breaksReflow => '이 악보는 화면 너비에 맞춰 줄이 바뀝니다. 줄이 정해진 악보에서만 쓸 수 있어요.';
+
+  @override
+  String get toolSelect => '선택';
+
+  @override
+  String get toolEraser => '지우개';
+
+  @override
+  String get toolNote => '음표 넣기';
+
+  @override
+  String get toolRest => '쉼표 넣기';
+
+  @override
+  String get toolAccidental => '임시표';
+
+  @override
+  String get paletteChooser => '팔레트';
+
+  @override
+  String get toStart => '처음으로';
+
+  @override
+  String get eraserHint => '지울 음을 누르세요';
 }

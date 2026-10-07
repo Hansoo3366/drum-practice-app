@@ -363,4 +363,176 @@ void main() {
       );
     });
   });
+
+  group('one part for the screen', () {
+    test('a part stands alone, without the page and the other parts', () {
+      const two =
+          '<score-partwise version="4.0">'
+          '<credit page="1"><credit-words>Title</credit-words></credit>'
+          '<part-list><score-part id="P1"><part-name>Voice</part-name></score-part>'
+          '<score-part id="P2"><part-name>Piano</part-name></score-part></part-list>'
+          '<part id="P1"><measure number="1"><attributes><divisions>1</divisions></attributes>'
+          '<note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration></note></measure></part>'
+          '<part id="P2"><measure number="1"><attributes><divisions>1</divisions></attributes>'
+          '<note><pitch><step>E</step><octave>3</octave></pitch><duration>2</duration></note>'
+          '<note><pitch><step>G</step><octave>3</octave></pitch><duration>2</duration></note></measure>'
+          '<measure number="2"><print new-system="yes"/>'
+          '<note><rest/><duration>4</duration></note></measure></part>'
+          '</score-partwise>';
+
+      final alone = partAloneXml(two, 1);
+      final document = XmlDocument.parse(alone);
+
+      expect(document.findAllElements('part').single.getAttribute('id'), 'P2');
+      expect(
+        document.findAllElements('score-part').single.getAttribute('id'),
+        'P2',
+      );
+      expect(document.findAllElements('credit'), isEmpty);
+      // Lines are laid out for the screen, not as the page had them.
+      expect(document.findAllElements('print'), isEmpty);
+      expect(document.findAllElements('measure'), hasLength(2));
+      // The score it was taken from is as it was.
+      expect(two, contains('<print new-system="yes"/>'));
+      expect(() => partAloneXml(two, 2), throwsA(isA<FormatException>()));
+    });
+
+    test('a part is cut into lines that stand on their own', () {
+      final xml = _score([
+        _bar('CDEF'),
+        '<print new-system="yes"/>${_bar('GABC')}',
+        '<attributes><key><fifths>2</fifths></key></attributes>${_bar('DEFG')}',
+        _bar('AAAA'),
+        _bar('BBBB'),
+      ], fifths: -1);
+
+      final chunks = partChunks(xml, 0, const [0, 2, 4]);
+
+      expect(chunks, hasLength(3));
+      // Each line is a score: it decodes alone, in the key it is in.
+      final decoded = [for (final chunk in chunks) _codec.decodeXml(chunk)];
+      expect(
+        [for (final score in decoded) score.parts.first.measures.length],
+        [2, 2, 1],
+      );
+      expect(
+        [
+          for (final score in decoded)
+            score.parts.first.measures.first.attributes.keyFifths,
+        ],
+        [-1, 2, 2],
+      );
+      for (final score in decoded) {
+        final time = score.parts.first.measures.first.attributes.time;
+        expect((time?.beats, time?.beatType), (4, 4));
+      }
+      // Bars keep their numbers, and the written line break is gone.
+      expect(
+        [
+          for (final chunk in chunks)
+            XmlDocument.parse(
+              chunk,
+            ).findAllElements('measure').map((m) => m.getAttribute('number')),
+        ],
+        [
+          ['1', '2'],
+          ['3', '4'],
+          ['5'],
+        ],
+      );
+      expect(chunks.join(), isNot(contains('<print')));
+      // A second line repeats the time only to be read, not to be printed.
+      expect(chunks[0], isNot(contains('print-object')));
+      expect(chunks[1], contains('<time print-object="no">'));
+    });
+
+    test('the lines of a score are those it writes, long or short', () {
+      final xml = _score([
+        _bar('CDEF'),
+        _bar('GABC'),
+        _bar('DEFG'),
+        '<print new-system="yes"/>${_bar('AAAA')}',
+        '<print new-page="yes"/>${_bar('BBBB')}',
+      ]);
+
+      expect(writtenLineStarts(xml, 0), [0, 3, 4]);
+      // Lines as written: three bars, then one, then one.
+      expect(
+        [
+          for (final chunk in partChunks(xml, 0, writtenLineStarts(xml, 0)))
+            XmlDocument.parse(chunk).findAllElements('measure').length,
+        ],
+        [3, 1, 1],
+      );
+      // A score that writes no breaks has no lines of its own.
+      expect(
+        writtenLineStarts(_score([_bar('CDEF'), _bar('GABC')]), 0),
+        isEmpty,
+      );
+    });
+
+    test('an edit changes the text of its own line only', () {
+      final xml = _score([
+        _bar('CDEF'),
+        _bar('GABC'),
+        _bar('DEFG'),
+        _bar('AAAA'),
+      ]);
+      final before = partChunks(xml, 0, const [0, 2]);
+
+      final edited = _editor.moveDiatonic(xml, _ref(0, measureIndex: 2), 1).xml;
+      final after = partChunks(edited, 0, const [0, 2]);
+
+      expect(after[0], before[0]);
+      expect(after[1], isNot(before[1]));
+    });
+
+    test('a line is engraved with its notes named and no repeated time', () {
+      final xml = _score([_bar('CDEF'), _bar('GABC'), _bar('DEFG')]);
+      final chunk = partChunks(xml, 0, const [0, 2])[1];
+      final decoded = _codec.decodeXml(chunk).parts.first.measures;
+
+      final shown = chunkForDisplay(chunk, decoded, 2);
+
+      final document = XmlDocument.parse(shown);
+      expect(document.findAllElements('time'), isEmpty);
+      expect(document.findAllElements('key'), hasLength(1));
+      expect(
+        document.findAllElements('note').map((n) => n.getAttribute('id')),
+        ['p0-m2-e0', 'p0-m2-e1', 'p0-m2-e2', 'p0-m2-e3'],
+      );
+      // The chunk it was made from still says its time, for whoever reads it.
+      expect(chunk, contains('<time'));
+    });
+
+    test('every note is named for the event it decodes to', () {
+      final xml = _score([
+        '${_harmony('C')}${_bar('CD', octave: 5)}'
+            '<note><chord/><pitch><step>F</step><octave>5</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type></note>'
+            '${_bar('EF', octave: 5)}',
+        _bar('GABC'),
+      ]);
+      final alone = partAloneXml(xml, 0);
+      final decoded = _codec.decodeXml(alone);
+
+      final tagged = tagPartNotes(alone, decoded);
+
+      final ids = [
+        for (final note in XmlDocument.parse(tagged).findAllElements('note'))
+          note.getAttribute('id'),
+      ];
+      // The chord symbol is event 0 of the first bar; the notes follow it.
+      expect(ids.take(5), [
+        'p0-m0-e1',
+        'p0-m0-e2',
+        'p0-m0-e3',
+        'p0-m0-e4',
+        'p0-m0-e5',
+      ]);
+      expect(ids.skip(5).first, startsWith('p0-m1-e'));
+      final first = decoded.parts.first.measures.first;
+      expect(first.events[1], isA<MusicNote>());
+      expect(first.events[0], isA<MusicHarmony>());
+    });
+  });
 }

@@ -4825,6 +4825,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This score breaks its lines to fit the screen. Line breaks can be set in a score that has written lines.'**
   String get breaksReflow;
+
+  /// toolSelect
+  ///
+  /// In en, this message translates to:
+  /// **'Select'**
+  String get toolSelect;
+
+  /// toolEraser
+  ///
+  /// In en, this message translates to:
+  /// **'Eraser'**
+  String get toolEraser;
+
+  /// toolNote
+  ///
+  /// In en, this message translates to:
+  /// **'Write notes'**
+  String get toolNote;
+
+  /// toolRest
+  ///
+  /// In en, this message translates to:
+  /// **'Write rests'**
+  String get toolRest;
+
+  /// toolAccidental
+  ///
+  /// In en, this message translates to:
+  /// **'Accidental'**
+  String get toolAccidental;
+
+  /// paletteChooser
+  ///
+  /// In en, this message translates to:
+  /// **'Palettes'**
+  String get paletteChooser;
+
+  /// toStart
+  ///
+  /// In en, this message translates to:
+  /// **'To the start'**
+  String get toStart;
+
+  /// eraserHint
+  ///
+  /// In en, this message translates to:
+  /// **'Tap the note to erase'**
+  String get eraserHint;
 }
 
 class _AppLocalizationsDelegate

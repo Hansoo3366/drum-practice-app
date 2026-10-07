@@ -65,6 +65,9 @@ class VerovioScoreView extends StatefulWidget {
     this.rehearsalMarks,
     this.selectedNoteAddress,
     this.alsoSelectedNotes = const [],
+    this.keepPagesOnChange = false,
+    this.engravingChunks,
+    this.playbackXml,
     this.absorbMeasureTaps = false,
     this.oneFingerPan = true,
     this.inputMode = 'off',
@@ -127,6 +130,21 @@ class VerovioScoreView extends StatefulWidget {
 
   /// More notes outlined along with [selectedNoteAddress]: a run of notes.
   final List<ScoreEventAddress> alsoSelectedNotes;
+
+  /// Keeps the pages on screen while a changed score is engraved, instead
+  /// of a blank page: an editor changes the score with every edit. Taps wait
+  /// for the new pages, which the notes are counted by.
+  final bool keepPagesOnChange;
+
+  /// The score as a run of small scores, each engraved on its own and one
+  /// under the other (the bars of [score] in order). In place of
+  /// [engravingXml] for an editor: a chunk whose text is the same as before
+  /// is not engraved again, so an edit costs one chunk and not the score.
+  final List<String>? engravingChunks;
+
+  /// With [engravingChunks]: the whole score as MusicXML for the player,
+  /// asked for when it is to be played and not with every change.
+  final String Function()? playbackXml;
   final bool absorbMeasureTaps;
   final bool oneFingerPan;
   final String inputMode;
@@ -254,6 +272,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     }
     final visualScoreChanged =
         oldWidget.engravingXml != widget.engravingXml ||
+        !listEquals(oldWidget.engravingChunks, widget.engravingChunks) ||
         !_sameMarks(oldWidget.rehearsalMarks, widget.rehearsalMarks) ||
         oldWidget.engravingPageSize != widget.engravingPageSize ||
         !identical(oldWidget.score, widget.score) ||
@@ -278,7 +297,11 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
           oldWidget.engravingXml == widget.engravingXml &&
           oldWidget.engravingPageSize == widget.engravingPageSize &&
           identical(oldWidget.score, widget.score);
-      _rebuildScore(keepPages: sameMusic && _pages.isNotEmpty);
+      _rebuildScore(
+        keepPages: (sameMusic || widget.keepPagesOnChange) && _pages.isNotEmpty,
+      );
+      // The pages that stay show another score than the one now held.
+      _pagesStale = !sameMusic && _pages.isNotEmpty;
     } else if (playbackConfigurationChanged) {
       if (widget.playback.state.playing) unawaited(_stop());
       _resetPlaybackState();
@@ -351,6 +374,21 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
 
   void _rebuildScore({bool keepPages = false}) {
     final generation = ++_renderGeneration;
+    if (widget.engravingChunks case final chunks?) {
+      _engravable = true;
+      _parseError = null;
+      if (!keepPages) {
+        _pages = const <_VerovioPage>[];
+        _layout = null;
+      }
+      _rendering = _renderChunks(
+        chunks,
+        generation,
+        publishWhenDone: keepPages,
+      );
+      _resetPlaybackState();
+      return;
+    }
     try {
       // The engraver reads the document in its own isolate, and the player
       // builds its MIDI in another: nothing parses the score here, which on
@@ -396,7 +434,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       ),
     );
     if (mounted) setState(() {});
-    if (widget.playbackVisible) {
+    // An editor's score changes with every edit: its MIDI is made when it
+    // is played.
+    if (widget.playbackVisible && widget.playbackXml == null) {
       unawaited(_playbackMidi().then((_) {}, onError: (Object _) {}));
     }
   }
@@ -473,6 +513,113 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   /// Written line starts of the score on screen; empty when lines reflow.
   List<int> _lineStarts = const [];
 
+  /// The pages of each chunk already engraved ([VerovioScoreView
+  /// .engravingChunks]), by the chunk's text, for [_chunkPageSize].
+  Map<String, List<_VerovioPage>> _chunkPages = {};
+  Size? _chunkPageSize;
+
+  /// Engraves [chunks] one under the other. A chunk engraved before is
+  /// taken as it is. Pages come on screen as they are ready, or with
+  /// [publishWhenDone] all at once.
+  Future<void> _renderChunks(
+    List<String> chunks,
+    int generation, {
+    bool publishWhenDone = false,
+  }) async {
+    try {
+      final timeout = _verovioOperationTimeout;
+      final service = await _getService().timeout(timeout);
+      _lineStarts = const [];
+      if (_chunkPageSize != widget.engravingPageSize) {
+        _chunkPages = {};
+        _chunkPageSize = widget.engravingPageSize;
+      }
+      var optionsSet = false;
+      final kept = <String, List<_VerovioPage>>{};
+      final pages = <_VerovioPage>[];
+      for (var index = 0; index < chunks.length; index++) {
+        final chunk = chunks[index];
+        var made = _chunkPages[chunk] ?? kept[chunk];
+        if (made == null) {
+          if (!optionsSet) {
+            await service
+                .setOptionsJson(
+                  jsonEncode({
+                    ..._verovioOptions,
+                    // Every chunk is one line of the score, whatever its
+                    // bars hold: no break is written in it, so its bars are
+                    // set on one line of the full width.
+                    'breaks': 'line',
+                    'minLastJustification': 0,
+                    if (widget.engravingPageSize case final size?) ...{
+                      'pageWidth': size.width.round(),
+                      'pageHeight': size.height.round(),
+                    },
+                  }),
+                )
+                .timeout(timeout);
+            optionsSet = true;
+          }
+          await service.loadData(chunk).timeout(timeout);
+          final pageCount = await service.pageCount.timeout(timeout);
+          made = <_VerovioPage>[];
+          for (var pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+            final svg = await service
+                .renderToSvg(pageIndex + 1)
+                .timeout(timeout);
+            final hitMap = await service
+                .parseHitMap(
+                  svg,
+                  pageIndex: pageIndex,
+                  config: const ParseConfig(
+                    captureClasses: {
+                      'note',
+                      'rest',
+                      'measure',
+                      'staff',
+                      'clef',
+                    },
+                  ),
+                )
+                .timeout(timeout);
+            final prepared = await prepareVerovioPage(svg);
+            made.add(
+              _VerovioPage(
+                svg: prepared.svg,
+                hitMap: hitMap,
+                chords: prepared.labels,
+                staves: prepared.staves,
+              ),
+            );
+          }
+          if (!mounted || generation != _renderGeneration) return;
+        }
+        kept[chunk] = made;
+        pages.addAll(made);
+        final last = index == chunks.length - 1;
+        // A long score comes on screen a few lines at a time.
+        if (!last && (publishWhenDone || index % 4 != 3)) continue;
+        _pages = List<_VerovioPage>.unmodifiable(pages);
+        _pagesStale = false;
+        _parseError = null;
+        _rebuildRenderedLayout(_lastViewportWidth ?? 360);
+        _notifySystemsChanged();
+        setState(() {});
+      }
+      _chunkPages = kept;
+    } catch (error) {
+      if (!mounted || generation != _renderGeneration) return;
+      if (_pages.isEmpty) {
+        _layout = null;
+        _parseError = error is TimeoutException
+            ? '악보 렌더링 시간이 초과되었습니다.'
+            : '악보를 표시할 수 없습니다.';
+      }
+      _pagesStale = false;
+      setState(() {});
+    }
+  }
+
   /// Engraves [xml] page by page. Pages replace what is on screen as they
   /// arrive, or, with [publishWhenDone], all at once at the end (the pages
   /// shown meanwhile are those of the same music).
@@ -535,6 +682,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         // many A4 pages; waiting for every page made the entire viewer look
         // stuck even when the first page had already been engraved.
         _pages = List<_VerovioPage>.unmodifiable(pages);
+        _pagesStale = false;
         _parseError = null;
         final width = _lastViewportWidth ?? 360;
         _rebuildRenderedLayout(width);
@@ -562,6 +710,13 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
 
   /// The engraving of the pages on screen, while it runs.
   Future<void> _rendering = Future.value();
+
+  /// Whether the pages on screen are still those of the score before the
+  /// last change ([VerovioScoreView.keepPagesOnChange]).
+  bool _pagesStale = false;
+
+  /// Brings a bar into view, as playback does for the bar being played.
+  void showMeasure(int measureIndex) => _followPlayback(measureIndex);
 
   /// Exports wait for each other: the engraver holds one document at a
   /// time.
@@ -1128,7 +1283,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       bpm: bpm,
     );
     final future = buildPlaybackMidiInBackground(
-      engravingXml: widget.engravingXml,
+      engravingXml: widget.playbackXml?.call() ?? widget.engravingXml,
       score: widget.score,
       sequence: widget.playbackSequence,
       arrangement: widget.playbackArrangement,
@@ -1496,6 +1651,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   void _commitInputAt(Offset content) {
     final layout = _layout;
     if (layout == null) return;
+    // What is on screen is the score before the last edit: its notes are
+    // not counted as the notes of the score now.
+    if (_pagesStale) return;
     if (_measureDragFrom != null) {
       final from = _measureDragFrom!;
       final to = _measureDragTo ?? from;
@@ -1626,7 +1784,12 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
                       child: InteractiveViewer(
                         transformationController: _transform,
                         constrained: false,
-                        boundaryMargin: const EdgeInsets.all(48),
+                        // Room to pull past the top and the bottom, none to
+                        // the sides: a score as wide as the screen that
+                        // slides sideways is a score cut off at one side.
+                        boundaryMargin: const EdgeInsets.symmetric(
+                          vertical: 48,
+                        ),
                         clipBehavior: Clip.hardEdge,
                         minScale: 0.35,
                         maxScale: 4,
@@ -1857,11 +2020,18 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     if (delta == Offset.zero) return;
     final next = _transform.value.clone();
     final translation = next.getTranslation();
-    next.setTranslationRaw(
-      translation.x - delta.dx,
-      translation.y - delta.dy,
-      translation.z,
-    );
+    var x = translation.x - delta.dx;
+    var y = translation.y - delta.dy;
+    // Like a finger, a wheel does not move the score off the screen.
+    if (_viewport case final viewport?) {
+      final scale = next.getMaxScaleOnAxis();
+      x = x.clamp(math.min(0.0, viewport.width - _documentWidth * scale), 0.0);
+      y = y.clamp(
+        math.min(0.0, viewport.height - _documentHeight * scale) - 48,
+        48.0,
+      );
+    }
+    next.setTranslationRaw(x, y, translation.z);
     _transform.value = next;
   }
 

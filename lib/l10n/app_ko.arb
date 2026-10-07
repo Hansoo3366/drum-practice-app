@@ -787,5 +787,13 @@
   "barsCopied": "{n}마디를 복사했습니다",
   "barRangeInvalid": "마디 번호를 확인하세요",
   "pasteBarsNone": "붙여넣기 (복사한 마디 없음)",
-  "breaksReflow": "이 악보는 화면 너비에 맞춰 줄이 바뀝니다. 줄이 정해진 악보에서만 쓸 수 있어요."
+  "breaksReflow": "이 악보는 화면 너비에 맞춰 줄이 바뀝니다. 줄이 정해진 악보에서만 쓸 수 있어요.",
+  "toolSelect": "선택",
+  "toolEraser": "지우개",
+  "toolNote": "음표 넣기",
+  "toolRest": "쉼표 넣기",
+  "toolAccidental": "임시표",
+  "paletteChooser": "팔레트",
+  "toStart": "처음으로",
+  "eraserHint": "지울 음을 누르세요"
 }

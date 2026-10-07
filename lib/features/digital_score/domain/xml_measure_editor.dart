@@ -180,6 +180,222 @@ String tagIsolatedNotes(String isolatedXml, MusicMeasure decoded) {
   return document.toXmlString();
 }
 
+/// One part of [xml] on its own, as the editor shows it: every bar, without
+/// the page the score was printed on (titles, margins, written line and
+/// page breaks) and without the other parts, so the engraver lays the music
+/// out for the screen. Note indices are those of the part in [xml].
+String partAloneXml(String xml, int partIndex) {
+  final doc = _ScoreDoc(xml);
+  final root = doc.document.rootElement;
+  final parts = root.findElements('part').toList();
+  if (partIndex < 0 || partIndex >= parts.length) {
+    throw const FormatException('파트를 찾을 수 없습니다.');
+  }
+  final part = parts[partIndex];
+  final children = <XmlNode>[];
+  for (final node in root.children) {
+    if (node is XmlElement) {
+      final name = node.name.local;
+      if (name == 'credit' || name == 'defaults') continue;
+      if (name == 'part') {
+        if (!identical(node, part)) continue;
+        final alone = node.copy();
+        for (final print in alone.findAllElements('print').toList()) {
+          _remove(print);
+        }
+        children.add(alone);
+        continue;
+      }
+      if (name == 'part-list') {
+        final list = node.copy();
+        list.children.removeWhere(
+          (entry) =>
+              entry is XmlElement &&
+              (entry.name.local == 'part-group' ||
+                  (entry.name.local == 'score-part' &&
+                      entry.getAttribute('id') != part.getAttribute('id'))),
+        );
+        children.add(list);
+        continue;
+      }
+    }
+    children.add(node.copy());
+  }
+  final document = XmlDocument([
+    for (final node in doc.document.children)
+      if (identical(node, root))
+        XmlElement(
+          root.name.copy(),
+          root.attributes.map((attribute) => attribute.copy()),
+          children,
+        )
+      else
+        node.copy(),
+  ]);
+  doc.keep(xml);
+  return document.toXmlString();
+}
+
+/// The bars of a part that begin a written line (`<print new-system>` or
+/// `new-page`), the first bar among them; empty when the score writes no
+/// line breaks and its lines are whatever fits the page.
+List<int> writtenLineStarts(String xml, int partIndex) {
+  final doc = _ScoreDoc(xml);
+  final lines = _writtenLineOf(doc._measures(partIndex));
+  doc.keep(xml);
+  final starts = [
+    for (var i = 0; i < lines.length; i++)
+      if (i == 0 || lines[i] != lines[i - 1]) i,
+  ];
+  return starts.length > 1 ? starts : const [];
+}
+
+/// One part of [xml] as a run of small scores, one for each line of the
+/// score: line i is the bars from `lineStarts[i]` up to the next start
+/// ([lineStarts] begins with 0 and rises). For an editor that engraves the
+/// part line by line: an edit then changes the text of one of them, and
+/// only that one is read and engraved again.
+///
+/// Each is a score on its own: it says the clef, key and time its first bar
+/// begins in, and its bars keep their numbers. A time signature that only
+/// repeats what is in force is marked `print-object="no"` (see
+/// [chunkForDisplay]). The page of the file (titles, margins, written line
+/// and page breaks) and the other parts are left out, as in [partAloneXml].
+List<String> partChunks(String xml, int partIndex, List<int> lineStarts) {
+  if (lineStarts.isEmpty || lineStarts.first != 0) {
+    throw ArgumentError.value(lineStarts, 'lineStarts');
+  }
+  final begins = lineStarts.toSet();
+  final doc = _ScoreDoc(xml);
+  final root = doc.document.rootElement;
+  final parts = root.findElements('part').toList();
+  if (partIndex < 0 || partIndex >= parts.length) {
+    throw const FormatException('파트를 찾을 수 없습니다.');
+  }
+  final part = parts[partIndex];
+  final id = part.getAttribute('id') ?? 'P1';
+  final measures = doc._measures(partIndex);
+  final contexts = doc._contextsOf(measures);
+  final first = xmlFirstBarNumber(xml);
+  final version = root.getAttribute('version');
+  final head =
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<score-partwise${version == null ? '' : ' version="$version"'}>'
+      '<part-list><score-part id="$id"><part-name/></score-part></part-list>'
+      '<part id="$id">';
+  String bar(int index) {
+    var source = measures[index];
+    if (index > 0 && begins.contains(index)) {
+      // The first bar of a later line says everything it begins in.
+      final before = contexts[index];
+      final begins = _beginning(source, before);
+      source = source.copy();
+      _restate(source, begins, _unstated);
+      if (begins.beats == before.beats && begins.beatType == before.beatType) {
+        for (final child in source.childElements) {
+          if (child.name.local == 'note') break;
+          if (child.name.local != 'attributes') continue;
+          for (final time in child.findElements('time')) {
+            time.setAttribute('print-object', 'no');
+          }
+        }
+      }
+    }
+    final text = source.toXmlString().replaceAll(_printElement, '');
+    final open = _measureOpen.firstMatch(text);
+    if (open == null) return text;
+    final tag = open.group(0)!;
+    final numbered = tag.contains(_barNumberAttribute)
+        ? tag.replaceFirst(_barNumberAttribute, 'number="${first + index}"')
+        : tag.replaceFirst('<measure', '<measure number="${first + index}"');
+    return '$numbered${text.substring(tag.length)}';
+  }
+
+  final chunks = <String>[];
+  for (var line = 0; line < lineStarts.length; line++) {
+    final start = lineStarts[line];
+    if (start >= measures.length) break;
+    final end = line + 1 < lineStarts.length
+        ? math.min(lineStarts[line + 1], measures.length)
+        : measures.length;
+    final buffer = StringBuffer(head);
+    for (var index = start; index < end; index++) {
+      buffer.write(bar(index));
+    }
+    buffer.write('</part></score-partwise>');
+    chunks.add(buffer.toString());
+  }
+  doc.keep(xml);
+  return chunks;
+}
+
+final _printElement = RegExp(
+  r'<print\b[^>]*/>|<print\b[^>]*>.*?</print>',
+  dotAll: true,
+);
+final _measureOpen = RegExp(r'^<measure\b[^>]*>');
+final _barNumberAttribute = RegExp(r'\bnumber="[^"]*"');
+
+/// A chunk of [partChunks] as it is engraved: every note named for the event
+/// it decodes to in [decoded] (the chunk's bars, the first of them bar
+/// [start] of the part), and without the time signatures that only repeat
+/// what is in force, which would be printed at the head of every line.
+String chunkForDisplay(String chunk, List<MusicMeasure> decoded, int start) {
+  final document = XmlDocument.parse(chunk);
+  final measures = document.rootElement
+      .findElements('part')
+      .first
+      .findElements('measure')
+      .toList();
+  for (var m = 0; m < measures.length && m < decoded.length; m++) {
+    var noteIndex = 0;
+    for (final note in measures[m].findElements('note')) {
+      final eventIndex = eventIndexForXmlNote(decoded[m], noteIndex++);
+      if (eventIndex != null) {
+        note.setAttribute('id', 'p0-m${start + m}-e$eventIndex');
+      }
+    }
+    for (final attributes in measures[m].findElements('attributes').toList()) {
+      attributes
+          .findElements('time')
+          .where((time) => time.getAttribute('print-object') == 'no')
+          .toList()
+          .forEach(_remove);
+      if (attributes.childElements.isEmpty) _remove(attributes);
+    }
+  }
+  // The bars of a chunk are one line: the engraver is told where the line
+  // begins, and then keeps what follows on it.
+  if (measures.isNotEmpty) {
+    measures.first.children.insert(
+      0,
+      XmlElement(XmlName('print'), [
+        XmlAttribute(XmlName('new-system'), 'yes'),
+      ]),
+    );
+  }
+  return document.toXmlString();
+}
+
+/// [partXml] (one part, see [partAloneXml]) with every note named for the
+/// event it decodes to in [decoded]: a note the engraver draws is then known
+/// for the note that is written, chords and second voices included.
+String tagPartNotes(String partXml, MusicScore decoded) {
+  final document = XmlDocument.parse(partXml);
+  final part = document.rootElement.findElements('part').firstOrNull;
+  if (part == null || decoded.parts.isEmpty) return partXml;
+  final bars = decoded.parts.first.measures;
+  final measures = part.findElements('measure').toList();
+  for (var m = 0; m < measures.length && m < bars.length; m++) {
+    var noteIndex = 0;
+    for (final note in measures[m].findElements('note')) {
+      final eventIndex = eventIndexForXmlNote(bars[m], noteIndex++);
+      if (eventIndex != null) note.setAttribute('id', 'p0-m$m-e$eventIndex');
+    }
+  }
+  return document.toXmlString();
+}
+
 /// The score's bars copied in [measureMap] order, e.g. a playback order.
 ///
 /// Bars are copied from the source XML, so markings the app does not model
