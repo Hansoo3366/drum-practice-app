@@ -116,6 +116,18 @@ class SongFileStorage {
 
   String omrJobPathFor(String songId) => path.join('omr_jobs', '$songId.txt');
 
+  /// Records that the original of a converted song already has the AI
+  /// review's corrections in it (see [OmrConvertService.importResult]).
+  Future<void> saveOmrOriginalHasAi(String songId) async {
+    await _saveSidecar(omrOriginalStagePathFor(songId), 'ai');
+  }
+
+  Future<bool> loadOmrOriginalHasAi(String songId) async =>
+      (await _loadSidecar(omrOriginalStagePathFor(songId)))?.trim() == 'ai';
+
+  String omrOriginalStagePathFor(String songId) =>
+      path.join('omr_original', '$songId.txt');
+
   String omrAiReviewPathFor(String songId) =>
       path.join('omr_ai_review', '$songId.json');
 
@@ -188,6 +200,7 @@ class SongFileStorage {
     await delete(omrReviewStatePathFor(songId));
     await delete(omrAnnotationsPathFor(songId));
     await delete(omrValidationPathFor(songId));
+    await delete(omrOriginalStagePathFor(songId));
   }
 
   String omrReviewStatePathFor(String songId) =>

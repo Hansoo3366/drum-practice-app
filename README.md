@@ -23,7 +23,7 @@ flutter run --flavor piano -t lib/piano_main.dart
 Android 제품 셸은 두 flavor로 분리합니다.
 
 - `drum` / `com.hansookim.pageadiddle`: PDF 뷰어, 메트로놈 및 드럼 연습 기능
-- `piano` / `com.hansookim.pianoscore`: PDF 뷰어, MusicXML 라이브러리, PDF·사진 → 전자악보 변환, Verovio 조판·교정
+- `piano` / `com.hansookim.worshipeasypeasy`(찬양 이지까까): PDF 뷰어, MusicXML 라이브러리, PDF·사진 → 전자악보 변환, Verovio 조판·교정
 
 피아노 셸에는 탭 템포, 템포 트레이너, 세트리스트, 합주 라우트를 넣지 않습니다.
 

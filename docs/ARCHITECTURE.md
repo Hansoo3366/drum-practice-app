@@ -46,7 +46,7 @@ lib/
 
 - 저장소를 복제하지 않고 `drum`과 `piano` Android product flavor를 사용한다.
 - 드럼 진입점은 `lib/main.dart`, 앱 이름·Application ID는 `Page-a-Diddle`·`com.hansookim.pageadiddle`이다. 기존 PDF Viewer·메트로놈·드럼 연습 도구와 Setlist/Jam 화면은 이 셸에 남긴다.
-- 피아노 진입점은 `lib/piano_main.dart`, 앱 이름·Application ID는 `Piano Score`·`com.hansookim.pianoscore`이다. `PianoAppShell`은 Library를 노출하고 Tap Tempo·Tempo Trainer·Setlist·Jam은 라우팅하지 않는다. 음표 입력 탭은 `noteInputEnabled`가 false인 동안 숨긴다.
+- 피아노 진입점은 `lib/piano_main.dart`, 앱 이름·Application ID는 `찬양 이지까까`·`com.hansookim.worshipeasypeasy`이다(2026-10-07 이전 `Piano Score`·`com.hansookim.pianoscore`). `PianoAppShell`은 Library를 노출하고 Tap Tempo·Tempo Trainer·Setlist·Jam은 라우팅하지 않는다. 음표 입력 탭은 `noteInputEnabled`가 false인 동안 숨긴다.
 - 공통 Library의 PDF는 기존 `pdfrx` Viewer로 연다. 피아노 MusicXML은 `DigitalScoreScreen`에서 Verovio로 읽는다. 음표 입력 코드는 Dart `MusicScore` Replace로 남아 있으나 D-164로 UI를 숨겼다. PDF/JPG 변환은 Google VM의 Audiveris HTTP API(`POST /convert`, 포트 8080)로 올리고, 피아노 Library `전자악보로 변환`이 MXL 곡을 만든다.
 - 드럼 셸은 현재 기능을 유지하고, Lomse FFI·3단 보표·MusicXML 왕복·피아노 편집 변경은 피아노 셸에만 반영한다. PDF→MusicXML OMR과 AI 편곡은 별도 서버/worker Future 경계다.
 
@@ -91,6 +91,6 @@ lib/
 
 - 앱 이름: 기본 `Page-a-Diddle`, 피아노 flavor `Piano Score`
 - Dart 패키지명: `page_a_diddle`
-- Android Application ID: 드럼 `com.hansookim.pageadiddle`, 피아노 `com.hansookim.pianoscore`
+- Android Application ID: 드럼 `com.hansookim.pageadiddle`, 피아노 `com.hansookim.worshipeasypeasy`
 - Android: API 26(Android 8.0) 이상
 - iOS: 배포하지 않음 (개발 범위 제외)

@@ -4,6 +4,7 @@ import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/widgets/app_empty_state.dart';
 import 'package:page_a_diddle/core/database/app_database.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/digital_score_screen.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/score_guide.dart';
 import 'package:page_a_diddle/features/library/data/song_repository.dart';
 import 'package:page_a_diddle/features/library/domain/score_type.dart';
 import 'package:page_a_diddle/features/score_viewer/presentation/score_viewer_screen.dart';
@@ -38,7 +39,10 @@ class ScoreEntryScreen extends ConsumerWidget {
           );
         }
         if (ScoreType.fromKey(value.scoreType) == ScoreType.musicXml) {
-          return DigitalScoreScreen(songId: songId);
+          return ScoreGuideGate(
+            songId: songId,
+            child: DigitalScoreScreen(songId: songId),
+          );
         }
         return ScoreViewerScreen(
           songId: songId,

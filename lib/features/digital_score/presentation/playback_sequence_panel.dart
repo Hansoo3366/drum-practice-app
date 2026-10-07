@@ -69,8 +69,8 @@ List<List<ScoreSection>> namedSections(List<ScoreSection> sections) {
 }
 
 /// The section a pick means, when it means one: the pick began on the bar
-/// a section starts at and was not drawn out to a later line. Naming then
-/// renames that section; a pick elsewhere starts a new section.
+/// a named section starts at and was not drawn out to a later line. Naming
+/// then renames that section; a pick elsewhere starts a new section.
 ScoreSection? pickedSection(
   List<ScoreSection> sections,
   int? pickStart, {
@@ -78,7 +78,11 @@ ScoreSection? pickedSection(
 }) {
   if (pickStart == null || extended) return null;
   for (final section in sections) {
-    if (section.startMeasureIndex == pickStart) return section;
+    // A nameless stretch is not picked whole: tapping its first line picks
+    // that line, to start dividing it.
+    if (section.startMeasureIndex == pickStart && section.name.isNotEmpty) {
+      return section;
+    }
   }
   return null;
 }
@@ -276,9 +280,7 @@ class ScoreStructurePanel extends StatelessWidget {
                     : picking || current == null
                     ? l10n.sectionBarPickEnd(bar + firstBarNumber)
                     : [
-                        current.name.isEmpty
-                            ? l10n.sectionUnnamed
-                            : scoreSectionLabel(l10n, current),
+                        scoreSectionLabel(l10n, current),
                         l10n.barNumbers(_sectionBars(current, firstBarNumber)),
                       ].join(' · '),
                 style: bar == null ? muted : theme.textTheme.titleSmall,

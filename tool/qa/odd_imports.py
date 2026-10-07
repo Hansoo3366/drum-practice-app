@@ -15,7 +15,7 @@ import time
 
 import ui
 
-PACKAGE = "com.hansookim.pianoscore"
+PACKAGE = "com.hansookim.worshipeasypeasy"
 ERRORS = re.compile(r"EXCEPTION CAUGHT BY|Unhandled Exception|overflowed by|FATAL EXCEPTION|Another exception")
 
 

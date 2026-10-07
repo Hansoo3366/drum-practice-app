@@ -17,6 +17,40 @@ class _VerovioPage {
   final double visibleHeight;
 }
 
+/// The boxes that mark a run of bars, one per staff line instead of one per
+/// bar: bars of a line differ in height (a high note, a chord above), and
+/// marked one by one they make a ragged row of boxes. [bars] are the bars'
+/// boxes in playing order.
+///
+/// Lines that follow one another are joined: the box of a line reaches down
+/// to the next, so several lines read as one block, like selected text. A
+/// wide gap (the next page) is left open.
+@visibleForTesting
+List<Rect> lineBoxes(List<Rect> bars) {
+  if (bars.isEmpty) return const [];
+  final lines = <Rect>[bars.first];
+  for (final bar in bars.skip(1)) {
+    final line = lines.last;
+    // A bar that starts left of where the line has got to, or below it, is on
+    // the next line.
+    final sameLine = bar.left >= line.left && bar.top < line.bottom;
+    if (sameLine) {
+      lines[lines.length - 1] = line.expandToInclude(bar);
+    } else {
+      lines.add(bar);
+    }
+  }
+  for (var i = 0; i + 1 < lines.length; i++) {
+    final line = lines[i];
+    final next = lines[i + 1];
+    final gap = next.top - line.bottom;
+    if (gap > 0 && gap <= math.min(line.height, next.height)) {
+      lines[i] = Rect.fromLTRB(line.left, line.top, line.right, next.top);
+    }
+  }
+  return lines;
+}
+
 /// The screen shows pages as one continuous document. Verovio fills A4
 /// pages, so a page whose systems end early would leave a blank band before
 /// the next page; stop each page a small margin below its last system.

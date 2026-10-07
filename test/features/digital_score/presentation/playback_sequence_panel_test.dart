@@ -108,9 +108,11 @@ void main() {
     }
   });
 
-  testWidgets('an unnamed section says so instead of its bars twice', (
-    tester,
-  ) async {
+  testWidgets('the nameless bars before the first mark are picked by the '
+      'line, not all at once', (tester) async {
+    // "주가 보이신 생명의 길": the first mark the conversion found is at bar 12,
+    // so bars 1-11 are a stretch without a name. Tapping the first line (bars
+    // 1-4) picks that line.
     await _pump(
       tester,
       sections: const [
@@ -119,20 +121,23 @@ void main() {
           name: '',
           number: null,
           startMeasureIndex: 0,
-          endMeasureIndex: 5,
+          endMeasureIndex: 10,
         ),
         ScoreSection(
-          id: 'm6',
+          id: 'm11',
           name: 'VERSE',
           number: null,
-          startMeasureIndex: 6,
-          endMeasureIndex: 9,
+          startMeasureIndex: 11,
+          endMeasureIndex: 19,
         ),
       ],
       selectedBar: 0,
+      selectedEnd: 3,
     );
 
-    expect(find.text('이름 없음 · 1–6마디'), findsOneWidget);
+    expect(find.textContaining('1–4마디'), findsOneWidget);
+    expect(find.textContaining('1–11마디'), findsNothing);
+    expect(find.textContaining('이름 없음'), findsNothing);
   });
 
   test(
@@ -142,6 +147,17 @@ void main() {
       expect(pickedSection(_sections, 4, extended: true), isNull);
       expect(pickedSection(_sections, 5, extended: false), isNull);
       expect(pickedSection(_sections, null, extended: false), isNull);
+      // A stretch without a name is not a section to pick whole.
+      const nameless = [
+        ScoreSection(
+          id: 'm0',
+          name: '',
+          number: null,
+          startMeasureIndex: 0,
+          endMeasureIndex: 10,
+        ),
+      ];
+      expect(pickedSection(nameless, 0, extended: false), isNull);
     },
   );
 

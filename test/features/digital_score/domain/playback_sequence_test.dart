@@ -4,6 +4,7 @@ import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.da
 import 'package:page_a_diddle/features/digital_score/domain/score_editor.dart';
 
 void main() {
+  _dividingTests();
   group('sections', () {
     test('reads rehearsal marks written by older versions', () {
       final sections = scoreSections(
@@ -1076,6 +1077,87 @@ MusicBarline _barline(
   endingType: endingType,
   endingNumbers: endings,
 );
+
+void _dividingTests() {
+  group('dividing a converted score', () {
+    test('a mark the conversion misread keeps its place without its name', () {
+      // A boxed "B" read as "프", a boxed letter read right, a Korean word.
+      final score = _score(measures: 20, marks: {4: '프', 8: 'B', 12: '간주'});
+
+      expect(isMisreadSectionName('프'), isTrue);
+      expect(isMisreadSectionName('쁘'), isTrue);
+      for (final name in ['A', 'B2', 'Verse', '간주', '후렴', '']) {
+        expect(isMisreadSectionName(name), isFalse, reason: name);
+      }
+      expect(
+        scoreSections(
+          score,
+          PlaybackSequence.empty,
+        ).map((s) => (s.startMeasureIndex, s.endMeasureIndex, s.name)),
+        [(0, 3, ''), (4, 7, ''), (8, 11, 'B'), (12, 19, '간주')],
+      );
+    });
+
+    test('a misread mark makes the app label the sections itself', () {
+      final clean = _score(measures: 8, marks: {0: 'A', 4: 'B'});
+      final misread = _score(measures: 8, marks: {0: 'A', 4: '프'});
+
+      expect(usesOwnSectionLabels(clean, PlaybackSequence.empty), isFalse);
+      expect(usesOwnSectionLabels(misread, PlaybackSequence.empty), isTrue);
+      expect(
+        usesOwnSectionLabels(
+          clean,
+          PlaybackSequence(
+            marks: [SectionMark(startMeasureIndex: 0, name: 'INTRO')],
+          ),
+        ),
+        isTrue,
+      );
+    });
+
+    test('naming a line of a nameless stretch names that line only', () {
+      // Bars 1-11 have no name (the first mark is at bar 12); the first line
+      // is bars 1-4.
+      final score = _score(measures: 20, marks: {11: 'VERSE'});
+      final named = nameSectionPick(
+        score,
+        PlaybackSequence.empty,
+        start: 0,
+        end: 3,
+        extended: false,
+        name: 'INTRO',
+      );
+
+      expect(
+        scoreSections(
+          score,
+          named,
+        ).map((s) => (s.startMeasureIndex, s.endMeasureIndex, s.name)),
+        [(0, 3, 'INTRO'), (4, 10, ''), (11, 19, 'VERSE')],
+      );
+    });
+
+    test('naming the first line of a named section renames the section', () {
+      final score = _score(measures: 20, marks: {0: 'INTRO', 11: 'VERSE'});
+      final named = nameSectionPick(
+        score,
+        PlaybackSequence.empty,
+        start: 0,
+        end: 3,
+        extended: false,
+        name: 'CHORUS',
+      );
+
+      expect(
+        scoreSections(
+          score,
+          named,
+        ).map((s) => (s.startMeasureIndex, s.endMeasureIndex, s.name)),
+        [(0, 10, 'CHORUS'), (11, 19, 'VERSE')],
+      );
+    });
+  });
+}
 
 MusicMeasure _measure(
   int index, {

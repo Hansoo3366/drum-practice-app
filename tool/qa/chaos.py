@@ -22,7 +22,7 @@ import time
 
 import ui
 
-PACKAGE = sys.argv[3] if len(sys.argv) > 3 else "com.hansookim.pianoscore"
+PACKAGE = sys.argv[3] if len(sys.argv) > 3 else "com.hansookim.worshipeasypeasy"
 ERRORS = re.compile(
     r"EXCEPTION CAUGHT BY|Unhandled Exception|overflowed by|FATAL EXCEPTION|ANR in "
     + re.escape(PACKAGE)

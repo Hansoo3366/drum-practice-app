@@ -14,11 +14,9 @@ import 'package:page_a_diddle/features/digital_score/domain/omr_quality_analyzer
 import 'package:page_a_diddle/features/digital_score/domain/omr_review.dart';
 import 'package:page_a_diddle/features/library/domain/picked_local_file.dart';
 
-/// Name of the version holding the server's automatic OMR corrections.
-const autoCorrectedVersionName = '자동 보정';
-
-/// The server's AI review applied (chords and lyrics); kept as a separate
-/// version the user opens to compare, never the one that opens first.
+/// The version [OmrConvertService.fetchAiVersion] adds when the AI review
+/// did not finish with the conversion and is fetched afterwards. A
+/// conversion whose review did finish has it in the original instead.
 const aiCorrectedVersionName = 'AI 보정';
 
 /// Origin of the AI version in the version catalog.
@@ -211,47 +209,28 @@ class OmrConvertService {
     PickedLocalFile? original,
   }) async {
     final mxl = await _client.jobResult(jobId);
-    final raw = await _client.jobRawResult(jobId);
     final corrections = await _client.jobCorrections(jobId);
     final validation = await _client.jobValidation(jobId);
     final annotations = await _client.jobAnnotations(jobId);
     final ai = await _client.jobAiResult(jobId);
     final aiReview = await _client.jobAiReview(jobId);
-    // The engine's own export stays the original; the server's corrections
-    // become a version on top, so the user can always go back (OMR spec §19).
-    final corrected = raw != null && !_sameBytes(raw, mxl);
+    // The score the user asked for is the finished one: read by the engine,
+    // corrected by the server's rules and, when the AI review ran, by it.
+    // That is the original. The stages before it are not versions to choose
+    // from (the user's decision, D-220); what each stage changed is kept in
+    // the correction history and the review.
+    final finished = ai ?? mxl;
     final songId = await _importer.importMusicXml(
-      file: PickedLocalFile(name: '$title.mxl', bytes: corrected ? raw : mxl),
+      file: PickedLocalFile(name: '$title.mxl', bytes: finished),
       title: title,
       folderId: folderId,
     );
-    if (corrected) {
-      final editor = DigitalScoreEditorService(storage: _storage, codec: codec);
-      await editor.addXmlVersion(
-        songId: songId,
-        musicXml: codec.xmlString(mxl, fileName: '$title.mxl'),
-        catalog: await editor.loadVersionCatalog(songId),
-        name: autoCorrectedVersionName,
-      );
-      if (corrections != null) {
-        await _storage.saveOmrCorrections(songId, corrections);
-      }
+    if (corrections != null) {
+      await _storage.saveOmrCorrections(songId, corrections);
     }
     if (ai != null) {
-      final editor = DigitalScoreEditorService(storage: _storage, codec: codec);
-      final before = await editor.loadVersionCatalog(songId);
-      final after = await editor.addXmlVersion(
-        songId: songId,
-        musicXml: codec.xmlString(ai, fileName: '$title.ai.mxl'),
-        catalog: before,
-        name: aiCorrectedVersionName,
-        origin: aiVersionOrigin,
-      );
-      // Open on the rule-corrected (or original) score; AI is one tap away.
-      await editor.saveVersionCatalog(
-        songId,
-        after.copyWith(activeId: before.activeId),
-      );
+      // No "AI 보정 받기" for this song: it already has it.
+      await _storage.saveOmrOriginalHasAi(songId);
     }
     if (aiReview != null) {
       await _storage.saveOmrAiReview(songId, aiReview);
@@ -287,18 +266,10 @@ class OmrConvertService {
         bytes: original.bytes!,
       );
     }
-    final xml = codec.xmlString(mxl, fileName: '$title.mxl');
+    final xml = codec.xmlString(finished, fileName: '$title.mxl');
     final report = analyzer.analyze(codec.decodeXml(xml), sourceXml: xml);
     await _storage.saveOmrQuality(songId, jsonEncode(report.toJson()));
     return songId;
-  }
-
-  static bool _sameBytes(Uint8List a, Uint8List b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
   }
 
   Future<Uint8List> _read(PickedLocalFile file) async {

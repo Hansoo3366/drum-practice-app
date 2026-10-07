@@ -94,7 +94,7 @@ class OmrReviewSuggestion {
   /// The model's own probability (0–1) that the suggestion is right.
   final double? confidence;
 
-  /// Whether the "AI 보정" version already has it; the rest is advice only.
+  /// Whether the score already has it; the rest is advice only.
   final bool applied;
 
   /// Why it was or was not written, as the server says: applied,
@@ -121,11 +121,11 @@ class OmrReviewSuggestion {
 
   /// What the user should know about the suggestion.
   String get advice => switch (status) {
-    'applied' => 'AI 보정 버전에 반영됨',
+    'applied' => '악보에 반영됨',
     'low_confidence' => '확신이 낮아 반영하지 않음 · 검토 권장',
     'notes' => '음표는 자동으로 넣지 않음 · 확인 후 넣기',
     'no_fit' => '악보에 맞지 않아 반영하지 않음 · 검토 권장',
-    _ => applied ? 'AI 보정 버전에 반영됨' : '제안만',
+    _ => applied ? '악보에 반영됨' : '제안만',
   };
   final String? verse;
   final int? note;

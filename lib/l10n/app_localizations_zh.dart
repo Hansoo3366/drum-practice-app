@@ -603,14 +603,54 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get privacyBodyPiano =>
-      'Piano Score keeps your scores, versions and settings on this device. There is no account, and no name or contact is collected.\n\nWhen you convert a score, the photo or PDF you pick is sent to the conversion server (HTTPS). To read and check the score, the server sends parts of the score image to an AI service (Google Gemini). Uploaded files and results are deleted from the server six hours after the conversion ends.\n\nWhen you ask for an AI suggestion, a summary of the chords and sections is sent to the same server and AI service.\n\nTo count daily use, a random identifier made when the app is installed is registered with the server. It is not used to identify a person.\n\nCloud storage (WebDAV, Google Drive, Dropbox) exchanges files only with the places you connect.\n\nNo advertising or analytics tools are used.\n\nContact: support@page-a-diddle.app';
+      'Worship Easy Peasy keeps your scores, versions and settings on this device. There is no account, and no name or contact is collected.\n\nWhen you convert a score, the photo or PDF you pick is sent to the conversion server (HTTPS). To read and check the score, the server sends parts of the score image to an AI service (Google Gemini). Uploaded files and results are deleted from the server six hours after the conversion ends.\n\nWhen you ask for an AI suggestion, a summary of the chords and sections is sent to the same server and AI service.\n\nTo count daily use, a random identifier made when the app is installed is registered with the server. It is not used to identify a person.\n\nCloud storage (WebDAV, Google Drive, Dropbox) exchanges files only with the places you connect.\n\nNo advertising or analytics tools are used.\n\nContact: support@page-a-diddle.app';
 
   @override
   String get termsBodyPiano =>
-      'By using Piano Score you agree to use it for lawful personal or professional music practice.\n\nYou are responsible for the rights to the scores and files you import or convert. Do not import or convert material you may not use.\n\nConversion and AI corrections can be wrong. Check the result against the original before relying on it.\n\nThe app is provided as is, without a guarantee of uninterrupted operation.\n\nContact: support@page-a-diddle.app';
+      'By using Worship Easy Peasy you agree to use it for lawful personal or professional music practice.\n\nYou are responsible for the rights to the scores and files you import or convert. Do not import or convert material you may not use.\n\nConversion and AI corrections can be wrong. Check the result against the original before relying on it.\n\nThe app is provided as is, without a guarantee of uninterrupted operation.\n\nContact: support@page-a-diddle.app';
 
   @override
   String get convertHint => 'A photo or PDF of a score';
+
+  @override
+  String get scoreGuide => 'Screen guide';
+
+  @override
+  String get scoreGuideTitle => 'Screen guide';
+
+  @override
+  String get scoreGuideIntro =>
+      'What the buttons above the score do. You can open this again from Screen guide in the tools menu.';
+
+  @override
+  String get scoreGuideVersionTitle => 'Version (the name beside the title)';
+
+  @override
+  String get scoreGuideVersionBody =>
+      'Switch between the original and the scores you edited or transposed. The original always stays as it is.';
+
+  @override
+  String get scoreGuideOrderBody =>
+      'Divide the score into sections such as Verse and Chorus and set the order to play them. You can make a new score in that order.';
+
+  @override
+  String get scoreGuideReviewBody =>
+      'The number is how many bars the conversion was unsure of. Open it to compare with the original and take the suggestions you want.';
+
+  @override
+  String get scoreGuideProofreadBody =>
+      'Fix wrong chords, lyrics and notes yourself. It is saved as a new version.';
+
+  @override
+  String get scoreGuidePlayBody =>
+      'Listen to the score. Tap a bar to start there, and change the speed on the bar below.';
+
+  @override
+  String get scoreGuideToolsBody =>
+      'Transpose, make instrument scores, export PDF or MusicXML, and song information are here.';
+
+  @override
+  String get scoreGuideDone => 'Got it';
 
   @override
   String get multiPhotoHint =>

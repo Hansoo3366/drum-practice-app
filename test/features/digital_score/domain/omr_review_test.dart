@@ -136,7 +136,7 @@ void main() {
     expect(chords.confidence, 0.92);
     expect(chords.applied, isTrue);
     // An older report without statuses: applied when the applied list says so.
-    expect(chords.advice, 'AI 보정 버전에 반영됨');
+    expect(chords.advice, '악보에 반영됨');
     expect(pitch.label, '2번째 음 높이');
     expect(pitch.applied, isFalse);
     expect(pitch.advice, '음표는 자동으로 넣지 않음 · 확인 후 넣기');

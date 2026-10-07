@@ -45,6 +45,7 @@ import 'package:page_a_diddle/features/digital_score/presentation/piano_part_she
 import 'package:page_a_diddle/features/digital_score/presentation/piano_score_view.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/playback_sequence_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_editor_panel.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/score_guide.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_playback_bar.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_proofread_screen.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_structure_controller.dart';
@@ -498,7 +499,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         marks: performanceSectionMarks(written, _sequence),
       );
     }
-    if (sequence.marks.isNotEmpty) {
+    if (usesOwnSectionLabels(score, sequence)) {
       xml = withSectionRehearsals(xml, [
         for (final section in scoreSections(score, sequence))
           if (section.name.isNotEmpty && !section.continued)
@@ -1416,6 +1417,10 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         _export(data, score, ScoreExportKind.pdf);
       case _ScoreMenuAction.exportProject:
         _export(data, score, ScoreExportKind.project);
+      case _ScoreMenuAction.guide:
+        unawaited(
+          showScoreGuideSheet(context, converted: data.omrJobId != null),
+        );
     }
   }
 
@@ -2184,9 +2189,11 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                               title: Text(context.l10n.renameScoreVersion),
                             ),
                           ),
-                        // The AI version is fetched from here on every screen
-                        // size: the toolbar has no button for it.
+                        // Only for a conversion whose AI review did not
+                        // finish (no credit, a server error): the original
+                        // normally has it already.
                         if (value.omrJobId != null &&
+                            !value.aiInOriginal &&
                             !_versionCatalog.versions.any(
                               (version) =>
                                   version.origin == aiVersionOrigin ||
@@ -2250,6 +2257,14 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                             title: Text('MIDI'),
                           ),
                         ),
+                        PopupMenuItem(
+                          value: _ScoreMenuAction.guide,
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.help_outline_rounded),
+                            title: Text(context.l10n.scoreGuide),
+                          ),
+                        ),
                       ],
                     ),
                   const SizedBox(width: 4),
@@ -2287,7 +2302,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                       highlightedMeasureRange: pickedRange,
                       // Sections the user set replace the printed rehearsal
                       // boxes on screen; the file itself is not touched.
-                      rehearsalMarks: _sequence.marks.isEmpty
+                      rehearsalMarks: !usesOwnSectionLabels(score, _sequence)
                           ? null
                           : [
                               for (final section in sections)

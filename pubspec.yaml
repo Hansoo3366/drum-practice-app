@@ -131,6 +131,10 @@ flutter:
     - path: assets/soundfont/
       flavors:
         - piano
+    # The picture the piano app opens with (made by tool/brand/piano_brand.py).
+    - path: assets/piano/splash.jpg
+      flavors:
+        - piano
     - assets/brands/
     - assets/icons/
 

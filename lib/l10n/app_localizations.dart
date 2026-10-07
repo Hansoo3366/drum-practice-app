@@ -1211,13 +1211,13 @@ abstract class AppLocalizations {
   /// privacyBodyPiano
   ///
   /// In en, this message translates to:
-  /// **'Piano Score keeps your scores, versions and settings on this device. There is no account, and no name or contact is collected.\n\nWhen you convert a score, the photo or PDF you pick is sent to the conversion server (HTTPS). To read and check the score, the server sends parts of the score image to an AI service (Google Gemini). Uploaded files and results are deleted from the server six hours after the conversion ends.\n\nWhen you ask for an AI suggestion, a summary of the chords and sections is sent to the same server and AI service.\n\nTo count daily use, a random identifier made when the app is installed is registered with the server. It is not used to identify a person.\n\nCloud storage (WebDAV, Google Drive, Dropbox) exchanges files only with the places you connect.\n\nNo advertising or analytics tools are used.\n\nContact: support@page-a-diddle.app'**
+  /// **'Worship Easy Peasy keeps your scores, versions and settings on this device. There is no account, and no name or contact is collected.\n\nWhen you convert a score, the photo or PDF you pick is sent to the conversion server (HTTPS). To read and check the score, the server sends parts of the score image to an AI service (Google Gemini). Uploaded files and results are deleted from the server six hours after the conversion ends.\n\nWhen you ask for an AI suggestion, a summary of the chords and sections is sent to the same server and AI service.\n\nTo count daily use, a random identifier made when the app is installed is registered with the server. It is not used to identify a person.\n\nCloud storage (WebDAV, Google Drive, Dropbox) exchanges files only with the places you connect.\n\nNo advertising or analytics tools are used.\n\nContact: support@page-a-diddle.app'**
   String get privacyBodyPiano;
 
   /// termsBodyPiano
   ///
   /// In en, this message translates to:
-  /// **'By using Piano Score you agree to use it for lawful personal or professional music practice.\n\nYou are responsible for the rights to the scores and files you import or convert. Do not import or convert material you may not use.\n\nConversion and AI corrections can be wrong. Check the result against the original before relying on it.\n\nThe app is provided as is, without a guarantee of uninterrupted operation.\n\nContact: support@page-a-diddle.app'**
+  /// **'By using Worship Easy Peasy you agree to use it for lawful personal or professional music practice.\n\nYou are responsible for the rights to the scores and files you import or convert. Do not import or convert material you may not use.\n\nConversion and AI corrections can be wrong. Check the result against the original before relying on it.\n\nThe app is provided as is, without a guarantee of uninterrupted operation.\n\nContact: support@page-a-diddle.app'**
   String get termsBodyPiano;
 
   /// convertHint
@@ -1225,6 +1225,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'A photo or PDF of a score'**
   String get convertHint;
+
+  /// scoreGuide
+  ///
+  /// In en, this message translates to:
+  /// **'Screen guide'**
+  String get scoreGuide;
+
+  /// scoreGuideTitle
+  ///
+  /// In en, this message translates to:
+  /// **'Screen guide'**
+  String get scoreGuideTitle;
+
+  /// scoreGuideIntro
+  ///
+  /// In en, this message translates to:
+  /// **'What the buttons above the score do. You can open this again from Screen guide in the tools menu.'**
+  String get scoreGuideIntro;
+
+  /// scoreGuideVersionTitle
+  ///
+  /// In en, this message translates to:
+  /// **'Version (the name beside the title)'**
+  String get scoreGuideVersionTitle;
+
+  /// scoreGuideVersionBody
+  ///
+  /// In en, this message translates to:
+  /// **'Switch between the original and the scores you edited or transposed. The original always stays as it is.'**
+  String get scoreGuideVersionBody;
+
+  /// scoreGuideOrderBody
+  ///
+  /// In en, this message translates to:
+  /// **'Divide the score into sections such as Verse and Chorus and set the order to play them. You can make a new score in that order.'**
+  String get scoreGuideOrderBody;
+
+  /// scoreGuideReviewBody
+  ///
+  /// In en, this message translates to:
+  /// **'The number is how many bars the conversion was unsure of. Open it to compare with the original and take the suggestions you want.'**
+  String get scoreGuideReviewBody;
+
+  /// scoreGuideProofreadBody
+  ///
+  /// In en, this message translates to:
+  /// **'Fix wrong chords, lyrics and notes yourself. It is saved as a new version.'**
+  String get scoreGuideProofreadBody;
+
+  /// scoreGuidePlayBody
+  ///
+  /// In en, this message translates to:
+  /// **'Listen to the score. Tap a bar to start there, and change the speed on the bar below.'**
+  String get scoreGuidePlayBody;
+
+  /// scoreGuideToolsBody
+  ///
+  /// In en, this message translates to:
+  /// **'Transpose, make instrument scores, export PDF or MusicXML, and song information are here.'**
+  String get scoreGuideToolsBody;
+
+  /// scoreGuideDone
+  ///
+  /// In en, this message translates to:
+  /// **'Got it'**
+  String get scoreGuideDone;
 
   /// How to pick several page photos in the system file picker
   ///

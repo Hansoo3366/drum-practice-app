@@ -43,11 +43,19 @@ class _VerovioOverlayPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final range = highlightedRange;
     final marked = [
+      // A run of bars (picked lines, a section) is one box per line, the
+      // lines joined into a block; a single bar is its own box.
+      if (range != null)
+        ...lineBoxes([
+          for (final measure in [
+            ...layout.measures,
+          ]..sort((a, b) => a.measureIndex.compareTo(b.measureIndex)))
+            if (measure.measureIndex >= range.start &&
+                measure.measureIndex <= range.end)
+              measure.rect,
+        ]),
       for (final measure in layout.measures)
-        if ((range != null &&
-                measure.measureIndex >= range.start &&
-                measure.measureIndex <= range.end) ||
-            measure.measureIndex == highlightedMeasureIndex ||
+        if (measure.measureIndex == highlightedMeasureIndex ||
             measure.measureIndex == playbackMeasure ||
             measure.measureIndex == measureDragTo)
           measure.rect,

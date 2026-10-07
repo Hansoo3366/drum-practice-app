@@ -52,3 +52,6 @@ dart_defines.local.json
 
 # Accuracy outputs contain private score/lyric content and registered client secrets.
 /score_sample/_accuracy/
+
+# Google 콘솔에서 내려받은 OAuth 클라이언트 파일
+client_secret*.json

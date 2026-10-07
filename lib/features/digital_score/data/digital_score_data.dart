@@ -27,6 +27,7 @@ class DigitalScoreData {
     this.originalFifths = 0,
     this.quality,
     this.omrJobId,
+    this.aiInOriginal = false,
   });
 
   final Song song;
@@ -49,6 +50,10 @@ class DigitalScoreData {
 
   /// Server job that converted the song, while its AI version can be fetched.
   final String? omrJobId;
+
+  /// Whether the original of a converted song already has the AI review's
+  /// corrections: then there is nothing more to fetch.
+  final bool aiInOriginal;
 }
 
 final digitalScoreDataProvider = FutureProvider.autoDispose
@@ -117,6 +122,9 @@ final digitalScoreDataProvider = FutureProvider.autoDispose
         originalFifths: originalFifths,
         quality: quality,
         omrJobId: await ref.watch(songFileStorageProvider).loadOmrJobId(songId),
+        aiInOriginal: await ref
+            .watch(songFileStorageProvider)
+            .loadOmrOriginalHasAi(songId),
       );
     });
 

@@ -51,8 +51,8 @@ android {
         }
         create("piano") {
             dimension = "product"
-            applicationId = "com.hansookim.pianoscore"
-            resValue("string", "app_name", "Piano Score")
+            applicationId = "com.hansookim.worshipeasypeasy"
+            resValue("string", "app_name", "찬양 이지까까")
         }
     }
 

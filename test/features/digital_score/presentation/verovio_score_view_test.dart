@@ -4,6 +4,68 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
 
 void main() {
+  group('marking a run of bars', () {
+    test('the bars of a line are one box, however tall each is', () {
+      // Three bars side by side; the middle one has a high note.
+      final boxes = lineBoxes(const [
+        Rect.fromLTRB(10, 100, 110, 180),
+        Rect.fromLTRB(108, 80, 210, 180),
+        Rect.fromLTRB(208, 100, 300, 190),
+      ]);
+
+      expect(boxes, [const Rect.fromLTRB(10, 80, 300, 190)]);
+    });
+
+    test('lines that follow one another join into a block', () {
+      final boxes = lineBoxes(const [
+        Rect.fromLTRB(10, 100, 150, 180),
+        Rect.fromLTRB(150, 100, 300, 180),
+        // Next line, 40 below.
+        Rect.fromLTRB(10, 220, 160, 300),
+        Rect.fromLTRB(160, 215, 300, 300),
+      ]);
+
+      expect(boxes, [
+        // The first line reaches down to the second: no stripe between.
+        const Rect.fromLTRB(10, 100, 300, 215),
+        const Rect.fromLTRB(10, 215, 300, 300),
+      ]);
+    });
+
+    test('a run that starts in the middle of a line keeps its shape', () {
+      // The last bar of one line and the whole next line.
+      final boxes = lineBoxes(const [
+        Rect.fromLTRB(200, 100, 300, 180),
+        Rect.fromLTRB(10, 220, 150, 300),
+        Rect.fromLTRB(150, 220, 300, 300),
+      ]);
+
+      expect(boxes, [
+        const Rect.fromLTRB(200, 100, 300, 220),
+        const Rect.fromLTRB(10, 220, 300, 300),
+      ]);
+    });
+
+    test('the gap to the next page stays open', () {
+      final boxes = lineBoxes(const [
+        Rect.fromLTRB(10, 100, 300, 180),
+        Rect.fromLTRB(10, 600, 300, 680),
+      ]);
+
+      expect(boxes, [
+        const Rect.fromLTRB(10, 100, 300, 180),
+        const Rect.fromLTRB(10, 600, 300, 680),
+      ]);
+    });
+
+    test('one bar is its own box, none is none', () {
+      expect(lineBoxes(const [Rect.fromLTRB(1, 2, 3, 4)]), [
+        const Rect.fromLTRB(1, 2, 3, 4),
+      ]);
+      expect(lineBoxes(const []), isEmpty);
+    });
+  });
+
   test('removes positioned Verovio text including numeric measure labels', () {
     const source = '''
 <svg viewBox="0 0 2100 2970">

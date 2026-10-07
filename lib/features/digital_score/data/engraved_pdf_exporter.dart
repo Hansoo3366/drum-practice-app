@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/painting.dart' show TextAlign;
+import 'package:page_a_diddle/app/branding/app_branding.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_text_labels.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -36,7 +37,10 @@ class EngravedPdfExporter {
     required ByteData text,
     List<ByteData> fallbacks = const [],
   }) async {
-    final document = pw.Document(title: title, creator: 'Piano Score');
+    final document = pw.Document(
+      title: title,
+      creator: AppBranding.pianoAppNameLatin,
+    );
     final font = pw.Font.ttf(text);
     final others = [for (final data in fallbacks) pw.Font.ttf(data)];
     for (final page in pages) {

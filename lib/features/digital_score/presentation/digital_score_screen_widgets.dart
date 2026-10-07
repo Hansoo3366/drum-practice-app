@@ -324,6 +324,7 @@ enum _ScoreMenuAction {
   exportMidi,
   exportPdf,
   exportProject,
+  guide,
 }
 
 class _SectionNameDialog extends StatefulWidget {

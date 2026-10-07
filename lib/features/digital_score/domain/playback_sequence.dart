@@ -407,14 +407,44 @@ List<ScoreSection> scoreSections(MusicScore score, PlaybackSequence sequence) {
 }
 
 /// Boundaries from rehearsal marks in the score (older app versions).
+///
+/// A mark the conversion plainly misread keeps its place and loses its name:
+/// the boxed letter was there on the page, but "프" for a boxed "B" is not a
+/// name to show.
 List<SectionMark> rehearsalSectionMarks(MusicScore score) {
   if (score.parts.isEmpty) return const [];
   final measures = score.parts.first.measures;
   return [
     for (var index = 0; index < measures.length; index++)
       if (measurePlaybackSection(measures[index]) case final name?)
-        SectionMark(startMeasureIndex: index, name: name),
+        SectionMark(
+          startMeasureIndex: index,
+          name: isMisreadSectionName(name) ? '' : name,
+        ),
   ];
+}
+
+/// Whether the printed section boxes of [score] must give way to the app's
+/// own labels: the user set sections, or a printed mark was misread and must
+/// not be shown as it stands.
+bool usesOwnSectionLabels(MusicScore score, PlaybackSequence sequence) {
+  if (sequence.marks.isNotEmpty) return true;
+  if (score.parts.isEmpty) return false;
+  return score.parts.first.measures.any((measure) {
+    final name = measurePlaybackSection(measure);
+    return name != null && isMisreadSectionName(name);
+  });
+}
+
+/// Whether [name] is what character recognition makes of a boxed letter
+/// rather than a section's name: one Korean syllable on its own. Korean
+/// section words have two or more ("간주", "후렴"); letters and English words
+/// are names.
+bool isMisreadSectionName(String name) {
+  final text = name.trim();
+  if (text.runes.length != 1) return false;
+  final rune = text.runes.single;
+  return rune >= 0xAC00 && rune <= 0xD7A3;
 }
 
 /// Starts a section named [name] at bar [measureIndex], or renames the
@@ -471,9 +501,14 @@ PlaybackSequence nameSectionPick(
   required bool extended,
   required String name,
 }) {
+  // Only a section with a name is picked whole: the nameless stretch before
+  // the first mark, or after a misread one, is just bars to divide.
   final startsSection =
       !extended &&
-      scoreSections(score, sequence).any((s) => s.startMeasureIndex == start);
+      scoreSections(
+        score,
+        sequence,
+      ).any((s) => s.startMeasureIndex == start && s.name.isNotEmpty);
   final last = end?.clamp(start, score.measureCount - 1);
   if (startsSection || last == null) {
     return setSectionBoundary(score, sequence, measureIndex: start, name: name);
