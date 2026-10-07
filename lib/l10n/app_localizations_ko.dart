@@ -2216,4 +2216,314 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get pianoSplitAuto => '자동';
+
+  @override
+  String get toolsMarks => '기호';
+
+  @override
+  String get toolsBarSigns => '마디 기호';
+
+  @override
+  String get noteToRest => '쉼표로';
+
+  @override
+  String get removeNoteTool => '삭제';
+
+  @override
+  String get splitNote => '나누기';
+
+  @override
+  String get insertTool => '넣기';
+
+  @override
+  String get insertNoteBefore => '앞에 음표';
+
+  @override
+  String get insertNoteAfter => '뒤에 음표';
+
+  @override
+  String get insertRestBefore => '앞에 쉼표';
+
+  @override
+  String get insertRestAfter => '뒤에 쉼표';
+
+  @override
+  String get graceNote => '꾸밈음';
+
+  @override
+  String get tieTool => '붙임줄';
+
+  @override
+  String get tuplet => '잇단음표';
+
+  @override
+  String tupletOf(int n) {
+    return '$n잇단음표';
+  }
+
+  @override
+  String get tupletRemove => '잇단음표 해제';
+
+  @override
+  String get doubleSharp => '겹올림표';
+
+  @override
+  String get doubleFlat => '겹내림표';
+
+  @override
+  String get staccato => '스타카토';
+
+  @override
+  String get staccatissimo => '스타카티시모';
+
+  @override
+  String get tenuto => '테누토';
+
+  @override
+  String get marcato => '마르카토';
+
+  @override
+  String get fermata => '늘임표';
+
+  @override
+  String get dynamics => '셈여림';
+
+  @override
+  String get dynamicsNone => '없음';
+
+  @override
+  String get keyAndTime => '조표 · 박자표';
+
+  @override
+  String get clef => '음자리표';
+
+  @override
+  String get clefTreble => '높은음자리표';
+
+  @override
+  String get clefBass => '낮은음자리표';
+
+  @override
+  String get clefAlto => '알토';
+
+  @override
+  String get clefTenor => '테너';
+
+  @override
+  String get repeatStart => '반복 시작';
+
+  @override
+  String get repeatEnd => '반복 끝';
+
+  @override
+  String get barlineTool => '세로줄';
+
+  @override
+  String get barlineRegular => '보통';
+
+  @override
+  String get barlineDouble => '겹세로줄';
+
+  @override
+  String get barlineFinal => '끝세로줄';
+
+  @override
+  String get endings => '괄호';
+
+  @override
+  String endingStart(int n) {
+    return '$n번 괄호 시작';
+  }
+
+  @override
+  String endingEnd(int n) {
+    return '$n번 괄호 끝';
+  }
+
+  @override
+  String get navigationSigns => '도돌이 기호';
+
+  @override
+  String get tempoMark => '빠르기';
+
+  @override
+  String get tempoBpmLabel => '분당 박 수';
+
+  @override
+  String get tempoText => '빠르기말 (선택)';
+
+  @override
+  String get tempoRemove => '빠르기 지우기';
+
+  @override
+  String get rehearsalMark => '구간 이름';
+
+  @override
+  String get rehearsalHint => 'Verse, Chorus, A…';
+
+  @override
+  String get addText => '글자 넣기';
+
+  @override
+  String get addTextHint => 'rit., 2x…';
+
+  @override
+  String get slurTool => '이음줄';
+
+  @override
+  String get linesMenu => '선';
+
+  @override
+  String get crescendo => '크레셴도';
+
+  @override
+  String get diminuendo => '디크레셴도';
+
+  @override
+  String get pedalLine => '페달';
+
+  @override
+  String get glissando => '글리산도';
+
+  @override
+  String get ornamentsMenu => '꾸밈';
+
+  @override
+  String get trill => '트릴';
+
+  @override
+  String get mordent => '모르덴트';
+
+  @override
+  String get invertedMordent => '프랄트릴러';
+
+  @override
+  String get turnOrnament => '턴';
+
+  @override
+  String get tremolo => '트레몰로';
+
+  @override
+  String get arpeggio => '아르페지오';
+
+  @override
+  String get breathMark => '숨표';
+
+  @override
+  String spanPickEnd(String name) {
+    return '$name: 끝나는 음을 누르세요';
+  }
+
+  @override
+  String get spanToSelected => '선택한 음까지';
+
+  @override
+  String get verseMenu => '절';
+
+  @override
+  String verseOf(int n) {
+    return '$n절';
+  }
+
+  @override
+  String get toolsKeys => '건반';
+
+  @override
+  String get keyboardLower => '건반 한 옥타브 아래';
+
+  @override
+  String get keyboardHigher => '건반 한 옥타브 위';
+
+  @override
+  String get keyAdvance => '다음 음으로';
+
+  @override
+  String get penTool => '펜';
+
+  @override
+  String get penHint => '줄이나 칸을 눌러 그 자리에 음을 놓기';
+
+  @override
+  String get rangeTool => '범위';
+
+  @override
+  String get rangeHint => '끝 음을 눌러 여러 음 고르기';
+
+  @override
+  String get voiceMenu => '성부';
+
+  @override
+  String get voiceAdd => '성부 추가';
+
+  @override
+  String get voiceRemove => '이 성부 지우기';
+
+  @override
+  String get lineBreakTool => '줄바꿈';
+
+  @override
+  String get pageBreakTool => '쪽나눔';
+
+  @override
+  String get toolsScore => '악보';
+
+  @override
+  String get instrumentMenu => '악기';
+
+  @override
+  String get staffMenu => '보표';
+
+  @override
+  String get staffAdd => '아래 보표 추가';
+
+  @override
+  String get staffRemove => '아래 보표 지우기';
+
+  @override
+  String get barRange => '마디 범위…';
+
+  @override
+  String get barRangeTitle => '마디 범위';
+
+  @override
+  String get barRangeFrom => '시작 마디';
+
+  @override
+  String get barRangeTo => '끝 마디';
+
+  @override
+  String get barRangeCopy => '복사';
+
+  @override
+  String get barRangeCut => '잘라내기';
+
+  @override
+  String get barRangeDelete => '지우기';
+
+  @override
+  String get barRangeTranspose => '조옮김';
+
+  @override
+  String semitoneCount(String n) {
+    return '$n반음';
+  }
+
+  @override
+  String pasteBars(int n) {
+    return '복사한 $n마디 붙여넣기';
+  }
+
+  @override
+  String barsCopied(int n) {
+    return '$n마디를 복사했습니다';
+  }
+
+  @override
+  String get barRangeInvalid => '마디 번호를 확인하세요';
+
+  @override
+  String get pasteBarsNone => '붙여넣기 (복사한 마디 없음)';
+
+  @override
+  String get breaksReflow => '이 악보는 화면 너비에 맞춰 줄이 바뀝니다. 줄이 정해진 악보에서만 쓸 수 있어요.';
 }

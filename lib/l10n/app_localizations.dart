@@ -4237,6 +4237,594 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Auto'**
   String get pianoSplitAuto;
+
+  /// toolsMarks
+  ///
+  /// In en, this message translates to:
+  /// **'Marks'**
+  String get toolsMarks;
+
+  /// toolsBarSigns
+  ///
+  /// In en, this message translates to:
+  /// **'Bar signs'**
+  String get toolsBarSigns;
+
+  /// noteToRest
+  ///
+  /// In en, this message translates to:
+  /// **'Make rest'**
+  String get noteToRest;
+
+  /// removeNoteTool
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get removeNoteTool;
+
+  /// splitNote
+  ///
+  /// In en, this message translates to:
+  /// **'Split'**
+  String get splitNote;
+
+  /// insertTool
+  ///
+  /// In en, this message translates to:
+  /// **'Insert'**
+  String get insertTool;
+
+  /// insertNoteBefore
+  ///
+  /// In en, this message translates to:
+  /// **'Note before'**
+  String get insertNoteBefore;
+
+  /// insertNoteAfter
+  ///
+  /// In en, this message translates to:
+  /// **'Note after'**
+  String get insertNoteAfter;
+
+  /// insertRestBefore
+  ///
+  /// In en, this message translates to:
+  /// **'Rest before'**
+  String get insertRestBefore;
+
+  /// insertRestAfter
+  ///
+  /// In en, this message translates to:
+  /// **'Rest after'**
+  String get insertRestAfter;
+
+  /// graceNote
+  ///
+  /// In en, this message translates to:
+  /// **'Grace note'**
+  String get graceNote;
+
+  /// tieTool
+  ///
+  /// In en, this message translates to:
+  /// **'Tie'**
+  String get tieTool;
+
+  /// tuplet
+  ///
+  /// In en, this message translates to:
+  /// **'Tuplet'**
+  String get tuplet;
+
+  /// Tuplet of n notes
+  ///
+  /// In en, this message translates to:
+  /// **'{n}-tuplet'**
+  String tupletOf(int n);
+
+  /// tupletRemove
+  ///
+  /// In en, this message translates to:
+  /// **'Remove tuplet'**
+  String get tupletRemove;
+
+  /// doubleSharp
+  ///
+  /// In en, this message translates to:
+  /// **'Double sharp'**
+  String get doubleSharp;
+
+  /// doubleFlat
+  ///
+  /// In en, this message translates to:
+  /// **'Double flat'**
+  String get doubleFlat;
+
+  /// staccato
+  ///
+  /// In en, this message translates to:
+  /// **'Staccato'**
+  String get staccato;
+
+  /// staccatissimo
+  ///
+  /// In en, this message translates to:
+  /// **'Staccatissimo'**
+  String get staccatissimo;
+
+  /// tenuto
+  ///
+  /// In en, this message translates to:
+  /// **'Tenuto'**
+  String get tenuto;
+
+  /// marcato
+  ///
+  /// In en, this message translates to:
+  /// **'Marcato'**
+  String get marcato;
+
+  /// fermata
+  ///
+  /// In en, this message translates to:
+  /// **'Fermata'**
+  String get fermata;
+
+  /// dynamics
+  ///
+  /// In en, this message translates to:
+  /// **'Dynamics'**
+  String get dynamics;
+
+  /// dynamicsNone
+  ///
+  /// In en, this message translates to:
+  /// **'None'**
+  String get dynamicsNone;
+
+  /// keyAndTime
+  ///
+  /// In en, this message translates to:
+  /// **'Key · Time'**
+  String get keyAndTime;
+
+  /// clef
+  ///
+  /// In en, this message translates to:
+  /// **'Clef'**
+  String get clef;
+
+  /// clefTreble
+  ///
+  /// In en, this message translates to:
+  /// **'Treble'**
+  String get clefTreble;
+
+  /// clefBass
+  ///
+  /// In en, this message translates to:
+  /// **'Bass'**
+  String get clefBass;
+
+  /// clefAlto
+  ///
+  /// In en, this message translates to:
+  /// **'Alto'**
+  String get clefAlto;
+
+  /// clefTenor
+  ///
+  /// In en, this message translates to:
+  /// **'Tenor'**
+  String get clefTenor;
+
+  /// repeatStart
+  ///
+  /// In en, this message translates to:
+  /// **'Repeat start'**
+  String get repeatStart;
+
+  /// repeatEnd
+  ///
+  /// In en, this message translates to:
+  /// **'Repeat end'**
+  String get repeatEnd;
+
+  /// barlineTool
+  ///
+  /// In en, this message translates to:
+  /// **'Barline'**
+  String get barlineTool;
+
+  /// barlineRegular
+  ///
+  /// In en, this message translates to:
+  /// **'Single'**
+  String get barlineRegular;
+
+  /// barlineDouble
+  ///
+  /// In en, this message translates to:
+  /// **'Double'**
+  String get barlineDouble;
+
+  /// barlineFinal
+  ///
+  /// In en, this message translates to:
+  /// **'Final'**
+  String get barlineFinal;
+
+  /// endings
+  ///
+  /// In en, this message translates to:
+  /// **'Endings'**
+  String get endings;
+
+  /// Start of the n-th ending bracket
+  ///
+  /// In en, this message translates to:
+  /// **'Ending {n} start'**
+  String endingStart(int n);
+
+  /// End of the n-th ending bracket
+  ///
+  /// In en, this message translates to:
+  /// **'Ending {n} end'**
+  String endingEnd(int n);
+
+  /// navigationSigns
+  ///
+  /// In en, this message translates to:
+  /// **'Jumps'**
+  String get navigationSigns;
+
+  /// tempoMark
+  ///
+  /// In en, this message translates to:
+  /// **'Tempo'**
+  String get tempoMark;
+
+  /// tempoBpmLabel
+  ///
+  /// In en, this message translates to:
+  /// **'Beats per minute'**
+  String get tempoBpmLabel;
+
+  /// tempoText
+  ///
+  /// In en, this message translates to:
+  /// **'Tempo text (optional)'**
+  String get tempoText;
+
+  /// tempoRemove
+  ///
+  /// In en, this message translates to:
+  /// **'Remove tempo'**
+  String get tempoRemove;
+
+  /// rehearsalMark
+  ///
+  /// In en, this message translates to:
+  /// **'Section name'**
+  String get rehearsalMark;
+
+  /// rehearsalHint
+  ///
+  /// In en, this message translates to:
+  /// **'Verse, Chorus, A…'**
+  String get rehearsalHint;
+
+  /// addText
+  ///
+  /// In en, this message translates to:
+  /// **'Add text'**
+  String get addText;
+
+  /// addTextHint
+  ///
+  /// In en, this message translates to:
+  /// **'rit., 2x…'**
+  String get addTextHint;
+
+  /// slurTool
+  ///
+  /// In en, this message translates to:
+  /// **'Slur'**
+  String get slurTool;
+
+  /// linesMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Lines'**
+  String get linesMenu;
+
+  /// crescendo
+  ///
+  /// In en, this message translates to:
+  /// **'Crescendo'**
+  String get crescendo;
+
+  /// diminuendo
+  ///
+  /// In en, this message translates to:
+  /// **'Diminuendo'**
+  String get diminuendo;
+
+  /// pedalLine
+  ///
+  /// In en, this message translates to:
+  /// **'Pedal'**
+  String get pedalLine;
+
+  /// glissando
+  ///
+  /// In en, this message translates to:
+  /// **'Glissando'**
+  String get glissando;
+
+  /// ornamentsMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Ornaments'**
+  String get ornamentsMenu;
+
+  /// trill
+  ///
+  /// In en, this message translates to:
+  /// **'Trill'**
+  String get trill;
+
+  /// mordent
+  ///
+  /// In en, this message translates to:
+  /// **'Mordent'**
+  String get mordent;
+
+  /// invertedMordent
+  ///
+  /// In en, this message translates to:
+  /// **'Inverted mordent'**
+  String get invertedMordent;
+
+  /// turnOrnament
+  ///
+  /// In en, this message translates to:
+  /// **'Turn'**
+  String get turnOrnament;
+
+  /// tremolo
+  ///
+  /// In en, this message translates to:
+  /// **'Tremolo'**
+  String get tremolo;
+
+  /// arpeggio
+  ///
+  /// In en, this message translates to:
+  /// **'Arpeggio'**
+  String get arpeggio;
+
+  /// breathMark
+  ///
+  /// In en, this message translates to:
+  /// **'Breath mark'**
+  String get breathMark;
+
+  /// spanPickEnd
+  ///
+  /// In en, this message translates to:
+  /// **'{name}: tap the note it ends on'**
+  String spanPickEnd(String name);
+
+  /// spanToSelected
+  ///
+  /// In en, this message translates to:
+  /// **'To selected note'**
+  String get spanToSelected;
+
+  /// verseMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Verse'**
+  String get verseMenu;
+
+  /// verseOf
+  ///
+  /// In en, this message translates to:
+  /// **'Verse {n}'**
+  String verseOf(int n);
+
+  /// toolsKeys
+  ///
+  /// In en, this message translates to:
+  /// **'Keys'**
+  String get toolsKeys;
+
+  /// keyboardLower
+  ///
+  /// In en, this message translates to:
+  /// **'Keyboard octave down'**
+  String get keyboardLower;
+
+  /// keyboardHigher
+  ///
+  /// In en, this message translates to:
+  /// **'Keyboard octave up'**
+  String get keyboardHigher;
+
+  /// keyAdvance
+  ///
+  /// In en, this message translates to:
+  /// **'Go to next note'**
+  String get keyAdvance;
+
+  /// penTool
+  ///
+  /// In en, this message translates to:
+  /// **'Pen'**
+  String get penTool;
+
+  /// penHint
+  ///
+  /// In en, this message translates to:
+  /// **'Tap a line or space to put the note there'**
+  String get penHint;
+
+  /// rangeTool
+  ///
+  /// In en, this message translates to:
+  /// **'Range'**
+  String get rangeTool;
+
+  /// rangeHint
+  ///
+  /// In en, this message translates to:
+  /// **'Tap the last note to pick several'**
+  String get rangeHint;
+
+  /// voiceMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Voice'**
+  String get voiceMenu;
+
+  /// voiceAdd
+  ///
+  /// In en, this message translates to:
+  /// **'Add a voice'**
+  String get voiceAdd;
+
+  /// voiceRemove
+  ///
+  /// In en, this message translates to:
+  /// **'Remove this voice'**
+  String get voiceRemove;
+
+  /// lineBreakTool
+  ///
+  /// In en, this message translates to:
+  /// **'Line break'**
+  String get lineBreakTool;
+
+  /// pageBreakTool
+  ///
+  /// In en, this message translates to:
+  /// **'Page break'**
+  String get pageBreakTool;
+
+  /// toolsScore
+  ///
+  /// In en, this message translates to:
+  /// **'Score'**
+  String get toolsScore;
+
+  /// instrumentMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Instrument'**
+  String get instrumentMenu;
+
+  /// staffMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Staff'**
+  String get staffMenu;
+
+  /// staffAdd
+  ///
+  /// In en, this message translates to:
+  /// **'Add a staff below'**
+  String get staffAdd;
+
+  /// staffRemove
+  ///
+  /// In en, this message translates to:
+  /// **'Remove the lower staff'**
+  String get staffRemove;
+
+  /// barRange
+  ///
+  /// In en, this message translates to:
+  /// **'Bar range…'**
+  String get barRange;
+
+  /// barRangeTitle
+  ///
+  /// In en, this message translates to:
+  /// **'Bar range'**
+  String get barRangeTitle;
+
+  /// barRangeFrom
+  ///
+  /// In en, this message translates to:
+  /// **'From bar'**
+  String get barRangeFrom;
+
+  /// barRangeTo
+  ///
+  /// In en, this message translates to:
+  /// **'To bar'**
+  String get barRangeTo;
+
+  /// barRangeCopy
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get barRangeCopy;
+
+  /// barRangeCut
+  ///
+  /// In en, this message translates to:
+  /// **'Cut'**
+  String get barRangeCut;
+
+  /// barRangeDelete
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get barRangeDelete;
+
+  /// barRangeTranspose
+  ///
+  /// In en, this message translates to:
+  /// **'Transpose'**
+  String get barRangeTranspose;
+
+  /// semitoneCount
+  ///
+  /// In en, this message translates to:
+  /// **'{n} semitones'**
+  String semitoneCount(String n);
+
+  /// pasteBars
+  ///
+  /// In en, this message translates to:
+  /// **'Paste {n} copied bars'**
+  String pasteBars(int n);
+
+  /// barsCopied
+  ///
+  /// In en, this message translates to:
+  /// **'{n} bars copied'**
+  String barsCopied(int n);
+
+  /// barRangeInvalid
+  ///
+  /// In en, this message translates to:
+  /// **'Check the bar numbers'**
+  String get barRangeInvalid;
+
+  /// pasteBarsNone
+  ///
+  /// In en, this message translates to:
+  /// **'Paste (no bars copied)'**
+  String get pasteBarsNone;
+
+  /// breaksReflow
+  ///
+  /// In en, this message translates to:
+  /// **'This score breaks its lines to fit the screen. Line breaks can be set in a score that has written lines.'**
+  String get breaksReflow;
 }
 
 class _AppLocalizationsDelegate

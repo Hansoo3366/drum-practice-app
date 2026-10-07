@@ -10,6 +10,7 @@ class _VerovioOverlayPainter extends CustomPainter {
     required this.highlightedMeasureIndex,
     required this.highlightedRange,
     required this.selectedNoteAddress,
+    this.alsoSelected = const [],
     required this.playbackMeasure,
     required this.ghostCenter,
     required this.ghostRest,
@@ -29,6 +30,9 @@ class _VerovioOverlayPainter extends CustomPainter {
   final int? highlightedMeasureIndex;
   final ({int start, int end})? highlightedRange;
   final ScoreEventAddress? selectedNoteAddress;
+
+  /// More notes picked along with the selected one: a run of notes.
+  final List<ScoreEventAddress> alsoSelected;
   final int? playbackMeasure;
   final Offset? ghostCenter;
   final bool ghostRest;
@@ -78,12 +82,15 @@ class _VerovioOverlayPainter extends CustomPainter {
       canvas.restore();
     }
     _paintKeyNames(canvas);
-    final selectedAddress = selectedNoteAddress;
-    if (selectedAddress != null) {
+    final picked = [?selectedNoteAddress, ...alsoSelected];
+    if (picked.isNotEmpty) {
       for (final note in layout.notes) {
-        if (note.partIndex != selectedAddress.partIndex ||
-            note.measureIndex != selectedAddress.measureIndex ||
-            note.eventIndex != selectedAddress.eventIndex) {
+        if (!picked.any(
+          (address) =>
+              note.partIndex == address.partIndex &&
+              note.measureIndex == address.measureIndex &&
+              note.eventIndex == address.eventIndex,
+        )) {
           continue;
         }
         NativeMeasureBox? measure;
@@ -112,7 +119,7 @@ class _VerovioOverlayPainter extends CustomPainter {
           RRect.fromRectAndRadius(rect, Radius.circular(gap * 0.45)),
           paint,
         );
-        break;
+        if (picked.length == 1) break;
       }
     }
     final inputCaret = caret;
@@ -320,6 +327,7 @@ class _VerovioOverlayPainter extends CustomPainter {
         oldDelegate.highlightedRange != highlightedRange ||
         oldDelegate.highlightedMeasureIndex != highlightedMeasureIndex ||
         oldDelegate.selectedNoteAddress != selectedNoteAddress ||
+        !listEquals(oldDelegate.alsoSelected, alsoSelected) ||
         oldDelegate.playbackMeasure != playbackMeasure ||
         oldDelegate.ghostCenter != ghostCenter ||
         oldDelegate.ghostRest != ghostRest ||

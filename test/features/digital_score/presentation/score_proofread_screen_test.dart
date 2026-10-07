@@ -10,14 +10,17 @@ import 'package:page_a_diddle/features/digital_score/data/digital_score_editor_s
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_service.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
+import 'package:page_a_diddle/features/digital_score/domain/native_score_layout.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_review.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
+import 'package:page_a_diddle/features/digital_score/domain/score_editor.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/three_staff_arrangement.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/omr_original_crop.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_proofread_screen.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
+import 'package:xml/xml.dart';
 
 const _xml = '''<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="4.0"><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
@@ -181,12 +184,37 @@ Future<void> _close(WidgetTester tester) async {
 /// What is done to a bar as a whole is in the bar menu, by name.
 const _barTools = {'다음 마디 추가', '마디 복제', '마디 삭제', '마디 앞으로', '마디 뒤로', '이 마디의 글자'};
 
+/// The palette a tool is in; it is opened before the tool is tapped.
+const _paletteOf = {
+  '이전 음표': '음표',
+  '다음 음표': '음표',
+  '화음': '음표',
+  '음표로': '음표',
+  '쉼표로': '음표',
+  '음표 삭제': '음표',
+  '나누기': '음표',
+  '한 칸 위': '높이',
+  '한 칸 아래': '높이',
+  '샤프': '높이',
+  '플랫': '높이',
+  '내추럴': '높이',
+  '코드': '코드 · 가사',
+  '가사': '코드 · 가사',
+};
+
 Future<void> _tapTool(WidgetTester tester, String tooltip) async {
   if (_barTools.contains(tooltip)) {
     await tester.tap(find.byTooltip('마디 편집'));
     await _settle(tester);
     await tester.tap(find.text(tooltip));
   } else {
+    final palette =
+        _paletteOf[tooltip] ??
+        (tooltip.startsWith('음가') || tooltip == '점음표' ? '길이' : null);
+    if (palette != null) {
+      await tester.tap(find.byTooltip(palette));
+      await _settle(tester);
+    }
     await tester.tap(find.byTooltip(tooltip));
   }
   await _settle(tester);
@@ -337,7 +365,11 @@ void main() {
     // rest of bar 2 and not the neighbour that took the added tone's place).
     expect(find.text('1 / 2마디'), findsOneWidget);
     expect(enabled('이전 음'), isFalse);
+    await tester.tap(find.byTooltip('높이'));
+    await _settle(tester);
     expect(enabled('한 칸 위'), isTrue);
+    await tester.tap(find.byTooltip('음표'));
+    await _settle(tester);
 
     await _tapTool(tester, '다음 마디');
     await _tapTool(tester, '다시 실행');
@@ -412,6 +444,8 @@ void main() {
     await _open(tester, _MemoryStorage());
 
     await _tapTool(tester, '다음 마디');
+    await tester.tap(find.byTooltip('높이'));
+    await _settle(tester);
     final up = tester.widget<InkWell>(
       find.descendant(
         of: find.byTooltip('한 칸 위'),
@@ -419,6 +453,8 @@ void main() {
       ),
     );
     expect(up.onTap, isNull);
+    await tester.tap(find.byTooltip('음표'));
+    await _settle(tester);
     final makeNote = tester.widget<InkWell>(
       find.descendant(
         of: find.byTooltip('음표로'),
@@ -779,4 +815,364 @@ void main() {
       await _close(tester);
     },
   );
+
+  group('lines, ornaments, keys and the pen', () {
+    Future<void> palette(WidgetTester tester, String name) async {
+      await tester.tap(find.byTooltip(name));
+      await _settle(tester);
+    }
+
+    Future<void> pick(WidgetTester tester, String menu, String item) async {
+      await tester.tap(find.byTooltip(menu));
+      await _settle(tester);
+      await tester.tap(find.text(item).last);
+      await _settle(tester);
+    }
+
+    /// Saves the edits as a version and returns its MusicXML.
+    Future<String> save(WidgetTester tester, _MemoryStorage storage) async {
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await _settle(tester);
+      await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+      await _settle(tester);
+      return utf8.decode(storage.versions.values.single);
+    }
+
+    List<XmlElement> firstBar(String xml) => XmlDocument.parse(
+      xml,
+    ).findAllElements('measure').first.findElements('note').toList();
+
+    testWidgets('a slur is drawn from the picked note to the next one picked', (
+      tester,
+    ) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+
+      await palette(tester, '기호');
+      await tester.tap(find.byTooltip('이음줄'));
+      await _settle(tester);
+      expect(find.text('이음줄: 끝나는 음을 누르세요'), findsOneWidget);
+
+      await palette(tester, '음표');
+      await _tapTool(tester, '다음 음');
+      await _tapTool(tester, '다음 음');
+      await tester.tap(find.text('선택한 음까지'));
+      await _settle(tester);
+      expect(find.text('이음줄: 끝나는 음을 누르세요'), findsNothing);
+
+      final notes = firstBar(await save(tester, storage));
+      String? slur(int index) => notes[index]
+          .getElement('notations')
+          ?.getElement('slur')
+          ?.getAttribute('type');
+      expect([slur(0), slur(1), slur(2)], ['start', null, 'stop']);
+      await _close(tester);
+    });
+
+    testWidgets('a line being drawn can be given up; a drawn one is removed', (
+      tester,
+    ) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+
+      await palette(tester, '기호');
+      await pick(tester, '선', '크레셴도');
+      expect(find.text('크레셴도: 끝나는 음을 누르세요'), findsOneWidget);
+      await tester.tap(find.text('취소'));
+      await _settle(tester);
+      expect(find.text('크레셴도: 끝나는 음을 누르세요'), findsNothing);
+
+      // A pedal on the one note, then off again from the same menu.
+      await pick(tester, '선', '페달');
+      await tester.tap(find.text('선택한 음까지'));
+      await _settle(tester);
+      await pick(tester, '선', '페달');
+      await pick(tester, '꾸밈', '트릴');
+
+      final saved = await save(tester, storage);
+      expect(saved, isNot(contains('<pedal')));
+      expect(saved, isNot(contains('<wedge')));
+      expect(firstBar(saved).first.findAllElements('trill-mark'), hasLength(1));
+      await _close(tester);
+    });
+
+    testWidgets('keys give the picked note its pitch and go on to the next', (
+      tester,
+    ) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+
+      await palette(tester, '건반');
+      await tester.tap(find.byTooltip('건반 한 옥타브 위'));
+      await _settle(tester);
+      await tester.tap(find.byTooltip('A5'));
+      await _settle(tester);
+      await tester.tap(find.byTooltip('F#5'));
+      await _settle(tester);
+
+      final score = const MusicXmlCodec().decodeXml(
+        await save(tester, storage),
+      );
+      final notes = score.parts.first.measures.first.notes.toList();
+      expect((notes[0].pitch?.step, notes[0].pitch?.octave), (PitchStep.a, 5));
+      expect(
+        (notes[1].pitch?.step, notes[1].pitch?.alter, notes[1].pitch?.octave),
+        (PitchStep.f, 1, 5),
+      );
+      expect(notes[2].pitch?.step, PitchStep.e);
+      await _close(tester);
+    });
+
+    testWidgets('a key turns a rest into a note', (tester) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+
+      await _tapTool(tester, '다음 마디');
+      await palette(tester, '건반');
+      await tester.tap(find.byTooltip('G4'));
+      await _settle(tester);
+
+      final score = const MusicXmlCodec().decodeXml(
+        await save(tester, storage),
+      );
+      final note = score.parts.first.measures[1].notes.first;
+      expect((note.pitch?.step, note.pitch?.octave), (PitchStep.g, 4));
+      expect(note.type, 'whole');
+      await _close(tester);
+    });
+
+    testWidgets('the words of a second verse are written under the first', (
+      tester,
+    ) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+
+      await palette(tester, '코드 · 가사');
+      await pick(tester, '절', '2절');
+      await tester.tap(find.byTooltip('가사'));
+      await _settle(tester);
+      await tester.enterText(find.byType(TextField), '나');
+      await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+      await _settle(tester);
+
+      final lyric = firstBar(
+        await save(tester, storage),
+      ).first.findElements('lyric').single;
+      expect(lyric.getAttribute('number'), '2');
+      expect(lyric.getElement('text')?.innerText, '나');
+      await _close(tester);
+    });
+
+    testWidgets('on a small phone every palette shows all of its tools', (
+      tester,
+    ) async {
+      await _open(tester, _MemoryStorage(), size: const Size(360, 720));
+
+      // A tool that is there by name in each palette: the last one, which a
+      // row that scrolled sideways would have kept off the screen.
+      for (final (name, lastTool) in const [
+        ('음표', '성부'),
+        ('길이', '잇단음표'),
+        ('높이', '겹내림표'),
+        ('건반', '다음 음으로'),
+        ('기호', '꾸밈'),
+        ('코드 · 가사', '절'),
+        ('마디 기호', '쪽나눔'),
+        ('악보', '보표'),
+      ]) {
+        await tester.ensureVisible(find.byTooltip(name));
+        await tester.pump();
+        await tester.tap(find.byTooltip(name));
+        await _settle(tester);
+        final tool = tester.getRect(find.byTooltip(lastTool));
+        expect(tool.right, lessThanOrEqualTo(360), reason: '$name: $lastTool');
+        expect(tool.bottom, lessThanOrEqualTo(720), reason: '$name: $lastTool');
+        expect(tester.takeException(), isNull, reason: name);
+      }
+      // The keys fill the width between the two octave keys.
+      await tester.ensureVisible(find.byTooltip('건반'));
+      await tester.tap(find.byTooltip('건반'));
+      await _settle(tester);
+      expect(tester.getRect(find.byTooltip('B4')).right, lessThan(360 - 40));
+      expect(tester.getRect(find.byTooltip('C4')).width, greaterThan(30));
+      await _close(tester);
+    });
+
+    testWidgets('tools work on every note of a run that was picked', (
+      tester,
+    ) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+      VerovioScoreView view() =>
+          tester.widget<VerovioScoreView>(find.byType(VerovioScoreView));
+      final bar = view().score.parts.first.measures.first;
+
+      await tester.tap(find.byTooltip('범위'));
+      await _settle(tester);
+      expect(find.text('끝 음을 눌러 여러 음 고르기'), findsOneWidget);
+      // From the first note (picked) to the third.
+      view().onEventTapped!(
+        ScoreEventAddress(
+          partIndex: 0,
+          measureIndex: 0,
+          eventIndex: eventIndexForXmlNote(bar, 2)!,
+        ),
+      );
+      await _settle(tester);
+      expect(view().alsoSelectedNotes, hasLength(2));
+
+      await _tapTool(tester, '한 칸 위');
+      // The run is still picked: the next tool works on it too.
+      expect(view().alsoSelectedNotes, hasLength(2));
+      await palette(tester, '기호');
+      await tester.tap(find.byTooltip('스타카토'));
+      await _settle(tester);
+
+      final saved = await save(tester, storage);
+      final notes = const MusicXmlCodec()
+          .decodeXml(saved)
+          .parts
+          .first
+          .measures
+          .first
+          .notes
+          .toList();
+      expect(
+        [for (final note in notes.take(4)) note.pitch!.step],
+        [PitchStep.d, PitchStep.e, PitchStep.f, PitchStep.f],
+      );
+      expect(
+        [
+          for (final note in firstBar(saved).take(4))
+            note.findAllElements('staccato').length,
+        ],
+        [1, 1, 1, 0],
+      );
+      await _close(tester);
+    });
+
+    testWidgets('a run of bars is copied, pasted and moved to another key', (
+      tester,
+    ) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+      Future<void> range(String from, String to, String action) async {
+        await tester.tap(find.byTooltip('마디 편집'));
+        await _settle(tester);
+        await tester.tap(find.text('마디 범위…'));
+        await _settle(tester);
+        await tester.enterText(find.byType(TextField).first, from);
+        await tester.enterText(find.byType(TextField).last, to);
+        await tester.tap(find.text(action).last);
+        await _settle(tester);
+      }
+
+      // A range that is not in the score is refused where it is asked.
+      await range('1', '9', '복사');
+      expect(find.text('마디 번호를 확인하세요'), findsOneWidget);
+      await tester.tap(find.text('취소'));
+      await _settle(tester);
+
+      await range('1', '2', '복사');
+      expect(find.text('2마디를 복사했습니다'), findsOneWidget);
+      await tester.tap(find.byTooltip('마디 편집'));
+      await _settle(tester);
+      await tester.tap(find.text('복사한 2마디 붙여넣기'));
+      await _settle(tester);
+      expect(find.text('2 / 4마디'), findsOneWidget);
+
+      // The first bar a whole tone up: G major becomes A major, for it only.
+      await range('1', '1', '조옮김');
+
+      final score = const MusicXmlCodec().decodeXml(
+        await save(tester, storage),
+      );
+      final bars = score.parts.first.measures;
+      expect(bars, hasLength(4));
+      expect([for (final bar in bars) bar.attributes.keyFifths], [3, 1, 1, 1]);
+      expect(bars[0].notes.first.pitch?.step, PitchStep.d);
+      expect(bars[1].notes.first.pitch?.step, PitchStep.c);
+      expect(tester.takeException(), isNull);
+      await _close(tester);
+    });
+
+    testWidgets('a voice, an instrument, a staff and a line break', (
+      tester,
+    ) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+
+      await pick(tester, '성부', '성부 추가');
+      await _tapTool(tester, '다음 마디');
+      await palette(tester, '마디 기호');
+      // This score reflows: a break here would put all the rest on one line.
+      await tester.tap(find.byTooltip('줄바꿈'));
+      await _settle(tester);
+      expect(find.textContaining('화면 너비에 맞춰'), findsOneWidget);
+      // The message lies over the tools until it goes.
+      await tester.pump(const Duration(seconds: 5));
+      await _settle(tester);
+      await palette(tester, '악보');
+      await pick(tester, '악기', 'Strings');
+      await pick(tester, '보표', '아래 보표 지우기');
+      // The staff was removed from bar 2: that bar is still the one shown.
+      expect(find.text('2 / 2마디'), findsOneWidget);
+
+      final saved = await save(tester, storage);
+      final document = XmlDocument.parse(saved);
+      final bars = document.findAllElements('measure').toList();
+      expect(document.findAllElements('midi-program').single.innerText, '49');
+      expect(document.findAllElements('staves'), isEmpty);
+      expect(bars[1].getElement('print'), isNull);
+      // The lower staff is gone; the voice added to the upper one is not.
+      final voices = {
+        for (final note in bars[0].findElements('note'))
+          note.getElement('voice')?.innerText,
+      };
+      expect(voices, {'1', '2'});
+      expect(() => const MusicXmlCodec().decodeXml(saved), returnsNormally);
+      await _close(tester);
+    });
+
+    testWidgets('with the pen a tap on the staff puts the note on that line', (
+      tester,
+    ) async {
+      final storage = _MemoryStorage();
+      await _open(tester, storage);
+      VerovioScoreView view() =>
+          tester.widget<VerovioScoreView>(find.byType(VerovioScoreView));
+
+      expect(view().inputMode, 'select');
+      await tester.tap(find.byTooltip('펜'));
+      await _settle(tester);
+      expect(view().inputMode, 'place');
+      expect(view().oneFingerPan, isFalse);
+      expect(find.text('줄이나 칸을 눌러 그 자리에 음을 놓기'), findsOneWidget);
+
+      // The second note (D5) is put on the F line: F♯ in this key.
+      final bar = view().score.parts.first.measures.first;
+      view().onNotePlaced!(
+        NativeStaffPlace(
+          measureIndex: 0,
+          eventIndex: eventIndexForXmlNote(bar, 1)!,
+          staff: 1,
+          step: PitchStep.f,
+          octave: 4,
+          ghostCenter: Offset.zero,
+          lineGap: 10,
+        ),
+      );
+      await _settle(tester);
+
+      final score = const MusicXmlCodec().decodeXml(
+        await save(tester, storage),
+      );
+      final note = score.parts.first.measures.first.notes.elementAt(1);
+      expect(
+        (note.pitch?.step, note.pitch?.alter, note.pitch?.octave),
+        (PitchStep.f, 1, 4),
+      );
+      await _close(tester);
+    });
+  });
 }

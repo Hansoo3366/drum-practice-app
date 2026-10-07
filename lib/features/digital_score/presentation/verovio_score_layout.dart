@@ -3,15 +3,22 @@ part of 'verovio_score_view.dart';
 // Rendered pages and the geometry read from them: bars, staves, notes.
 
 class _VerovioPage {
-  _VerovioPage({required this.svg, required this.hitMap, required this.chords})
-    : visibleHeight = visiblePageHeight(hitMap.viewBox.height, [
-        for (final hit in hitMap.byType)
-          if (hit.type == 'measure') hit.bbox.bottom,
-      ]);
+  _VerovioPage({
+    required this.svg,
+    required this.hitMap,
+    required this.chords,
+    this.staves = const [],
+  }) : visibleHeight = visiblePageHeight(hitMap.viewBox.height, [
+         for (final hit in hitMap.byType)
+           if (hit.type == 'measure') hit.bbox.bottom,
+       ]);
 
   final String svg;
   final PageHitMap hitMap;
   final List<VerovioTextLabel> chords;
+
+  /// The staff lines of every bar of the page, as they were drawn.
+  final List<VerovioStaffLines> staves;
 
   /// Page height in viewBox units, trimmed below the last system.
   final double visibleHeight;
@@ -161,14 +168,50 @@ Size? _parseSvgViewBoxSize(String value) {
 /// and its text as labels. Both read the whole SVG several times, so they
 /// run off the UI isolate: pages arrive while the first is already on screen
 /// and being scrolled.
-Future<({String svg, List<VerovioTextLabel> labels})> prepareVerovioPage(
-  String svg,
-) => Isolate.run(
-  () => (
+Future<
+  ({String svg, List<VerovioTextLabel> labels, List<VerovioStaffLines> staves})
+>
+prepareVerovioPage(String svg) => Isolate.run(() {
+  final read = readVerovioPage(svg);
+  return (
     svg: normalizeVerovioSvgForFlutter(svg),
-    labels: extractVerovioTextLabels(svg),
-  ),
-);
+    labels: read.labels,
+    staves: read.staves,
+  );
+});
+
+/// The steps from middle C of the bottom line of a staff with [clef]: the
+/// G of a G clef, the F of an F clef and the C of a C clef are on the line
+/// the clef names. Without a clef the first staff is a treble staff and a
+/// second one a bass staff.
+@visibleForTesting
+int bottomLineSteps(MusicClef? clef, {required int staff}) {
+  if (clef == null) return staff >= 2 ? -10 : 2;
+  final onLine = switch (clef.sign) {
+    'F' => -4,
+    'C' => 0,
+    _ => 4,
+  };
+  final line = clef.sign == 'G' || clef.sign == 'F' || clef.sign == 'C'
+      ? clef.line
+      : 2;
+  return onLine - (line - 1) * 2 + clef.octaveChange * 7;
+}
+
+/// Where the pitch a staff is measured from is, given its drawn lines:
+/// E4 for the first staff and A3 for a second one, whatever the clef (the
+/// same references [midiAtStaffY] counts from).
+@visibleForTesting
+double staffAnchorFromLines({
+  required double bottomLine,
+  required double lineGap,
+  required MusicClef? clef,
+  required int staff,
+}) {
+  final reference = staff >= 2 ? -2 : 2;
+  return bottomLine -
+      (reference - bottomLineSteps(clef, staff: staff)) * lineGap / 2;
+}
 
 class _VerovioPages extends StatelessWidget {
   const _VerovioPages({

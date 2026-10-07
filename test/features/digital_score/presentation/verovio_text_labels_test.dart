@@ -1,5 +1,6 @@
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_text_labels.dart';
 
@@ -181,5 +182,90 @@ void main() {
     expect(parts[1].style!.fontFamily, 'Bravura');
     expect(parts[1].style!.fontSize, 20 * verovioAccidentalScale);
     expect(parts[0].style, isNull);
+  });
+
+  group('staff lines', () {
+    // A bar of a grand staff as Verovio draws it: five lines to a staff,
+    // then the clef and the notes, with ledger lines in a group of their own.
+    const page = '''
+<svg xmlns="http://www.w3.org/2000/svg" width="2100px" height="2970px" viewBox="0 0 2100 2970">
+  <svg class="definition-scale" viewBox="0 0 21000 29700">
+    <g class="page-margin" transform="translate(500, 500)">
+      <g class="system"><g class="measure">
+        <g class="staff">
+          <path d="M0 1000 L4000 1000" stroke-width="13"/>
+          <path d="M0 1180 L4000 1180" stroke-width="13"/>
+          <path d="M0 1360 L4000 1360" stroke-width="13"/>
+          <path d="M0 1540 L4000 1540" stroke-width="13"/>
+          <path d="M0 1720 L4000 1720" stroke-width="13"/>
+          <g class="clef"><use xlink:href="#E050" transform="translate(90, 1540) scale(0.72, 0.72)"/></g>
+          <g class="ledgerLines above"><path d="M1000 820 L1300 820" stroke-width="22"/></g>
+          <g class="layer"><g class="note"><g class="stem"><path d="M1200 900 L1200 300"/></g></g></g>
+        </g>
+        <g class="staff">
+          <path d="M0 2700 L4000 2700" stroke-width="13"/>
+          <path d="M0 2880 L4000 2880" stroke-width="13"/>
+          <path d="M0 3060 L4000 3060" stroke-width="13"/>
+          <path d="M0 3240 L4000 3240" stroke-width="13"/>
+          <path d="M0 3420 L4000 3420" stroke-width="13"/>
+        </g>
+        <g class="staff"><path d="M0 5000 L4000 5000" stroke-width="13"/></g>
+      </g></g>
+    </g>
+  </svg>
+</svg>''';
+
+    test('the five lines of each staff are read where they are drawn', () {
+      final staves = readVerovioPage(page).staves;
+
+      // Root units: the inner page is ten times as fine, and stands 500 in.
+      expect(staves, hasLength(2));
+      expect(staves[0].lines, [150, 168, 186, 204, 222]);
+      expect((staves[0].left, staves[0].right), (50, 450));
+      expect(staves[0].gap, 18);
+      expect(staves[1].top, 320);
+      expect(staves[1].bottom, 392);
+      // A one-line staff has no pitches to place.
+    });
+
+    test('a page that cannot be read has no staff lines and no labels', () {
+      final read = readVerovioPage('<svg');
+      expect(read.staves, isEmpty);
+      expect(read.labels, isEmpty);
+    });
+
+    test('the bottom line of a staff is the pitch its clef puts there', () {
+      const treble = MusicClef(sign: 'G', line: 2);
+      const bass = MusicClef(sign: 'F', line: 4);
+      const alto = MusicClef(sign: 'C', line: 3);
+      const tenorVoice = MusicClef(sign: 'G', line: 2, octaveChange: -1);
+
+      // Steps from middle C: E4 is 2, G2 is -10, F3 is -4, E3 is -5.
+      expect(bottomLineSteps(treble, staff: 1), 2);
+      expect(bottomLineSteps(bass, staff: 2), -10);
+      expect(bottomLineSteps(alto, staff: 1), -4);
+      expect(bottomLineSteps(tenorVoice, staff: 1), -5);
+      expect(bottomLineSteps(null, staff: 1), 2);
+      expect(bottomLineSteps(null, staff: 2), -10);
+    });
+
+    test('a staff is measured from E4 or A3 wherever its clef puts them', () {
+      // Lines 10 apart, the bottom one at 100.
+      double anchor(MusicClef? clef, int staff) => staffAnchorFromLines(
+        bottomLine: 100,
+        lineGap: 10,
+        clef: clef,
+        staff: staff,
+      );
+
+      // Treble: E4 is the bottom line itself.
+      expect(anchor(const MusicClef(sign: 'G', line: 2), 1), 100);
+      // Bass on the second staff: A3 is the top line, four lines up.
+      expect(anchor(const MusicClef(sign: 'F', line: 4), 2), 60);
+      // Bass clef on a first staff: E4 is twelve steps above its bottom G2.
+      expect(anchor(const MusicClef(sign: 'F', line: 4), 1), 40);
+      // Treble clef on a second staff: A3 is four steps below its E4.
+      expect(anchor(const MusicClef(sign: 'G', line: 2), 2), 120);
+    });
   });
 }

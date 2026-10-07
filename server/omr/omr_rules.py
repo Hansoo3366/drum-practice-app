@@ -423,6 +423,79 @@ def _tie_held_dashes(root: ET.Element) -> int:
     return tied
 
 
+# Diatonic number (octave * 7 + step) of the middle line of a staff, by clef sign.
+_MIDDLE_LINE = {"G": 34, "F": 22, "C": 28}
+
+
+def _undo_octave_shifts(root: ET.Element) -> int:
+    """Take away octave lines, and put notes the engine moved for one back where they are printed.
+
+    A sung line has no octave line. The engine reads one out of what is printed
+    under or over a staff (a dash between syllables, a figure: "15mb"). For
+    some of them it also writes the notes under the line one or two octaves
+    away from where they stand on the staff, to the end of the piece when it
+    finds no end of the line; for others it leaves the notes alone. Which, the
+    mark does not say, so the notes do: they are moved back only when that
+    brings them nearer to the rest of the staff (or, with too little else on
+    the staff, to its middle line). Returns the number of lines undone.
+    """
+    undone = 0
+    for part in root.findall("part"):
+        clefs: dict[str, str] = {}
+        for clef in part.iter("clef"):
+            clefs.setdefault(clef.get("number", "1"), (clef.findtext("sign") or "G").strip())
+        # Lines by staff: [octaves the notes would go back by, the notes under the line].
+        lines: dict[str, list[list]] = {}
+        running: dict[str, dict[str, list]] = {}
+        outside: dict[str, list[ET.Element]] = {}
+        for measure in part.findall("measure"):
+            for item in list(measure):
+                if item.tag == "direction":
+                    staff = (item.findtext("staff") or "1").strip() or "1"
+                    for kind in list(item.findall("direction-type")):
+                        shift = kind.find("octave-shift")
+                        if shift is None:
+                            continue
+                        number = shift.get("number", "1")
+                        size = (shift.get("size") or "8").strip()
+                        octaves = max(1, (int(size) - 1) // 7) if size.isdigit() else 1
+                        if shift.get("type") in ("up", "down"):
+                            # "up": written above where it sounds, so lowered notes go back up.
+                            line = [octaves if shift.get("type") == "up" else -octaves, []]
+                            lines.setdefault(staff, []).append(line)
+                            running.setdefault(staff, {})[number] = line
+                        else:
+                            running.get(staff, {}).pop(number, None)
+                        item.remove(kind)
+                    sound = item.find("sound")
+                    if item.find("direction-type") is None and (sound is None or not sound.attrib):
+                        measure.remove(item)
+                elif item.tag == "note" and _diatonic(item) is not None:
+                    staff = (item.findtext("staff") or "1").strip() or "1"
+                    under = list(running.get(staff, {}).values())
+                    if under:
+                        for line in under:
+                            line[1].append(item)
+                    else:
+                        outside.setdefault(staff, []).append(item)
+        for staff, found in lines.items():
+            others = sorted(_diatonic(note) for note in outside.get(staff, []))
+            reference = (others[len(others) // 2] if len(others) >= 4
+                         else _MIDDLE_LINE.get(clefs.get(staff, "F" if staff == "2" else "G"), 34))
+            for octaves, notes in found:
+                heights = sorted(_diatonic(note) for note in notes)
+                if not heights:
+                    continue
+                middle = heights[len(heights) // 2]
+                if abs(middle + 7 * octaves - reference) >= abs(middle - reference):
+                    continue
+                for note in notes:
+                    octave = note.find("pitch/octave")
+                    octave.text = str(int(octave.text) + octaves)
+                undone += 1
+    return undone
+
+
 def _drop_bad_tempos(root: ET.Element) -> int:
     """Remove metronome marks and tempo sounds no player could use.
 

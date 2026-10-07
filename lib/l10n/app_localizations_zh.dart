@@ -2228,4 +2228,315 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get pianoSplitAuto => 'Auto';
+
+  @override
+  String get toolsMarks => 'Marks';
+
+  @override
+  String get toolsBarSigns => 'Bar signs';
+
+  @override
+  String get noteToRest => 'Make rest';
+
+  @override
+  String get removeNoteTool => 'Remove';
+
+  @override
+  String get splitNote => 'Split';
+
+  @override
+  String get insertTool => 'Insert';
+
+  @override
+  String get insertNoteBefore => 'Note before';
+
+  @override
+  String get insertNoteAfter => 'Note after';
+
+  @override
+  String get insertRestBefore => 'Rest before';
+
+  @override
+  String get insertRestAfter => 'Rest after';
+
+  @override
+  String get graceNote => 'Grace note';
+
+  @override
+  String get tieTool => 'Tie';
+
+  @override
+  String get tuplet => 'Tuplet';
+
+  @override
+  String tupletOf(int n) {
+    return '$n-tuplet';
+  }
+
+  @override
+  String get tupletRemove => 'Remove tuplet';
+
+  @override
+  String get doubleSharp => 'Double sharp';
+
+  @override
+  String get doubleFlat => 'Double flat';
+
+  @override
+  String get staccato => 'Staccato';
+
+  @override
+  String get staccatissimo => 'Staccatissimo';
+
+  @override
+  String get tenuto => 'Tenuto';
+
+  @override
+  String get marcato => 'Marcato';
+
+  @override
+  String get fermata => 'Fermata';
+
+  @override
+  String get dynamics => 'Dynamics';
+
+  @override
+  String get dynamicsNone => 'None';
+
+  @override
+  String get keyAndTime => 'Key · Time';
+
+  @override
+  String get clef => 'Clef';
+
+  @override
+  String get clefTreble => 'Treble';
+
+  @override
+  String get clefBass => 'Bass';
+
+  @override
+  String get clefAlto => 'Alto';
+
+  @override
+  String get clefTenor => 'Tenor';
+
+  @override
+  String get repeatStart => 'Repeat start';
+
+  @override
+  String get repeatEnd => 'Repeat end';
+
+  @override
+  String get barlineTool => 'Barline';
+
+  @override
+  String get barlineRegular => 'Single';
+
+  @override
+  String get barlineDouble => 'Double';
+
+  @override
+  String get barlineFinal => 'Final';
+
+  @override
+  String get endings => 'Endings';
+
+  @override
+  String endingStart(int n) {
+    return 'Ending $n start';
+  }
+
+  @override
+  String endingEnd(int n) {
+    return 'Ending $n end';
+  }
+
+  @override
+  String get navigationSigns => 'Jumps';
+
+  @override
+  String get tempoMark => 'Tempo';
+
+  @override
+  String get tempoBpmLabel => 'Beats per minute';
+
+  @override
+  String get tempoText => 'Tempo text (optional)';
+
+  @override
+  String get tempoRemove => 'Remove tempo';
+
+  @override
+  String get rehearsalMark => 'Section name';
+
+  @override
+  String get rehearsalHint => 'Verse, Chorus, A…';
+
+  @override
+  String get addText => 'Add text';
+
+  @override
+  String get addTextHint => 'rit., 2x…';
+
+  @override
+  String get slurTool => 'Slur';
+
+  @override
+  String get linesMenu => 'Lines';
+
+  @override
+  String get crescendo => 'Crescendo';
+
+  @override
+  String get diminuendo => 'Diminuendo';
+
+  @override
+  String get pedalLine => 'Pedal';
+
+  @override
+  String get glissando => 'Glissando';
+
+  @override
+  String get ornamentsMenu => 'Ornaments';
+
+  @override
+  String get trill => 'Trill';
+
+  @override
+  String get mordent => 'Mordent';
+
+  @override
+  String get invertedMordent => 'Inverted mordent';
+
+  @override
+  String get turnOrnament => 'Turn';
+
+  @override
+  String get tremolo => 'Tremolo';
+
+  @override
+  String get arpeggio => 'Arpeggio';
+
+  @override
+  String get breathMark => 'Breath mark';
+
+  @override
+  String spanPickEnd(String name) {
+    return '$name: tap the note it ends on';
+  }
+
+  @override
+  String get spanToSelected => 'To selected note';
+
+  @override
+  String get verseMenu => 'Verse';
+
+  @override
+  String verseOf(int n) {
+    return 'Verse $n';
+  }
+
+  @override
+  String get toolsKeys => 'Keys';
+
+  @override
+  String get keyboardLower => 'Keyboard octave down';
+
+  @override
+  String get keyboardHigher => 'Keyboard octave up';
+
+  @override
+  String get keyAdvance => 'Go to next note';
+
+  @override
+  String get penTool => 'Pen';
+
+  @override
+  String get penHint => 'Tap a line or space to put the note there';
+
+  @override
+  String get rangeTool => 'Range';
+
+  @override
+  String get rangeHint => 'Tap the last note to pick several';
+
+  @override
+  String get voiceMenu => 'Voice';
+
+  @override
+  String get voiceAdd => 'Add a voice';
+
+  @override
+  String get voiceRemove => 'Remove this voice';
+
+  @override
+  String get lineBreakTool => 'Line break';
+
+  @override
+  String get pageBreakTool => 'Page break';
+
+  @override
+  String get toolsScore => 'Score';
+
+  @override
+  String get instrumentMenu => 'Instrument';
+
+  @override
+  String get staffMenu => 'Staff';
+
+  @override
+  String get staffAdd => 'Add a staff below';
+
+  @override
+  String get staffRemove => 'Remove the lower staff';
+
+  @override
+  String get barRange => 'Bar range…';
+
+  @override
+  String get barRangeTitle => 'Bar range';
+
+  @override
+  String get barRangeFrom => 'From bar';
+
+  @override
+  String get barRangeTo => 'To bar';
+
+  @override
+  String get barRangeCopy => 'Copy';
+
+  @override
+  String get barRangeCut => 'Cut';
+
+  @override
+  String get barRangeDelete => 'Delete';
+
+  @override
+  String get barRangeTranspose => 'Transpose';
+
+  @override
+  String semitoneCount(String n) {
+    return '$n semitones';
+  }
+
+  @override
+  String pasteBars(int n) {
+    return 'Paste $n copied bars';
+  }
+
+  @override
+  String barsCopied(int n) {
+    return '$n bars copied';
+  }
+
+  @override
+  String get barRangeInvalid => 'Check the bar numbers';
+
+  @override
+  String get pasteBarsNone => 'Paste (no bars copied)';
+
+  @override
+  String get breaksReflow =>
+      'This score breaks its lines to fit the screen. Line breaks can be set in a score that has written lines.';
 }

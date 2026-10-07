@@ -1,7 +1,9 @@
 import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/domain/blank_piano_score.dart';
+import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
 import 'package:page_a_diddle/features/digital_score/domain/native_score_layout.dart';
 
 void main() {
@@ -207,5 +209,125 @@ void main() {
     expect(hit, isNotNull);
     expect(hit!.onsetTicks, 0);
     expect(hit.staff, 1);
+  });
+
+  group('pointing at a place on the staff', () {
+    // One bar of a single treble staff: its bottom line (E4) at y 100, the
+    // lines 10 apart, a rest at x 60 and a chord (C5 over A4) at x 160.
+    final score = const MusicXmlCodec().decodeXml(
+      '<score-partwise version="4.0"><part-list><score-part id="P1">'
+      '<part-name>Voice</part-name></score-part></part-list><part id="P1">'
+      '<measure number="1"><attributes><divisions>1</divisions>'
+      '<time><beats>4</beats><beat-type>4</beat-type></time>'
+      '<clef><sign>G</sign><line>2</line></clef></attributes>'
+      '<note><rest/><duration>2</duration><type>half</type></note>'
+      '<note><pitch><step>A</step><octave>4</octave></pitch><duration>2</duration><type>half</type></note>'
+      '<note><chord/><pitch><step>C</step><octave>5</octave></pitch><duration>2</duration><type>half</type></note>'
+      '</measure></part></score-partwise>',
+    );
+    const layout = NativeScoreLayout(
+      contentSize: Size(240, 200),
+      measures: [
+        NativeMeasureBox(
+          measureIndex: 0,
+          rect: Rect.fromLTRB(20, 50, 220, 110),
+          trebleStaffTop: 100,
+          bassStaffTop: 200,
+          lineGap: 10,
+          contentLeft: 30,
+          contentWidth: 180,
+        ),
+      ],
+      notes: [
+        NativeNotePlacement(
+          partIndex: 0,
+          measureIndex: 0,
+          eventIndex: 0,
+          staff: 1,
+          onset: 0,
+          midi: null,
+          center: Offset(60, 80),
+          isRest: true,
+        ),
+        NativeNotePlacement(
+          partIndex: 0,
+          measureIndex: 0,
+          eventIndex: 1,
+          staff: 1,
+          onset: 2,
+          midi: 69,
+          center: Offset(160, 85),
+          isRest: false,
+        ),
+        NativeNotePlacement(
+          partIndex: 0,
+          measureIndex: 0,
+          eventIndex: 2,
+          staff: 1,
+          onset: 2,
+          midi: 72,
+          center: Offset(160, 75),
+          isRest: false,
+        ),
+      ],
+      systemStarts: [0],
+    );
+
+    test('the nearest note or rest in time is meant, on the line touched', () {
+      // Near the rest, on the second line from the bottom: G4.
+      final place = layout.placeAt(const Offset(70, 91), score: score)!;
+
+      expect((place.eventIndex, place.step, place.octave), (0, PitchStep.g, 4));
+      // The note is shown over the rest, on the line and not at the finger.
+      expect(place.ghostCenter, const Offset(60, 90));
+    });
+
+    test('of a chord the note nearest in height is meant', () {
+      final high = layout.placeAt(const Offset(150, 62), score: score)!;
+      final low = layout.placeAt(const Offset(150, 96), score: score)!;
+
+      expect((high.eventIndex, high.step, high.octave), (2, PitchStep.f, 5));
+      expect((low.eventIndex, low.step, low.octave), (1, PitchStep.f, 4));
+    });
+
+    test('a rest that fills its bar takes the note, though it is not drawn', () {
+      final empty = const MusicXmlCodec().decodeXml(
+        '<score-partwise version="4.0"><part-list><score-part id="P1">'
+        '<part-name>Voice</part-name></score-part></part-list><part id="P1">'
+        '<measure number="1"><attributes><divisions>1</divisions>'
+        '<time><beats>4</beats><beat-type>4</beat-type></time>'
+        '<clef><sign>G</sign><line>2</line></clef></attributes>'
+        '<harmony><root><root-step>C</root-step></root><kind>major</kind></harmony>'
+        '<note><rest measure="yes"/><duration>4</duration><type>whole</type></note>'
+        '</measure></part></score-partwise>',
+      );
+      final bare = NativeScoreLayout(
+        contentSize: layout.contentSize,
+        measures: layout.measures,
+        notes: const [],
+        systemStarts: const [0],
+      );
+
+      final place = bare.placeAt(const Offset(70, 80), score: empty)!;
+
+      // The rest is the event after the chord symbol; B4 is the middle line.
+      expect(
+        empty.parts.first.measures.first.events[place.eventIndex],
+        isA<MusicNote>(),
+      );
+      expect((place.step, place.octave), (PitchStep.b, 4));
+      expect(place.ghostCenter.dy, 80);
+    });
+
+    test('ledger lines above and below the bar still belong to it', () {
+      final above = layout.placeAt(const Offset(60, 20), score: score)!;
+      final below = layout.placeAt(const Offset(60, 125), score: score)!;
+
+      // Eight steps above the top line (F5).
+      expect((above.step, above.octave), (PitchStep.g, 6));
+      expect((below.step, below.octave), (PitchStep.g, 3));
+      expect(layout.placeAt(const Offset(60, 400), score: score), isNull);
+      expect(layout.placeAt(const Offset(400, 80), score: score), isNull);
+    });
   });
 }

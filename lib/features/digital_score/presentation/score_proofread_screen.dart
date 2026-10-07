@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -10,15 +11,18 @@ import 'package:page_a_diddle/features/digital_score/data/digital_score_editor_s
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/data/omr_convert_service.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
+import 'package:page_a_diddle/features/digital_score/domain/native_score_layout.dart';
 import 'package:page_a_diddle/features/digital_score/domain/omr_review.dart';
 import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_editor.dart';
 import 'package:page_a_diddle/features/digital_score/domain/score_version.dart';
 import 'package:page_a_diddle/features/digital_score/domain/three_staff_arrangement.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/articulation_icon.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/note_duration_icon.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/omr_original_crop.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/piano_score_view.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/score_editor_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
 
 /// One-bar proofreading editor for converted scores.
@@ -101,7 +105,53 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   late MusicScore _previewScore;
   XmlNoteSummary? _summary;
   late XmlBarInspection _bar;
+  late XmlBarSigns _signs;
   var _hasTexts = false;
+
+  /// The palette of tools open under the bar: one at a time, like the entry
+  /// palette of a notation program, so the score keeps the screen.
+  var _palette = _Palette.note;
+
+  /// A line (slur, hairpin, pedal…) whose first note is picked and whose
+  /// last note is still to be picked.
+  ({SpanKind kind, int measure, int note})? _spanFrom;
+
+  /// The verse whose words the lyric tool shows and writes.
+  var _verse = 1;
+
+  /// The octave the keyboard palette shows, and whether a key moves on to
+  /// the next note, as when a melody is typed in.
+  var _keyboardOctave = 4;
+  var _advance = true;
+
+  /// Whether a tap on the staff puts the nearest note on that line.
+  var _pen = false;
+
+  /// Bars copied with the bar range tool, to be pasted after another bar.
+  MeasureClip? _clip;
+
+  /// Whether a tap picks the other end of a run of notes, and that end: the
+  /// tools for pitch and marks then work on every note from the picked one
+  /// to it.
+  var _ranging = false;
+  int? _rangeTo;
+
+  /// The notes the tools work on: the picked one, or with a run picked every
+  /// note of its staff from one end to the other.
+  List<int> get _picked {
+    final from = _noteIndex;
+    if (from == null) return const [];
+    final to = _rangeTo;
+    if (!_ranging || to == null) return [from];
+    final notes = _previewMeasure.notes.toList();
+    if (from >= notes.length || to >= notes.length) return [from];
+    final staff = notes[from].staff;
+    return [
+      for (var i = math.min(from, to); i <= math.max(from, to); i++)
+        if (notes[i].staff == staff) i,
+    ];
+  }
+
   var _saving = false;
 
   String get _xml => _history[_cursor];
@@ -171,13 +221,23 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   /// Reads the current bar of [xml]: one pass over the score. Throws a
   /// [FormatException] when the bar cannot be read.
-  ({XmlBarInspection bar, MusicScore score}) _inspect(String xml) {
+  ({XmlBarInspection bar, MusicScore score, XmlBarSigns signs}) _inspect(
+    String xml,
+  ) {
     final bar = _editor.inspect(xml, widget.partIndex, _measureIndex);
-    return (bar: bar, score: _codec.decodeXml(bar.isolatedXml));
+    return (
+      bar: bar,
+      score: _codec.decodeXml(bar.isolatedXml),
+      signs: _editor.barSigns(xml, widget.partIndex, _measureIndex),
+    );
   }
 
-  void _show(({XmlBarInspection bar, MusicScore score}) read, {int? select}) {
+  void _show(
+    ({XmlBarInspection bar, MusicScore score, XmlBarSigns signs}) read, {
+    int? select,
+  }) {
     _bar = read.bar;
+    _signs = read.signs;
     _previewScore = read.score;
     _preview = tagIsolatedNotes(read.bar.isolatedXml, _previewMeasure);
     final count = _previewMeasure.notes.length;
@@ -195,6 +255,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   void _apply(
     XmlEditResult Function(String xml, XmlNoteRef ref) edit, {
     List<int> Function(List<int> bars, int at)? bars,
+    bool keepRange = false,
   }) {
     // A bar edit needs no note: a bar read without any can still be removed.
     final ref =
@@ -207,11 +268,13 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 noteIndex: 0,
               ));
     if (ref == null) return;
+    // Any edit ends a line that was being drawn.
+    if (_spanFrom != null) setState(() => _spanFrom = null);
     try {
       final result = edit(_xml, ref);
       final before = _measureIndex;
       _measureIndex = result.selection.measureIndex;
-      final ({XmlBarInspection bar, MusicScore score}) read;
+      final ({XmlBarInspection bar, MusicScore score, XmlBarSigns signs}) read;
       try {
         // The edited bar must still read. A bar edit moves every bar after
         // it, so the whole score is read once more; saving reads it again.
@@ -251,6 +314,13 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
           _savedCursor--;
         }
         _show(read, select: result.selection.noteIndex);
+        // A run of notes stays picked only for edits that leave every note
+        // where it is.
+        final end = _rangeTo;
+        _rangeTo =
+            keepRange && end != null && end < _previewMeasure.notes.length
+            ? end
+            : null;
       });
     } on FormatException catch (error) {
       _showMessage(error.message);
@@ -260,6 +330,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   void _undo() {
     if (_cursor == 0) return;
     setState(() {
+      _spanFrom = null;
+      _rangeTo = null;
       final edit = _edits[_cursor - 1];
       _cursor--;
       _measureIndex = edit.measure;
@@ -270,6 +342,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   void _redo() {
     if (_cursor >= _history.length - 1) return;
     setState(() {
+      _spanFrom = null;
+      _rangeTo = null;
       final edit = _edits[_cursor];
       _cursor++;
       _measureIndex = edit.measureAfter;
@@ -281,6 +355,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     if (index < 0 || index >= _measureCount || index == _measureIndex) return;
     setState(() {
       _measureIndex = index;
+      _rangeTo = null;
       _refresh(select: 0);
     });
   }
@@ -297,7 +372,212 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   void _onEventTapped(ScoreEventAddress address) {
     final index = xmlNoteIndexForEvent(_previewMeasure, address.eventIndex);
-    if (index != null) _selectNote(index);
+    if (index == null) return;
+    if (_spanFrom != null) {
+      _finishSpan(index);
+      return;
+    }
+    if (_ranging && _noteIndex != null) {
+      setState(() => _rangeTo = index);
+      return;
+    }
+    _selectNote(index);
+    // The keyboard shows the octave of the note that was picked.
+    if (index < _bar.notes.length) {
+      if (_bar.notes[index].pitch case final pitch?) {
+        _keyboardOctave = pitch.octave.clamp(1, 7);
+      }
+    }
+  }
+
+  /// Begins drawing [kind] at the picked note, or takes away the one that
+  /// begins or ends there.
+  void _startSpan(SpanKind kind) {
+    final index = _noteIndex;
+    final summary = _summary;
+    if (index == null || summary == null) return;
+    if (summary.spans.contains(kind)) {
+      _apply((xml, ref) => _editor.removeSpan(xml, ref, kind));
+      return;
+    }
+    setState(
+      () => _spanFrom = (kind: kind, measure: _measureIndex, note: index),
+    );
+  }
+
+  /// Draws the line being drawn as far as the note [index] of this bar.
+  void _finishSpan(int index) {
+    final span = _spanFrom;
+    if (span == null) return;
+    final start = XmlNoteRef(
+      partIndex: widget.partIndex,
+      measureIndex: span.measure,
+      noteIndex: span.note,
+    );
+    _selectNote(index);
+    _apply((xml, ref) => _editor.addSpan(xml, start, ref, span.kind));
+  }
+
+  /// Applies [edit] to every picked note that [where] takes, as one step
+  /// that undo takes back as one. With [backwards] the last note first, for
+  /// edits after which the notes behind are counted anew.
+  void _applyEach(
+    XmlEditResult Function(String xml, XmlNoteRef ref) edit, {
+    bool Function(XmlNoteSummary note)? where,
+    bool backwards = false,
+  }) {
+    final picked = _picked;
+    if (picked.length <= 1) {
+      _apply(edit);
+      return;
+    }
+    final notes = _bar.notes;
+    _apply((xml, ref) {
+      var current = xml;
+      var done = 0;
+      for (final index in backwards ? picked.reversed : picked) {
+        if (index >= notes.length) continue;
+        if (where != null && !where(notes[index])) continue;
+        try {
+          current = edit(current, ref.withNote(index)).xml;
+          done++;
+        } on FormatException {
+          // A note the edit does not fit is passed over.
+        }
+      }
+      if (done == 0) {
+        throw const FormatException('고른 음에는 할 수 없는 편집입니다.');
+      }
+      return XmlEditResult(current, ref);
+    }, keepRange: !backwards);
+  }
+
+  /// Puts an articulation on every picked note, or takes it off them all
+  /// when every one of them has it.
+  void _toggleMark(String name, {required bool restsToo}) {
+    bool has(XmlNoteSummary note) =>
+        name == 'fermata' ? note.fermata : note.articulations.contains(name);
+    bool takes(XmlNoteSummary note) =>
+        note.leadsChord && !note.isGrace && (restsToo || !note.isRest);
+    final notes = _bar.notes;
+    final all = [
+      for (final index in _picked)
+        if (index < notes.length && takes(notes[index])) notes[index],
+    ];
+    final allHave = all.isNotEmpty && all.every(has);
+    _applyEach(
+      (xml, ref) => _editor.toggleArticulation(xml, ref, name),
+      where: (note) => takes(note) && has(note) == allHave,
+    );
+  }
+
+  Future<void> _askBarRange() async {
+    final l10n = context.l10n;
+    final first = _firstBarNumber;
+    final choice = await showDialog<_BarRangeChoice>(
+      context: context,
+      builder: (_) => _BarRangeDialog(
+        current: _measureIndex + first,
+        first: first,
+        last: _measureCount - 1 + first,
+      ),
+    );
+    if (choice == null || !mounted) return;
+    final from = choice.from - first;
+    final to = choice.to - first;
+    if (choice.action == _BarRangeAction.copy ||
+        choice.action == _BarRangeAction.cut) {
+      try {
+        final clip = _editor.copyMeasures(_xml, from, to);
+        setState(() => _clip = clip);
+        if (choice.action == _BarRangeAction.copy) {
+          _showMessage(l10n.barsCopied(clip.length));
+          return;
+        }
+      } on FormatException catch (error) {
+        _showMessage(error.message);
+        return;
+      }
+    }
+    switch (choice.action) {
+      case _BarRangeAction.copy:
+        break;
+      case _BarRangeAction.cut || _BarRangeAction.delete:
+        _apply(
+          (xml, ref) => _editor.deleteMeasures(xml, widget.partIndex, from, to),
+          bars: (bars, _) => [...bars]..removeRange(from, to + 1),
+        );
+      case _BarRangeAction.transpose:
+        _apply(
+          (xml, ref) => _editor.transposeMeasures(
+            xml,
+            widget.partIndex,
+            from,
+            to,
+            choice.semitones,
+          ),
+          bars: (bars, _) => bars,
+        );
+    }
+  }
+
+  void _pasteBars() {
+    final clip = _clip;
+    if (clip == null) return;
+    _apply(
+      (xml, ref) => _editor.pasteMeasures(xml, ref, clip),
+      bars: (bars, at) => [...bars]
+        ..insertAll(at + 1, [
+          for (var i = 0; i < clip.length; i++) _nextBarId++,
+        ]),
+    );
+  }
+
+  static String _spanLabel(AppLocalizations l10n, SpanKind kind) =>
+      switch (kind) {
+        SpanKind.slur => l10n.slurTool,
+        SpanKind.glissando => l10n.glissando,
+        SpanKind.crescendo => l10n.crescendo,
+        SpanKind.diminuendo => l10n.diminuendo,
+        SpanKind.octaveUp => '8va',
+        SpanKind.octaveDown => '8vb',
+        SpanKind.pedal => l10n.pedalLine,
+      };
+
+  /// A key of the keyboard: the picked note or rest takes its pitch.
+  void _enterKey(int midi) {
+    final index = _noteIndex;
+    final summary = _summary;
+    if (index == null || summary == null) return;
+    if (summary.isRest || summary.pitch?.midi != midi) {
+      final before = _xml;
+      _apply((xml, ref) => _editor.enterPitch(xml, ref, midi));
+      if (identical(before, _xml)) return;
+    }
+    if (!_advance) return;
+    // On to the next note or rest, not to another note of the same chord.
+    final notes = _bar.notes;
+    var next = index + 1;
+    while (next < notes.length &&
+        (!notes[next].leadsChord || notes[next].isGrace)) {
+      next++;
+    }
+    if (next < notes.length) _selectNote(next);
+  }
+
+  /// The pen: the note or rest nearest to the tap goes to the line or space
+  /// that was tapped.
+  void _onNotePlaced(NativeStaffPlace place) {
+    final index = xmlNoteIndexForEvent(_previewMeasure, place.eventIndex);
+    if (index == null || index >= _bar.notes.length) return;
+    _selectNote(index);
+    final pitch = _bar.notes[index].pitch;
+    if (pitch != null &&
+        pitch.step == place.step &&
+        pitch.octave == place.octave) {
+      return;
+    }
+    _apply((xml, ref) => _editor.placeNote(xml, ref, place.step, place.octave));
   }
 
   void _showMessage(String message) {
@@ -385,14 +665,16 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       final index = _noteIndex;
       if (_ref == null || summary == null || index == null) return;
       if (summary.isRest || summary.isGrace) return;
-      final initial = summary.lyric ?? '';
+      final initial = summary.lyrics[_verse] ?? '';
       final result = await showDialog<({String text, bool next})>(
         context: context,
         builder: (_) => _LyricDialog(initial: initial),
       );
       if (result == null || !mounted) return;
       if (result.text != initial) {
-        _apply((xml, ref) => _editor.setLyric(xml, ref, result.text));
+        _apply(
+          (xml, ref) => _editor.setLyric(xml, ref, result.text, verse: _verse),
+        );
       }
       if (!result.next) return;
       // The next note that is sung: not a rest, an ornament, or another
@@ -552,9 +834,12 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         ),
         playback: _playback,
         playbackVisible: true,
-        inputMode: 'select',
-        oneFingerPan: true,
-        onEventTapped: _onEventTapped,
+        // With the pen a finger on the staff carries the note, so it must
+        // not move the page as well.
+        inputMode: _pen ? 'place' : 'select',
+        oneFingerPan: !_pen,
+        onEventTapped: _pen ? null : _onEventTapped,
+        onNotePlaced: _onNotePlaced,
         selectedNoteAddress: selectedEvent == null
             ? null
             : ScoreEventAddress(
@@ -562,6 +847,17 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 measureIndex: 0,
                 eventIndex: selectedEvent,
               ),
+        alsoSelectedNotes: [
+          for (final index in _picked)
+            if (index != _noteIndex)
+              if (eventIndexForXmlNote(_previewMeasure, index)
+                  case final event?)
+                ScoreEventAddress(
+                  partIndex: 0,
+                  measureIndex: 0,
+                  eventIndex: event,
+                ),
+        ],
       ),
     );
   }
@@ -570,8 +866,6 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final summary = _summary;
-    final hasNote = summary != null && !summary.isRest && !summary.isGrace;
-    final canRetime = summary != null && !summary.isGrace && !summary.inTuplet;
     final selectedEvent = _noteIndex == null
         ? null
         : eventIndexForXmlNote(_previewMeasure, _noteIndex!);
@@ -653,7 +947,11 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                         Expanded(
                           key: const ValueKey('engraving'),
                           child: _Captioned(
-                            caption: _showOriginal && _places != null
+                            caption: _pen
+                                ? l10n.penHint
+                                : _ranging
+                                ? l10n.rangeHint
+                                : _showOriginal && _places != null
                                 ? '${l10n.proofreadNow} · ${l10n.proofreadPick}'
                                 : l10n.proofreadPick,
                             child: _engraving(l10n, selectedEvent),
@@ -664,6 +962,16 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                   },
                 ),
               ),
+              if (_spanFrom case final span?)
+                _SpanBanner(
+                  text: l10n.spanPickEnd(_spanLabel(l10n, span.kind)),
+                  toSelected: l10n.spanToSelected,
+                  onToSelected: _noteIndex == null
+                      ? null
+                      : () => _finishSpan(_noteIndex!),
+                  cancel: l10n.cancel,
+                  onCancel: () => setState(() => _spanFrom = null),
+                ),
               if (_lengthOff case final off?)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
@@ -725,45 +1033,55 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                             : null,
                         child: const Icon(Icons.chevron_right_rounded),
                       ),
-                      _BarMenuButton(
+                      _MenuButton(
                         tooltip: l10n.barMenuTooltip,
                         label: l10n.barEdit,
                         items: [
-                          (
+                          _MenuItem(
+                            l10n.insertMeasureAfter,
+                            _insertBar,
                             icon: Icons.add_box_outlined,
-                            label: l10n.insertMeasureAfter,
-                            onPressed: _insertBar,
                           ),
-                          (
+                          _MenuItem(
+                            l10n.duplicateMeasure,
+                            _duplicateBar,
                             icon: Icons.copy_all_rounded,
-                            label: l10n.duplicateMeasure,
-                            onPressed: _duplicateBar,
                           ),
-                          (
+                          _MenuItem(
+                            l10n.moveMeasureEarlier,
+                            _measureIndex > 0 ? () => _moveBar(-1) : null,
                             icon: Icons.keyboard_double_arrow_left,
-                            label: l10n.moveMeasureEarlier,
-                            onPressed: _measureIndex > 0
-                                ? () => _moveBar(-1)
-                                : null,
                           ),
-                          (
-                            icon: Icons.keyboard_double_arrow_right,
-                            label: l10n.moveMeasureLater,
-                            onPressed: _measureIndex < _measureCount - 1
+                          _MenuItem(
+                            l10n.moveMeasureLater,
+                            _measureIndex < _measureCount - 1
                                 ? () => _moveBar(1)
                                 : null,
+                            icon: Icons.keyboard_double_arrow_right,
                           ),
-                          (
-                            icon: Icons.text_fields_rounded,
-                            label: l10n.barTexts,
-                            onPressed: summary != null && _hasTexts
+                          _MenuItem(
+                            l10n.barTexts,
+                            summary != null && _hasTexts
                                 ? () => unawaited(_editTexts())
                                 : null,
+                            icon: Icons.text_fields_rounded,
                           ),
-                          (
+                          _MenuItem(
+                            l10n.deleteMeasure,
+                            _measureCount > 1 ? _deleteBar : null,
                             icon: Icons.delete_outline_rounded,
-                            label: l10n.deleteMeasure,
-                            onPressed: _measureCount > 1 ? _deleteBar : null,
+                          ),
+                          _MenuItem(
+                            l10n.barRange,
+                            () => unawaited(_askBarRange()),
+                            icon: Icons.select_all_rounded,
+                          ),
+                          _MenuItem(
+                            _clip == null
+                                ? l10n.pasteBarsNone
+                                : l10n.pasteBars(_clip!.length),
+                            _clip == null ? null : _pasteBars,
+                            icon: Icons.content_paste_rounded,
                           ),
                         ],
                       ),
@@ -789,191 +1107,1437 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                       ),
                     ],
                   ),
-                  // The note: which one, then what is done to it.
-                  _ToolGroup(
-                    label: l10n.toolsNote,
-                    children: [
-                      _ToolButton(
-                        tooltip: l10n.previousNote,
-                        onPressed: (_noteIndex ?? 0) > 0
-                            ? () => _selectNote(_noteIndex! - 1)
-                            : null,
-                        child: const Icon(Icons.chevron_left_rounded),
-                      ),
-                      _ToolButton(
-                        tooltip: l10n.nextNote,
-                        onPressed:
-                            _noteIndex != null &&
-                                _noteIndex! < _previewMeasure.notes.length - 1
-                            ? () => _selectNote(_noteIndex! + 1)
-                            : null,
-                        child: const Icon(Icons.chevron_right_rounded),
-                      ),
-                      const _ToolGap(),
-                      _ToolButton(
-                        tooltip: l10n.addChordTone,
-                        onPressed: hasNote
-                            ? () => _apply(_editor.addChordNote)
-                            : null,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.add_rounded, size: 18),
-                            Text(l10n.addChordTone),
-                          ],
-                        ),
-                      ),
-                      // One place for the two opposite things: a note is
-                      // taken away, a rest is made a note.
-                      if (summary != null && summary.isRest)
-                        _ToolButton(
-                          tooltip: l10n.restToNote,
-                          onPressed: () => _apply(_editor.restToNote),
-                          child: Text(l10n.restToNote),
-                        )
-                      else
-                        _ToolButton(
-                          tooltip: l10n.deleteNote,
-                          onPressed: hasNote
-                              ? () => _apply(_editor.deleteNote)
-                              : null,
-                          child: Text(l10n.erase),
-                        ),
-                    ],
-                  ),
-                  // The words at the note, each shown as it is now.
-                  _ToolGroup(
-                    label: l10n.toolsWords,
-                    children: [
-                      _ToolButton(
-                        tooltip: l10n.chordSymbol,
-                        onPressed: summary != null && !summary.isGrace
-                            ? () => unawaited(_editChordSymbol())
-                            : null,
-                        child: _ValueLabel(
-                          value: summary?.harmony,
-                          empty: l10n.chordSymbol,
-                        ),
-                      ),
-                      // What a converted lead sheet gets wrong most often
-                      // after the notes themselves.
-                      _ToolButton(
-                        tooltip: l10n.lyric,
-                        onPressed: hasNote
-                            ? () => unawaited(_editLyric())
-                            : null,
-                        child: _ValueLabel(
-                          value: summary?.lyric,
-                          empty: l10n.lyric,
-                        ),
-                      ),
-                    ],
-                  ),
-                  _ToolGroup(
-                    label: l10n.toolsLength,
-                    children: [
-                      for (final type in noteDurationTypes)
-                        _ToolButton(
-                          tooltip: '${l10n.noteValue} ${_fractionOf[type]}',
-                          selected: summary?.type == type,
-                          onPressed: canRetime
-                              ? () => _apply(
-                                  (xml, ref) =>
-                                      _editor.setDuration(xml, ref, type, 0),
-                                )
-                              : null,
-                          child: NoteDurationIcon(
-                            durationType: type,
-                            rest: summary?.isRest ?? false,
-                            color: canRetime ? AppColors.ink : AppColors.border,
-                          ),
-                        ),
-                      _ToolButton(
-                        tooltip: l10n.dottedDuration,
-                        selected: (summary?.dots ?? 0) > 0,
-                        onPressed: canRetime && summary.type != null
-                            ? () => _apply(
-                                (xml, ref) => _editor.setDuration(
-                                  xml,
-                                  ref,
-                                  summary.type!,
-                                  summary.dots > 0 ? 0 : 1,
-                                ),
-                              )
-                            : null,
-                        child: const Icon(Icons.circle, size: 8),
-                      ),
-                    ],
-                  ),
-                  _ToolGroup(
-                    label: l10n.toolsPitch,
-                    children: [
-                      _ToolButton(
-                        tooltip: l10n.noteStepUp,
-                        onPressed: hasNote
-                            ? () => _apply(
-                                (xml, ref) => _editor.moveDiatonic(xml, ref, 1),
-                              )
-                            : null,
-                        child: const Icon(Icons.arrow_upward_rounded),
-                      ),
-                      _ToolButton(
-                        tooltip: l10n.noteStepDown,
-                        onPressed: hasNote
-                            ? () => _apply(
-                                (xml, ref) =>
-                                    _editor.moveDiatonic(xml, ref, -1),
-                              )
-                            : null,
-                        child: const Icon(Icons.arrow_downward_rounded),
-                      ),
-                      // "8" is how an octave is written on a score (8va).
-                      _ToolButton(
-                        tooltip: l10n.octaveUp,
-                        onPressed: hasNote
-                            ? () => _apply(
-                                (xml, ref) => _editor.shiftOctave(xml, ref, 1),
-                              )
-                            : null,
-                        child: const _OctaveLabel(up: true),
-                      ),
-                      _ToolButton(
-                        tooltip: l10n.octaveDown,
-                        onPressed: hasNote
-                            ? () => _apply(
-                                (xml, ref) => _editor.shiftOctave(xml, ref, -1),
-                              )
-                            : null,
-                        child: const _OctaveLabel(up: false),
-                      ),
-                      const _ToolGap(),
-                      for (final (alter, glyph, label) in [
-                        (1, '♯', l10n.noteSharp),
-                        (-1, '♭', l10n.noteFlat),
-                        (0, '♮', l10n.noteNatural),
-                      ])
-                        _ToolButton(
-                          tooltip: label,
-                          selected: hasNote && summary.pitch?.alter == alter,
-                          onPressed: hasNote
-                              ? () => _apply(
-                                  (xml, ref) =>
-                                      _editor.setAlter(xml, ref, alter),
-                                )
-                              : null,
-                          child: Text(
-                            glyph,
-                            style: const TextStyle(fontSize: 22, height: 1),
-                          ),
-                        ),
-                    ],
-                  ),
                 ],
               ),
+              // The other tools come in palettes, one open at a time, so
+              // the score keeps the screen.
+              _PaletteTabs(
+                active: _palette,
+                labelOf: (palette) => _paletteLabel(l10n, palette),
+                onPick: (palette) => setState(() => _palette = palette),
+              ),
+              _PaletteRow(children: _paletteTools(l10n)),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  static String _paletteLabel(AppLocalizations l10n, _Palette palette) =>
+      switch (palette) {
+        _Palette.note => l10n.toolsNote,
+        _Palette.length => l10n.toolsLength,
+        _Palette.pitch => l10n.toolsPitch,
+        _Palette.marks => l10n.toolsMarks,
+        _Palette.words => l10n.toolsWords,
+        _Palette.keys => l10n.toolsKeys,
+        _Palette.bar => l10n.toolsBarSigns,
+        _Palette.score => l10n.toolsScore,
+      };
+
+  /// Applies an edit of the bar as a whole; the picked note stays picked.
+  void _applyBar(XmlEditResult Function(String xml, int measureIndex) edit) {
+    final keep = _noteIndex ?? 0;
+    _apply((xml, ref) {
+      // The edit is of the bar on screen, or of the whole score: either
+      // way this bar stays on screen.
+      return XmlEditResult(edit(xml, ref.measureIndex).xml, ref.withNote(keep));
+    }, bars: (bars, _) => bars);
+  }
+
+  List<Widget> _paletteTools(AppLocalizations l10n) {
+    final summary = _summary;
+    final hasNote = summary != null && !summary.isRest && !summary.isGrace;
+    final canRetime = summary != null && !summary.isGrace && !summary.inTuplet;
+    final hasEvent = summary != null && !summary.isGrace;
+    switch (_palette) {
+      case _Palette.note:
+        return [
+          _ToolButton(
+            tooltip: l10n.rangeTool,
+            selected: _ranging,
+            onPressed: () => setState(() {
+              _ranging = !_ranging;
+              _rangeTo = null;
+              // The pen takes every tap on the staff for itself.
+              if (_ranging) _pen = false;
+            }),
+            child: Text(l10n.rangeTool),
+          ),
+          _ToolButton(
+            tooltip: l10n.penTool,
+            selected: _pen,
+            onPressed: () => setState(() {
+              _pen = !_pen;
+              if (_pen) {
+                _ranging = false;
+                _rangeTo = null;
+              }
+            }),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.edit_outlined, size: 18),
+                const SizedBox(width: 2),
+                Text(l10n.penTool),
+              ],
+            ),
+          ),
+          const _ToolGap(),
+          _ToolButton(
+            tooltip: l10n.previousNote,
+            onPressed: (_noteIndex ?? 0) > 0
+                ? () => _selectNote(_noteIndex! - 1)
+                : null,
+            child: const Icon(Icons.chevron_left_rounded),
+          ),
+          _ToolButton(
+            tooltip: l10n.nextNote,
+            onPressed:
+                _noteIndex != null &&
+                    _noteIndex! < _previewMeasure.notes.length - 1
+                ? () => _selectNote(_noteIndex! + 1)
+                : null,
+            child: const Icon(Icons.chevron_right_rounded),
+          ),
+          const _ToolGap(),
+          // One place for the two opposite things: a note becomes a rest,
+          // a rest is made a note.
+          if (summary != null && summary.isRest)
+            _ToolButton(
+              tooltip: l10n.restToNote,
+              onPressed: () => _apply(_editor.restToNote),
+              child: Text(l10n.restToNote),
+            )
+          else
+            _ToolButton(
+              tooltip: l10n.noteToRest,
+              onPressed: hasNote
+                  ? () => _applyEach(
+                      _editor.deleteNote,
+                      where: (note) => !note.isRest,
+                      backwards: true,
+                    )
+                  : null,
+              child: Text(l10n.noteToRest),
+            ),
+          _ToolButton(
+            tooltip: l10n.deleteNote,
+            onPressed: summary != null
+                ? () => _applyEach(
+                    _editor.removeNote,
+                    where: (note) => note.leadsChord,
+                    backwards: true,
+                  )
+                : null,
+            child: Text(l10n.removeNoteTool),
+          ),
+          _ToolButton(
+            tooltip: l10n.splitNote,
+            onPressed: canRetime ? () => _apply(_editor.splitNote) : null,
+            child: Text(l10n.splitNote),
+          ),
+          _MenuButton(
+            tooltip: l10n.insertTool,
+            label: l10n.insertTool,
+            items: [
+              for (final (label, before, rest) in [
+                (l10n.insertNoteBefore, true, false),
+                (l10n.insertNoteAfter, false, false),
+                (l10n.insertRestBefore, true, true),
+                (l10n.insertRestAfter, false, true),
+              ])
+                _MenuItem(
+                  label,
+                  canRetime
+                      ? () => _apply(
+                          (xml, ref) => _editor.insertEvent(
+                            xml,
+                            ref,
+                            before: before,
+                            rest: rest,
+                          ),
+                        )
+                      : null,
+                ),
+            ],
+          ),
+          const _ToolGap(),
+          _ToolButton(
+            tooltip: l10n.addChordTone,
+            onPressed: hasNote ? () => _apply(_editor.addChordNote) : null,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.add_rounded, size: 18),
+                Text(l10n.addChordTone),
+              ],
+            ),
+          ),
+          _ToolButton(
+            tooltip: l10n.graceNote,
+            onPressed: hasNote ? () => _apply(_editor.addGraceNote) : null,
+            child: Text(l10n.graceNote),
+          ),
+          _ToolButton(
+            tooltip: l10n.tieTool,
+            selected: summary?.tieStart ?? false,
+            onPressed: hasNote ? () => _apply(_editor.toggleTie) : null,
+            child: Text(l10n.tieTool),
+          ),
+          _MenuButton(
+            tooltip: l10n.voiceMenu,
+            label: l10n.voiceMenu,
+            items: [
+              _MenuItem(
+                l10n.voiceAdd,
+                summary != null ? () => _apply(_editor.addVoice) : null,
+              ),
+              _MenuItem(
+                l10n.voiceRemove,
+                summary != null ? () => _apply(_editor.removeVoice) : null,
+              ),
+            ],
+          ),
+        ];
+      case _Palette.length:
+        final dots = summary?.dots ?? 0;
+        return [
+          for (final type in noteDurationTypes)
+            _ToolButton(
+              tooltip: '${l10n.noteValue} ${_fractionOf[type]}',
+              selected: summary?.type == type,
+              onPressed: canRetime
+                  ? () => _apply(
+                      (xml, ref) => _editor.setDuration(xml, ref, type, 0),
+                    )
+                  : null,
+              child: NoteDurationIcon(
+                durationType: type,
+                rest: summary?.isRest ?? false,
+                color: canRetime ? AppColors.ink : AppColors.border,
+              ),
+            ),
+          // One dot, two dots, none again.
+          _ToolButton(
+            tooltip: l10n.dottedDuration,
+            selected: dots > 0,
+            onPressed: canRetime && summary.type != null
+                ? () => _apply(
+                    (xml, ref) => _editor.setDuration(
+                      xml,
+                      ref,
+                      summary.type!,
+                      (dots + 1) % 3,
+                    ),
+                  )
+                : null,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < (dots == 2 ? 2 : 1); i++) ...[
+                  if (i > 0) const SizedBox(width: 3),
+                  const Icon(Icons.circle, size: 8),
+                ],
+              ],
+            ),
+          ),
+          const _ToolGap(),
+          _MenuButton(
+            tooltip: l10n.tuplet,
+            label: l10n.tuplet,
+            items: [
+              for (final choice in tupletChoices)
+                _MenuItem(
+                  l10n.tupletOf(choice.actual),
+                  canRetime
+                      ? () => _apply(
+                          (xml, ref) => _editor.makeTuplet(
+                            xml,
+                            ref,
+                            choice.actual,
+                            choice.normal,
+                          ),
+                        )
+                      : null,
+                ),
+              _MenuItem(
+                l10n.tupletRemove,
+                summary != null && summary.inTuplet
+                    ? () => _apply(_editor.removeTuplet)
+                    : null,
+              ),
+            ],
+          ),
+        ];
+      case _Palette.pitch:
+        return [
+          _ToolButton(
+            tooltip: l10n.noteStepUp,
+            onPressed: hasNote
+                ? () => _applyEach(
+                    (xml, ref) => _editor.moveDiatonic(xml, ref, 1),
+                    where: (note) => !note.isRest && !note.isGrace,
+                  )
+                : null,
+            child: const Icon(Icons.arrow_upward_rounded),
+          ),
+          _ToolButton(
+            tooltip: l10n.noteStepDown,
+            onPressed: hasNote
+                ? () => _applyEach(
+                    (xml, ref) => _editor.moveDiatonic(xml, ref, -1),
+                    where: (note) => !note.isRest && !note.isGrace,
+                  )
+                : null,
+            child: const Icon(Icons.arrow_downward_rounded),
+          ),
+          // "8" is how an octave is written on a score (8va).
+          _ToolButton(
+            tooltip: l10n.octaveUp,
+            onPressed: hasNote
+                ? () => _applyEach(
+                    (xml, ref) => _editor.shiftOctave(xml, ref, 1),
+                    where: (note) => !note.isRest && !note.isGrace,
+                  )
+                : null,
+            child: const _OctaveLabel(up: true),
+          ),
+          _ToolButton(
+            tooltip: l10n.octaveDown,
+            onPressed: hasNote
+                ? () => _applyEach(
+                    (xml, ref) => _editor.shiftOctave(xml, ref, -1),
+                    where: (note) => !note.isRest && !note.isGrace,
+                  )
+                : null,
+            child: const _OctaveLabel(up: false),
+          ),
+          const _ToolGap(),
+          for (final (alter, glyph, label) in [
+            (1, '♯', l10n.noteSharp),
+            (-1, '♭', l10n.noteFlat),
+            (0, '♮', l10n.noteNatural),
+            (2, '♯♯', l10n.doubleSharp),
+            (-2, '♭♭', l10n.doubleFlat),
+          ])
+            _ToolButton(
+              tooltip: label,
+              selected: hasNote && summary.pitch?.alter == alter,
+              onPressed: hasNote
+                  ? () => _applyEach(
+                      (xml, ref) => _editor.setAlter(xml, ref, alter),
+                      where: (note) => !note.isRest && !note.isGrace,
+                    )
+                  : null,
+              child: Text(
+                glyph,
+                style: const TextStyle(fontSize: 22, height: 1),
+              ),
+            ),
+        ];
+      case _Palette.marks:
+        return [
+          for (final (name, label) in [
+            ('staccato', l10n.staccato),
+            ('staccatissimo', l10n.staccatissimo),
+            ('tenuto', l10n.tenuto),
+            ('accent', l10n.accent),
+            ('strong-accent', l10n.marcato),
+          ])
+            _ToolButton(
+              tooltip: label,
+              selected: summary?.articulations.contains(name) ?? false,
+              onPressed: hasNote
+                  ? () => _toggleMark(name, restsToo: false)
+                  : null,
+              child: ArticulationIcon(
+                name: name,
+                color: hasNote ? AppColors.ink : AppColors.border,
+              ),
+            ),
+          _ToolButton(
+            tooltip: l10n.fermata,
+            selected: summary?.fermata ?? false,
+            onPressed: hasEvent
+                ? () => _toggleMark('fermata', restsToo: true)
+                : null,
+            child: ArticulationIcon(
+              name: 'fermata',
+              color: hasEvent ? AppColors.ink : AppColors.border,
+            ),
+          ),
+          _ToolButton(
+            tooltip: l10n.breathMark,
+            selected: summary?.articulations.contains('breath-mark') ?? false,
+            onPressed: hasNote
+                ? () => _toggleMark('breath-mark', restsToo: false)
+                : null,
+            child: Text(l10n.breathMark),
+          ),
+          const _ToolGap(),
+          _MenuButton(
+            tooltip: l10n.dynamics,
+            label: summary?.dynamic ?? l10n.dynamics,
+            italic: summary?.dynamic != null,
+            items: [
+              for (final mark in dynamicMarks)
+                _MenuItem(
+                  mark,
+                  hasEvent
+                      ? () => _apply(
+                          (xml, ref) => _editor.setDynamic(xml, ref, mark),
+                        )
+                      : null,
+                  checked: summary?.dynamic == mark,
+                ),
+              _MenuItem(
+                l10n.dynamicsNone,
+                summary?.dynamic != null
+                    ? () => _apply(
+                        (xml, ref) => _editor.setDynamic(xml, ref, null),
+                      )
+                    : null,
+              ),
+            ],
+          ),
+          // Lines from one note to another: the first is the picked note,
+          // the last is picked next. On a note that has the line, the tool
+          // takes it away.
+          _ToolButton(
+            tooltip: l10n.slurTool,
+            selected: summary?.spans.contains(SpanKind.slur) ?? false,
+            onPressed: hasNote ? () => _startSpan(SpanKind.slur) : null,
+            child: Text(l10n.slurTool),
+          ),
+          _MenuButton(
+            tooltip: l10n.linesMenu,
+            label: l10n.linesMenu,
+            items: [
+              for (final kind in const [
+                SpanKind.crescendo,
+                SpanKind.diminuendo,
+                SpanKind.octaveUp,
+                SpanKind.octaveDown,
+                SpanKind.pedal,
+                SpanKind.glissando,
+              ])
+                _MenuItem(
+                  _spanLabel(l10n, kind),
+                  (kind.onNotes ? hasNote : hasEvent)
+                      ? () => _startSpan(kind)
+                      : null,
+                  checked: summary?.spans.contains(kind) ?? false,
+                ),
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.ornamentsMenu,
+            label: l10n.ornamentsMenu,
+            items: [
+              for (final (name, label) in [
+                ('trill-mark', l10n.trill),
+                ('mordent', l10n.mordent),
+                ('inverted-mordent', l10n.invertedMordent),
+                ('turn', l10n.turnOrnament),
+                ('tremolo', l10n.tremolo),
+                ('arpeggiate', l10n.arpeggio),
+              ])
+                _MenuItem(
+                  label,
+                  hasNote
+                      ? () => _apply(
+                          (xml, ref) => _editor.toggleOrnament(xml, ref, name),
+                        )
+                      : null,
+                  checked: summary?.ornaments.contains(name) ?? false,
+                ),
+            ],
+          ),
+        ];
+      case _Palette.words:
+        return [
+          _ToolButton(
+            tooltip: l10n.chordSymbol,
+            onPressed: hasEvent ? () => unawaited(_editChordSymbol()) : null,
+            child: _ValueLabel(
+              value: summary?.harmony,
+              empty: l10n.chordSymbol,
+            ),
+          ),
+          // What a converted lead sheet gets wrong most often after the
+          // notes themselves.
+          _ToolButton(
+            tooltip: l10n.lyric,
+            onPressed: hasNote ? () => unawaited(_editLyric()) : null,
+            child: _ValueLabel(
+              value: summary?.lyrics[_verse],
+              empty: l10n.lyric,
+            ),
+          ),
+          _MenuButton(
+            tooltip: l10n.verseMenu,
+            label: l10n.verseOf(_verse),
+            items: [
+              for (final verse in const [1, 2, 3, 4])
+                _MenuItem(
+                  l10n.verseOf(verse),
+                  () => setState(() => _verse = verse),
+                  checked: _verse == verse,
+                ),
+            ],
+          ),
+        ];
+      case _Palette.keys:
+        return [
+          _KeyboardBar(
+            octave: _keyboardOctave,
+            enabled: hasEvent,
+            onKey: _enterKey,
+            lower: l10n.keyboardLower,
+            higher: l10n.keyboardHigher,
+            onLower: _keyboardOctave > 1
+                ? () => setState(() => _keyboardOctave--)
+                : null,
+            onHigher: _keyboardOctave < 7
+                ? () => setState(() => _keyboardOctave++)
+                : null,
+          ),
+          _ToolButton(
+            tooltip: l10n.keyAdvance,
+            selected: _advance,
+            onPressed: () => setState(() => _advance = !_advance),
+            child: Text(l10n.keyAdvance),
+          ),
+        ];
+      case _Palette.bar:
+        final signs = _signs;
+        final attributes = _previewMeasure.attributes;
+        final staff = _noteIndex == null
+            ? 1
+            : _previewMeasure.notes.elementAt(_noteIndex!).staff;
+        final clef = attributes.clefs[staff];
+        return [
+          _ToolButton(
+            tooltip: l10n.keyAndTime,
+            onPressed: () => unawaited(_editKeyAndTime()),
+            child: Text(l10n.keyAndTime),
+          ),
+          _MenuButton(
+            tooltip: l10n.clef,
+            label: l10n.clef,
+            items: [
+              for (final (sign, line, label) in [
+                ('G', 2, l10n.clefTreble),
+                ('F', 4, l10n.clefBass),
+                ('C', 3, l10n.clefAlto),
+                ('C', 4, l10n.clefTenor),
+              ])
+                _MenuItem(
+                  label,
+                  () => _applyBar(
+                    (xml, measure) => _editor.setClef(
+                      xml,
+                      widget.partIndex,
+                      measure,
+                      staff,
+                      sign,
+                      line,
+                    ),
+                  ),
+                  checked:
+                      clef != null && clef.sign == sign && clef.line == line,
+                ),
+            ],
+          ),
+          const _ToolGap(),
+          _ToolButton(
+            tooltip: l10n.repeatStart,
+            selected: signs.repeatStart,
+            onPressed: () => _applyBar(
+              (xml, measure) => _editor.toggleRepeat(
+                xml,
+                widget.partIndex,
+                measure,
+                start: true,
+              ),
+            ),
+            child: const Text('|:'),
+          ),
+          _ToolButton(
+            tooltip: l10n.repeatEnd,
+            selected: signs.repeatEnd,
+            onPressed: () => _applyBar(
+              (xml, measure) => _editor.toggleRepeat(
+                xml,
+                widget.partIndex,
+                measure,
+                start: false,
+              ),
+            ),
+            child: const Text(':|'),
+          ),
+          _MenuButton(
+            tooltip: l10n.barlineTool,
+            label: l10n.barlineTool,
+            items: [
+              for (final (style, label) in [
+                ('regular', l10n.barlineRegular),
+                ('light-light', l10n.barlineDouble),
+                ('light-heavy', l10n.barlineFinal),
+              ])
+                _MenuItem(
+                  label,
+                  () => _applyBar(
+                    (xml, measure) => _editor.setBarStyle(
+                      xml,
+                      widget.partIndex,
+                      measure,
+                      style,
+                    ),
+                  ),
+                  checked: signs.barStyle == style,
+                ),
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.endings,
+            label: l10n.endings,
+            items: [
+              for (final number in const [1, 2, 3]) ...[
+                _MenuItem(
+                  l10n.endingStart(number),
+                  () => _applyBar(
+                    (xml, measure) => _editor.toggleEnding(
+                      xml,
+                      widget.partIndex,
+                      measure,
+                      number,
+                      start: true,
+                    ),
+                  ),
+                  checked: signs.endingStart == number,
+                ),
+                _MenuItem(
+                  l10n.endingEnd(number),
+                  () => _applyBar(
+                    (xml, measure) => _editor.toggleEnding(
+                      xml,
+                      widget.partIndex,
+                      measure,
+                      number,
+                      start: false,
+                    ),
+                  ),
+                  checked: signs.endingEnd == number,
+                ),
+              ],
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.navigationSigns,
+            label: l10n.navigationSigns,
+            items: [
+              for (final sign in NavigationSign.values)
+                _MenuItem(
+                  sign.words,
+                  () => _applyBar(
+                    (xml, measure) => _editor.setNavigationSign(
+                      xml,
+                      widget.partIndex,
+                      measure,
+                      sign,
+                      on: !signs.navigation.contains(sign),
+                    ),
+                  ),
+                  checked: signs.navigation.contains(sign),
+                ),
+            ],
+          ),
+          const _ToolGap(),
+          _ToolButton(
+            tooltip: l10n.tempoMark,
+            onPressed: () => unawaited(_editTempo()),
+            child: _ValueLabel(
+              value: signs.tempoBpm == null ? null : '♩ = ${signs.tempoBpm}',
+              empty: l10n.tempoMark,
+            ),
+          ),
+          _ToolButton(
+            tooltip: l10n.rehearsalMark,
+            onPressed: () => unawaited(_editRehearsal()),
+            child: _ValueLabel(
+              value: signs.rehearsal,
+              empty: l10n.rehearsalMark,
+            ),
+          ),
+          _ToolButton(
+            tooltip: l10n.addText,
+            onPressed: () => unawaited(_addText()),
+            child: Text(l10n.addText),
+          ),
+          const _ToolGap(),
+          // Where the bar stands on the page: the first bar begins a line
+          // and a page anyway.
+          for (final (page, label, on) in [
+            (false, l10n.lineBreakTool, signs.lineBreak),
+            (true, l10n.pageBreakTool, signs.pageBreak),
+          ])
+            _ToolButton(
+              tooltip: label,
+              selected: on,
+              onPressed: _measureIndex > 0
+                  ? () {
+                      // One written break makes the viewer keep to written
+                      // lines only: in a score that reflows, every other
+                      // bar would end up on one line.
+                      if (!_xml.contains('new-system="yes"') &&
+                          !_xml.contains('new-page="yes"')) {
+                        _showMessage(l10n.breaksReflow);
+                        return;
+                      }
+                      _applyBar(
+                        (xml, measure) => _editor.toggleBreak(
+                          xml,
+                          widget.partIndex,
+                          measure,
+                          page: page,
+                        ),
+                      );
+                    }
+                  : null,
+              child: Text(label),
+            ),
+        ];
+      case _Palette.score:
+        final instrument = _editor.instrumentOf(_xml, widget.partIndex);
+        final staves = _editor.staffCount(_xml, widget.partIndex);
+        return [
+          _MenuButton(
+            tooltip: l10n.instrumentMenu,
+            label: instrument.name.isEmpty
+                ? l10n.instrumentMenu
+                : instrument.name,
+            items: [
+              // Instrument names are written as scores write them.
+              for (final choice in partInstruments)
+                _MenuItem(
+                  choice.name,
+                  () => _applyBar(
+                    (xml, _) => _editor.setInstrument(
+                      xml,
+                      widget.partIndex,
+                      choice.name,
+                      choice.program,
+                    ),
+                  ),
+                  checked: instrument.program == choice.program,
+                ),
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.staffMenu,
+            label: l10n.staffMenu,
+            items: [
+              _MenuItem(
+                l10n.staffAdd,
+                staves == 1
+                    ? () => _applyBar(
+                        (xml, _) => _editor.addStaff(xml, widget.partIndex),
+                      )
+                    : null,
+              ),
+              _MenuItem(
+                l10n.staffRemove,
+                staves == 2
+                    ? () => _applyBar(
+                        (xml, _) => _editor.removeStaff(xml, widget.partIndex),
+                      )
+                    : null,
+              ),
+            ],
+          ),
+        ];
+    }
+  }
+
+  Future<void> _editKeyAndTime() async {
+    final measure = _previewMeasure;
+    final result = await showMeasureSettingsSheet(context, measure: measure);
+    if (result == null || !mounted) return;
+    final attributes = measure.attributes;
+    final time = attributes.time;
+    final keyChanged = result.keyFifths != attributes.keyFifths;
+    final timeChanged =
+        time == null ||
+        result.time.beats != time.beats ||
+        result.time.beatType != time.beatType ||
+        result.time.symbol != time.symbol;
+    if (!keyChanged && !timeChanged) return;
+    _applyBar((xml, measureIndex) {
+      var current = xml;
+      if (keyChanged) {
+        current = _editor
+            .setKeySignature(
+              current,
+              widget.partIndex,
+              measureIndex,
+              result.keyFifths,
+            )
+            .xml;
+      }
+      if (timeChanged) {
+        current = _editor
+            .setTimeSignature(
+              current,
+              widget.partIndex,
+              measureIndex,
+              result.time.beats,
+              result.time.beatType,
+              symbol: switch (result.time.symbol) {
+                MusicTimeSymbol.common => 'common',
+                MusicTimeSymbol.cut => 'cut',
+                null => null,
+              },
+            )
+            .xml;
+      }
+      return XmlEditResult(
+        current,
+        XmlNoteRef(
+          partIndex: widget.partIndex,
+          measureIndex: measureIndex,
+          noteIndex: 0,
+        ),
+      );
+    });
+  }
+
+  Future<void> _editTempo() async {
+    final l10n = context.l10n;
+    final result = await showDialog<({int? bpm, String text, bool remove})>(
+      context: context,
+      builder: (_) => _TempoDialog(initialBpm: _signs.tempoBpm),
+    );
+    if (result == null || !mounted) return;
+    if (result.remove) {
+      _applyBar(
+        (xml, measure) =>
+            _editor.setTempo(xml, widget.partIndex, measure, null),
+      );
+      return;
+    }
+    final bpm = result.bpm;
+    if (bpm == null) {
+      _showMessage(l10n.tempoBpmLabel);
+      return;
+    }
+    _applyBar(
+      (xml, measure) => _editor.setTempo(
+        xml,
+        widget.partIndex,
+        measure,
+        bpm,
+        text: result.text,
+      ),
+    );
+  }
+
+  Future<void> _editRehearsal() async {
+    final l10n = context.l10n;
+    final initial = _signs.rehearsal ?? '';
+    final text = await showDialog<String>(
+      context: context,
+      builder: (_) => _TextDialog(
+        title: l10n.rehearsalMark,
+        initial: initial,
+        hint: l10n.rehearsalHint,
+      ),
+    );
+    if (text == null || !mounted || text == initial) return;
+    _applyBar(
+      (xml, measure) =>
+          _editor.setRehearsalMark(xml, widget.partIndex, measure, text),
+    );
+  }
+
+  Future<void> _addText() async {
+    final l10n = context.l10n;
+    final text = await showDialog<String>(
+      context: context,
+      builder: (_) =>
+          _TextDialog(title: l10n.addText, initial: '', hint: l10n.addTextHint),
+    );
+    if (text == null || !mounted || text.isEmpty) return;
+    _applyBar(
+      (xml, measure) => _editor.addWords(xml, widget.partIndex, measure, text),
+    );
+  }
+}
+
+/// The palettes of tools under the bar.
+enum _Palette { note, length, pitch, keys, marks, words, bar, score }
+
+enum _BarRangeAction { copy, cut, delete, transpose }
+
+/// What the bar range dialog was asked to do: bars [from]..[to] as the
+/// score numbers them, and for a transposition by how many semitones.
+typedef _BarRangeChoice = ({
+  int from,
+  int to,
+  _BarRangeAction action,
+  int semitones,
+});
+
+/// Asks for a run of bars and what to do with it.
+class _BarRangeDialog extends StatefulWidget {
+  const _BarRangeDialog({
+    required this.current,
+    required this.first,
+    required this.last,
+  });
+
+  final int current;
+  final int first;
+  final int last;
+
+  @override
+  State<_BarRangeDialog> createState() => _BarRangeDialogState();
+}
+
+class _BarRangeDialogState extends State<_BarRangeDialog> {
+  late final _from = TextEditingController(text: '${widget.current}');
+  late final _to = TextEditingController(text: '${widget.current}');
+  var _semitones = 2;
+  var _invalid = false;
+
+  @override
+  void dispose() {
+    _from.dispose();
+    _to.dispose();
+    super.dispose();
+  }
+
+  void _submit(_BarRangeAction action) {
+    final from = int.tryParse(_from.text.trim());
+    final to = int.tryParse(_to.text.trim());
+    if (from == null ||
+        to == null ||
+        from < widget.first ||
+        to > widget.last ||
+        to < from) {
+      setState(() => _invalid = true);
+      return;
+    }
+    Navigator.of(
+      context,
+    ).pop((from: from, to: to, action: action, semitones: _semitones));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    Widget field(TextEditingController controller, String label) => Expanded(
+      child: TextField(
+        controller: controller,
+        keyboardType: TextInputType.number,
+        decoration: InputDecoration(
+          labelText: label,
+          helperText: '${widget.first}–${widget.last}',
+        ),
+      ),
+    );
+    final sign = _semitones > 0 ? '+' : '';
+    return AlertDialog(
+      title: Text(l10n.barRangeTitle),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                field(_from, l10n.barRangeFrom),
+                const SizedBox(width: 12),
+                field(_to, l10n.barRangeTo),
+              ],
+            ),
+            if (_invalid)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  l10n.barRangeInvalid,
+                  style: const TextStyle(color: AppColors.accent),
+                ),
+              ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton(
+                  onPressed: () => _submit(_BarRangeAction.copy),
+                  child: Text(l10n.barRangeCopy),
+                ),
+                OutlinedButton(
+                  onPressed: () => _submit(_BarRangeAction.cut),
+                  child: Text(l10n.barRangeCut),
+                ),
+                OutlinedButton(
+                  onPressed: () => _submit(_BarRangeAction.delete),
+                  child: Text(l10n.barRangeDelete),
+                ),
+              ],
+            ),
+            const Divider(height: 28),
+            Row(
+              children: [
+                IconButton(
+                  tooltip: '−',
+                  onPressed: _semitones > -12
+                      ? () => setState(
+                          () => _semitones -= _semitones == 1 ? 2 : 1,
+                        )
+                      : null,
+                  icon: const Icon(Icons.remove_rounded),
+                ),
+                Expanded(
+                  child: Text(
+                    l10n.semitoneCount('$sign$_semitones'),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '+',
+                  onPressed: _semitones < 12
+                      ? () => setState(
+                          () => _semitones += _semitones == -1 ? 2 : 1,
+                        )
+                      : null,
+                  icon: const Icon(Icons.add_rounded),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () => _submit(_BarRangeAction.transpose),
+                  child: Text(l10n.barRangeTranspose),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+      ],
+    );
+  }
+}
+
+/// Says that a line is being drawn and what ends it.
+class _SpanBanner extends StatelessWidget {
+  const _SpanBanner({
+    required this.text,
+    required this.toSelected,
+    required this.onToSelected,
+    required this.cancel,
+    required this.onCancel,
+  });
+
+  final String text;
+  final String toSelected;
+  final VoidCallback? onToSelected;
+  final String cancel;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: AppColors.surfaceSoft,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 2, 8, 2),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.accent,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            TextButton(onPressed: onToSelected, child: Text(toSelected)),
+            TextButton(onPressed: onCancel, child: Text(cancel)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One octave of piano keys. A key names its pitch ("C4", "F#4"); the octave
+/// is that of middle C counted as 4.
+class _PianoKeys extends StatelessWidget {
+  const _PianoKeys({
+    required this.octave,
+    required this.enabled,
+    required this.onKey,
+  });
+
+  final int octave;
+  final bool enabled;
+  final ValueChanged<int> onKey;
+
+  static const _white = [0, 2, 4, 5, 7, 9, 11];
+  static const _names = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+
+  /// Black keys by the white key they stand after, and their semitone.
+  static const _black = [(0, 1), (1, 3), (3, 6), (4, 8), (5, 10)];
+
+  @override
+  Widget build(BuildContext context) {
+    final height = _ToolSize.compactOf(context) ? 44.0 : 48.0;
+    final base = (octave + 1) * 12;
+    Widget key({
+      required String name,
+      required int midi,
+      required bool black,
+      Widget? child,
+    }) => Tooltip(
+      message: name,
+      child: Semantics(
+        button: true,
+        enabled: enabled,
+        label: name,
+        excludeSemantics: true,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: enabled ? () => onKey(midi) : null,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: black
+                  ? (enabled ? AppColors.ink : AppColors.border)
+                  : AppColors.canvas,
+              border: Border.all(
+                color: enabled ? AppColors.ink : AppColors.border,
+              ),
+              borderRadius: const BorderRadius.vertical(
+                bottom: Radius.circular(4),
+              ),
+            ),
+            child: child ?? const SizedBox.expand(),
+          ),
+        ),
+      ),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth / 7;
+        return SizedBox(
+          height: height,
+          child: Stack(
+            children: [
+              for (var i = 0; i < 7; i++)
+                Positioned(
+                  left: width * i,
+                  top: 0,
+                  width: width,
+                  height: height,
+                  child: key(
+                    name: '${_names[i]}$octave',
+                    midi: base + _white[i],
+                    black: false,
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Text(
+                          i == 0 ? 'C$octave' : _names[i],
+                          textScaler: TextScaler.noScaling,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: i == 0
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: enabled
+                                ? AppColors.mutedInk
+                                : AppColors.border,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              for (final (after, semitone) in _black)
+                Positioned(
+                  left: width * (after + 1) - width * 0.3,
+                  top: 0,
+                  width: width * 0.6,
+                  height: height * 0.58,
+                  child: key(
+                    name: '${_names[after]}#$octave',
+                    midi: base + semitone,
+                    black: true,
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// The names of the palettes, all in sight: on a narrow screen they take a
+/// second line rather than hide behind a sideways scroll.
+class _PaletteTabs extends StatelessWidget {
+  const _PaletteTabs({
+    required this.active,
+    required this.labelOf,
+    required this.onPick,
+  });
+
+  final _Palette active;
+  final String Function(_Palette palette) labelOf;
+  final ValueChanged<_Palette> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: AppColors.canvas,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+        child: SizedBox(
+          width: double.infinity,
+          child: Wrap(
+            spacing: 6,
+            children: [
+              for (final palette in _Palette.values)
+                ChoiceChip(
+                  label: Text(labelOf(palette)),
+                  tooltip: labelOf(palette),
+                  selected: palette == active,
+                  onSelected: (_) => onPick(palette),
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 2),
+                  showCheckmark: false,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The tools of the open palette, on as many lines as they need: a tool
+/// that had to be scrolled to would be a tool nobody finds.
+class _PaletteRow extends StatelessWidget {
+  const _PaletteRow({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: AppColors.canvas,
+      child: LayoutBuilder(
+        builder: (context, constraints) => _ToolSize(
+          compact: constraints.maxWidth < 400,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+            child: SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                spacing: 4,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: children,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The keyboard with a key on either side for the octave below and above,
+/// as wide as the screen allows.
+class _KeyboardBar extends StatelessWidget {
+  const _KeyboardBar({
+    required this.octave,
+    required this.enabled,
+    required this.onKey,
+    required this.lower,
+    required this.higher,
+    required this.onLower,
+    required this.onHigher,
+  });
+
+  final int octave;
+  final bool enabled;
+  final ValueChanged<int> onKey;
+  final String lower;
+  final String higher;
+  final VoidCallback? onLower;
+  final VoidCallback? onHigher;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) => SizedBox(
+        width: math.min(constraints.maxWidth, 460),
+        child: Row(
+          children: [
+            _ToolButton(
+              tooltip: lower,
+              onPressed: onLower,
+              child: const Icon(Icons.remove_rounded),
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: _PianoKeys(octave: octave, enabled: enabled, onKey: onKey),
+            ),
+            const SizedBox(width: 4),
+            _ToolButton(
+              tooltip: higher,
+              onPressed: onHigher,
+              child: const Icon(Icons.add_rounded),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Asks for one line of text. Pops with the trimmed text, or null.
+class _TextDialog extends StatefulWidget {
+  const _TextDialog({
+    required this.title,
+    required this.initial,
+    required this.hint,
+  });
+
+  final String title;
+  final String initial;
+  final String hint;
+
+  @override
+  State<_TextDialog> createState() => _TextDialogState();
+}
+
+class _TextDialogState extends State<_TextDialog> {
+  late final _controller = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return AlertDialog(
+      title: Text(widget.title),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: InputDecoration(hintText: widget.hint),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(onPressed: _submit, child: Text(l10n.save)),
+      ],
+    );
+  }
+}
+
+/// Asks for a tempo: beats per minute and a word such as "Andante". Pops
+/// with the answer, with `remove` when the mark is to be taken away, or
+/// null.
+class _TempoDialog extends StatefulWidget {
+  const _TempoDialog({required this.initialBpm});
+
+  final int? initialBpm;
+
+  @override
+  State<_TempoDialog> createState() => _TempoDialogState();
+}
+
+class _TempoDialogState extends State<_TempoDialog> {
+  late final _bpm = TextEditingController(
+    text: widget.initialBpm?.toString() ?? '',
+  );
+  final _text = TextEditingController();
+
+  @override
+  void dispose() {
+    _bpm.dispose();
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop((
+    bpm: int.tryParse(_bpm.text.trim()),
+    text: _text.text.trim(),
+    remove: false,
+  ));
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return AlertDialog(
+      title: Text(l10n.tempoMark),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _bpm,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: l10n.tempoBpmLabel,
+              prefixText: '♩ = ',
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _text,
+            decoration: InputDecoration(labelText: l10n.tempoText),
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        if (widget.initialBpm != null)
+          TextButton(
+            onPressed: () =>
+                Navigator.of(context).pop((bpm: null, text: '', remove: true)),
+            child: Text(l10n.tempoRemove),
+          ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(onPressed: _submit, child: Text(l10n.save)),
+      ],
     );
   }
 }
@@ -986,6 +2550,8 @@ const _fractionOf = {
   'quarter': '1/4',
   'eighth': '1/8',
   '16th': '1/16',
+  '32nd': '1/32',
+  '64th': '1/64',
 };
 
 /// The bar being proofread as it is on the original page, above its
@@ -1253,16 +2819,38 @@ class _Captioned extends StatelessWidget {
 }
 
 /// A tool button that opens a list of things to do, each by name.
-class _BarMenuButton extends StatelessWidget {
-  const _BarMenuButton({
+/// One choice of a [_MenuButton].
+class _MenuItem {
+  const _MenuItem(
+    this.label,
+    this.onPressed, {
+    this.icon,
+    this.checked = false,
+  });
+
+  final String label;
+  final VoidCallback? onPressed;
+  final IconData? icon;
+
+  /// Whether the choice is the one in force: it is shown with a check.
+  final bool checked;
+}
+
+/// A tool that opens a list of choices by name.
+class _MenuButton extends StatelessWidget {
+  const _MenuButton({
     required this.tooltip,
     required this.label,
     required this.items,
+    this.italic = false,
   });
 
   final String tooltip;
   final String label;
-  final List<({IconData icon, String label, VoidCallback? onPressed})> items;
+  final List<_MenuItem> items;
+
+  /// For a dynamic mark, written in italics as on the score.
+  final bool italic;
 
   Future<void> _open(BuildContext context) async {
     final box = context.findRenderObject()! as RenderBox;
@@ -1281,9 +2869,15 @@ class _BarMenuButton extends StatelessWidget {
             enabled: items[i].onPressed != null,
             child: Row(
               children: [
-                Icon(items[i].icon, size: 20),
+                Icon(
+                  items[i].icon ??
+                      (items[i].checked ? Icons.check_rounded : null),
+                  size: 20,
+                ),
                 const SizedBox(width: 12),
-                Text(items[i].label),
+                // A long name takes a second line rather than run off the
+                // menu.
+                Flexible(child: Text(items[i].label)),
               ],
             ),
           ),
@@ -1301,7 +2895,16 @@ class _BarMenuButton extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(label),
+            Text(
+              label,
+              style: italic
+                  ? const TextStyle(
+                      fontStyle: FontStyle.italic,
+                      fontFamily: 'serif',
+                      fontSize: 18,
+                    )
+                  : null,
+            ),
             const Icon(Icons.arrow_drop_down_rounded, size: 20),
           ],
         ),

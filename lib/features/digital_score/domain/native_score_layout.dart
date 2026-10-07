@@ -172,6 +172,30 @@ class NativeStaffHit {
   final double lineGap;
 }
 
+/// A place on a staff that was pointed at: the note or rest nearest to it
+/// in time, and the line or space under the finger.
+class NativeStaffPlace {
+  const NativeStaffPlace({
+    required this.measureIndex,
+    required this.eventIndex,
+    required this.staff,
+    required this.step,
+    required this.octave,
+    required this.ghostCenter,
+    required this.lineGap,
+  });
+
+  final int measureIndex;
+  final int eventIndex;
+  final int staff;
+  final PitchStep step;
+  final int octave;
+
+  /// Where a note at that place is drawn: over the event, on the line.
+  final Offset ghostCenter;
+  final double lineGap;
+}
+
 class NativeScoreLayout {
   const NativeScoreLayout({
     required this.contentSize,
@@ -224,6 +248,100 @@ class NativeScoreLayout {
       }
     }
     return best;
+  }
+
+  /// The note or rest of the staff under [point] that is nearest to it in
+  /// time, and the line or space [point] is on. Unlike [hitStaff] this asks
+  /// for no note value: it says which written event is meant, so a pitch can
+  /// be given to a note or rest that is already there.
+  ///
+  /// A point above or below a bar still counts for it, as far as ledger
+  /// lines reach.
+  NativeStaffPlace? placeAt(Offset point, {required MusicScore score}) {
+    if (score.parts.isEmpty) return null;
+    var box = measureAt(point);
+    if (box == null) {
+      var nearest = double.infinity;
+      for (final measure in measures) {
+        final rect = measure.rect;
+        if (point.dx < rect.left || point.dx > rect.right) continue;
+        final distance = point.dy < rect.top
+            ? rect.top - point.dy
+            : point.dy - rect.bottom;
+        if (distance < nearest && distance <= measure.lineGap * 8) {
+          nearest = distance;
+          box = measure;
+        }
+      }
+    }
+    if (box == null) return null;
+    final bars = score.parts.first.measures;
+    if (box.measureIndex >= bars.length) return null;
+    final staff = bars[box.measureIndex].attributes.staves <= 1
+        ? 1
+        : _staffForY(point.dy, box);
+    final staffTop = box.staffTopFor(staff);
+    final lineGap = box.lineGapFor(staff);
+    final midi = midiAtStaffY(
+      point.dy,
+      staffTop: staffTop,
+      lineGap: lineGap,
+      bass: staff >= 2,
+    );
+    final pitch = pitchFromMidi(midi);
+    final lineY = staffYForMidi(
+      midi,
+      staffTop: staffTop,
+      lineGap: lineGap,
+      bass: staff >= 2,
+    );
+    NativeNotePlacement? best;
+    var bestX = double.infinity;
+    var bestY = double.infinity;
+    for (final note in notes) {
+      if (note.measureIndex != box.measureIndex || note.staff != staff) {
+        continue;
+      }
+      final dx = (note.center.dx - point.dx).abs();
+      final dy = (note.center.dy - lineY).abs();
+      // Notes of one chord stand at one place in time: the nearest in height
+      // is the one meant.
+      final sameTime = (dx - bestX).abs() < lineGap * 0.6;
+      if (sameTime ? dy < bestY : dx < bestX) {
+        best = note;
+        bestX = sameTime ? math.min(dx, bestX) : dx;
+        bestY = dy;
+      }
+    }
+    if (best == null) {
+      // A rest that fills the bar is not among the drawn notes: it is the
+      // one thing on its staff, and the note goes in its place.
+      final events = bars[box.measureIndex].events;
+      for (var index = 0; index < events.length; index++) {
+        final event = events[index];
+        if (event is! MusicNote || event.isGrace || event.isChord) continue;
+        if (event.staff.clamp(1, 2) != staff) continue;
+        return NativeStaffPlace(
+          measureIndex: box.measureIndex,
+          eventIndex: index,
+          staff: staff,
+          step: pitch.step,
+          octave: pitch.octave,
+          ghostCenter: Offset(box.contentLeft + box.contentWidth / 2, lineY),
+          lineGap: lineGap,
+        );
+      }
+      return null;
+    }
+    return NativeStaffPlace(
+      measureIndex: box.measureIndex,
+      eventIndex: best.eventIndex,
+      staff: staff,
+      step: pitch.step,
+      octave: pitch.octave,
+      ghostCenter: Offset(best.center.dx, lineY),
+      lineGap: lineGap,
+    );
   }
 
   NativeStaffHit? hitStaff(

@@ -1588,6 +1588,78 @@ class TempoTest(unittest.TestCase):
         self.assertEqual(len(root.findall(".//direction")), 1)
 
 
+class OctaveLineTest(unittest.TestCase):
+    """The engine reads an octave line ("15mb") out of what is printed under a sung
+    staff, and writes the notes under it two octaves down."""
+
+    @staticmethod
+    def note(step, octave, staff=None):
+        return (f"<note><pitch><step>{step}</step><octave>{octave}</octave></pitch><duration>1</duration>"
+                + (f"<staff>{staff}</staff>" if staff else "") + "</note>")
+
+    @staticmethod
+    def line(kind, size="15", number="1", staff=None, extra=""):
+        return (f'<direction placement="below"><direction-type><octave-shift type="{kind}" number="{number}" size="{size}"/>'
+                f"</direction-type>{extra}" + (f"<staff>{staff}</staff>" if staff else "") + "</direction>")
+
+    def octaves(self, root):
+        return [int(n.findtext("pitch/octave")) for n in root.iter("note")]
+
+    def test_the_notes_under_a_line_go_back_to_their_place_and_the_line_goes(self):
+        # As read from a lead sheet: A4 A4, then two notes "under 15mb", then on.
+        root = ET.fromstring("<score-partwise><part id='P1'><measure number='1'>"
+                             + self.note("A", 4) + self.note("A", 4) + self.line("up") + self.note("G", 2) + self.note("A", 2)
+                             + self.line("stop") + self.note("B", 4) + "</measure></part></score-partwise>")
+        self.assertEqual(omr_rules._undo_octave_shifts(root), 1)
+        self.assertEqual(self.octaves(root), [4, 4, 4, 4, 4])
+        self.assertEqual(len(root.findall(".//direction")), 0)
+        self.assertEqual(omr_rules._undo_octave_shifts(root), 0)
+
+    def test_a_line_without_an_end_reaches_to_the_end_of_the_piece(self):
+        root = ET.fromstring("<score-partwise><part id='P1'><measure number='1'>" + self.note("B", 4) + self.line("up")
+                             + self.note("B", 2) + "</measure><measure number='2'>" + self.note("F", 2) + self.note("C", 3)
+                             + "</measure></part></score-partwise>")
+        self.assertEqual(omr_rules._undo_octave_shifts(root), 1)
+        self.assertEqual(self.octaves(root), [4, 4, 4, 5])
+
+    def test_one_octave_and_upward_lines_are_undone_by_their_size(self):
+        root = ET.fromstring("<score-partwise><part id='P1'><measure number='1'>" + self.line("up", size="8")
+                             + self.note("C", 3) + self.line("stop", size="8") + self.line("down", size="15")
+                             + self.note("C", 7) + self.line("stop") + "</measure></part></score-partwise>")
+        self.assertEqual(omr_rules._undo_octave_shifts(root), 2)
+        self.assertEqual(self.octaves(root), [4, 5])
+
+    def test_a_line_the_engine_did_not_move_the_notes_for_only_goes(self):
+        # Seen as often: the line is written, the notes are where they are printed.
+        root = ET.fromstring("<score-partwise><part id='P1'><measure number='1'>" + self.note("A", 4) * 4 + self.line("up")
+                             + self.note("G", 4) * 6 + "</measure><measure number='2'>" + self.line("down", number="2")
+                             + self.note("C", 5) * 3 + "</measure></part></score-partwise>")
+        self.assertEqual(omr_rules._undo_octave_shifts(root), 0)
+        self.assertEqual(self.octaves(root), [4] * 10 + [5] * 3)
+        self.assertEqual(len(root.findall(".//octave-shift")), 0)
+
+    def test_the_rest_of_the_staff_says_where_the_notes_belong(self):
+        # A bass-clef line: low notes are at home there, and stay.
+        clef = "<attributes><clef><sign>F</sign><line>4</line></clef></attributes>"
+        root = ET.fromstring("<score-partwise><part id='P1'><measure number='1'>" + clef + self.note("C", 3) * 5
+                             + self.line("up", size="8") + self.note("D", 3) * 2 + self.line("stop", size="8")
+                             + self.line("up", size="15") + self.note("D", 1) * 2 + self.line("stop")
+                             + "</measure></part></score-partwise>")
+        self.assertEqual(omr_rules._undo_octave_shifts(root), 1)
+        self.assertEqual(self.octaves(root), [3] * 5 + [3, 3] + [3, 3])
+
+    def test_only_the_staff_of_the_line_is_moved_and_other_marks_stay(self):
+        words = "<direction-type><words>rit.</words></direction-type>"
+        root = ET.fromstring("<score-partwise><part id='P1'><measure number='1'><attributes><staves>2</staves></attributes>"
+                             + self.line("up", staff=2, extra=words) + self.note("C", 5, staff=1) + self.note("C", 1, staff=2)
+                             + "</measure></part></score-partwise>")
+        self.assertEqual(omr_rules._undo_octave_shifts(root), 1)
+        self.assertEqual(self.octaves(root), [5, 3])
+        # The direction also said "rit.": that stays.
+        self.assertEqual([w.text for w in root.iter("words")], ["rit."])
+        self.assertEqual(len(root.findall(".//octave-shift")), 0)
+
+
 class ChordTokenTest(unittest.TestCase):
     def chars(self, spec):
         # (char, x0, width) at height 34

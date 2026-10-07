@@ -22,7 +22,7 @@ from xml.etree import ElementTree as ET
 from flask import Flask, jsonify, request, send_file
 
 from omr_score import PIPELINE, _find_score, _read_score, _write_mxl
-from omr_rules import _clamp_backups, _add_lyric_dashes, _chords_from_words, _drop_bad_tempos, _drop_lyric_dash_articulations, _drop_placeholder_rests, _drop_second_chords, _drop_tie_dots, _merge_split_parts, _split_korean_lyrics, _tie_held_dashes, _title_from_credits
+from omr_rules import _clamp_backups, _add_lyric_dashes, _chords_from_words, _drop_bad_tempos, _drop_lyric_dash_articulations, _drop_placeholder_rests, _drop_second_chords, _drop_tie_dots, _merge_split_parts, _split_korean_lyrics, _tie_held_dashes, _title_from_credits, _undo_octave_shifts
 from omr_book import _load_book, _restore_dropped_bars, _restore_exported_rhythm
 from omr_marks import _add_segno_coda, _navigation_marks, _repeat_starts, _segno_coda_marks, _tidy_endings, _upload_photos
 from omr_text import _attach_stray_accidentals, _drop_chord_junk, _ocr_chord_lines, _ocr_lyrics, _reread_chords
@@ -907,6 +907,8 @@ def _postprocess(path: Path, profile: str) -> tuple[Path, dict]:
         stem = path.name[: -len(path.suffix)] if path.suffix else path.name
         return _write_mxl(root, path.with_name(f"{stem}.fixed.mxl")), {"parts_merged": merged}
     original = ET.tostring(root)
+    # First: the repairs below go by where a note stands on its staff.
+    octave_lines_undone = _undo_octave_shifts(root)
     # Preserve explicitly read rhythm before text repairs attach syllables.
     bars_restored = _restore_dropped_bars(root, path.parent)
     dashes = _drop_lyric_dash_articulations(root)
@@ -914,6 +916,7 @@ def _postprocess(path: Path, profile: str) -> tuple[Path, dict]:
               "lyric_dashes_removed": len(dashes), "placeholder_rests_removed": _drop_placeholder_rests(root),
               "tie_dots_removed": _drop_tie_dots(root), "second_chords_removed": _drop_second_chords(root),
               "bad_tempos_removed": _drop_bad_tempos(root)}
+    report["octave_lines_undone"] = octave_lines_undone
     # Before the book is tied to the score: a bar put back is a bar of both.
     report["bars_restored"] = bars_restored
     # Remove phantom secondary-voice rests first, otherwise they would block

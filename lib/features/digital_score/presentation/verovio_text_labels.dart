@@ -64,21 +64,85 @@ const _hiddenTextGroups = {'label', 'labelAbbr'};
 /// lyric syllable is the converter's ("B ♭", "예 수"), not written.
 const _compactTextGroups = {'harm', 'verse'};
 
+/// The five lines of one staff in one bar as Verovio drew them, in root SVG
+/// viewBox units: where the pitches of that staff are, exactly. (The box
+/// of a staff also holds its clef and notes, so its height says nothing
+/// about the distance between the lines.)
+@immutable
+class VerovioStaffLines {
+  const VerovioStaffLines({
+    required this.left,
+    required this.right,
+    required this.lines,
+  });
+
+  final double left;
+  final double right;
+
+  /// The lines from the top one down.
+  final List<double> lines;
+
+  double get top => lines.first;
+  double get bottom => lines.last;
+  double get gap => (bottom - top) / (lines.length - 1);
+  Offset get center => Offset((left + right) / 2, (top + bottom) / 2);
+}
+
+final _straightLine = RegExp(
+  r'^\s*M\s*(-?[\d.]+)[\s,]+(-?[\d.]+)\s*L\s*(-?[\d.]+)[\s,]+(-?[\d.]+)\s*$',
+);
+
 /// Reads every text of a raw Verovio page before text is stripped: chord
 /// symbols, lyrics, bar numbers, ending numbers, tempo, rehearsal marks,
 /// tuplet numbers and written directions.
-List<VerovioTextLabel> extractVerovioTextLabels(String svg) {
+List<VerovioTextLabel> extractVerovioTextLabels(String svg) =>
+    readVerovioPage(svg).labels;
+
+/// The texts ([extractVerovioTextLabels]) and the staff lines of a raw
+/// Verovio page, from one reading of it.
+({List<VerovioTextLabel> labels, List<VerovioStaffLines> staves})
+readVerovioPage(String svg) {
+  const nothing = (labels: <VerovioTextLabel>[], staves: <VerovioStaffLines>[]);
   final XmlDocument document;
   try {
     document = XmlDocument.parse(svg);
   } on XmlException {
-    return const [];
+    return nothing;
   }
   final root = document.rootElement;
   final rootSize = _viewBoxSize(root.getAttribute('viewBox'));
-  if (rootSize == null) return const [];
+  if (rootSize == null) return nothing;
 
   final labels = <VerovioTextLabel>[];
+  final staves = <VerovioStaffLines>[];
+  void readStaff(XmlElement staff, _Affine transform) {
+    final lines = <double>[];
+    var left = double.infinity;
+    var right = double.negativeInfinity;
+    // The lines are the staff group's own paths; ledger lines, stems and
+    // beams are in groups below it.
+    for (final path in staff.childElements) {
+      if (path.name.local != 'path') continue;
+      final match = _straightLine.firstMatch(path.getAttribute('d') ?? '');
+      if (match == null) continue;
+      final from = transform.apply(
+        double.parse(match.group(1)!),
+        double.parse(match.group(2)!),
+      );
+      final to = transform.apply(
+        double.parse(match.group(3)!),
+        double.parse(match.group(4)!),
+      );
+      if ((from.dy - to.dy).abs() > 0.5) continue;
+      lines.add(from.dy);
+      left = math.min(left, math.min(from.dx, to.dx));
+      right = math.max(right, math.max(from.dx, to.dx));
+    }
+    if (lines.length != 5) return;
+    lines.sort();
+    staves.add(VerovioStaffLines(left: left, right: right, lines: lines));
+  }
+
   void visit(XmlElement element, _Affine transform, bool compact) {
     var current = transform;
     if (element.name.local == 'svg' && element != root) {
@@ -98,6 +162,9 @@ List<VerovioTextLabel> extractVerovioTextLabels(String svg) {
     if (element.name.local == 'g' &&
         _hiddenTextGroups.any((name) => _hasClass(element, name))) {
       return;
+    }
+    if (element.name.local == 'g' && _hasClass(element, 'staff')) {
+      readStaff(element, current);
     }
     if (element.name.local == 'text') {
       final label = _chordLabel(element, current, compact: compact);
@@ -121,7 +188,7 @@ List<VerovioTextLabel> extractVerovioTextLabels(String svg) {
       .toList();
   // Labels are relative to the page's top-left corner, like the HitMap.
   visit(root, _Affine.translate(-rootValues[0], -rootValues[1]), false);
-  return labels;
+  return (labels: labels, staves: staves);
 }
 
 VerovioTextLabel? _chordLabel(

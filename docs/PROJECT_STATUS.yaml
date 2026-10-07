@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-07T11:04:00+09:00"
+last_updated: "2026-10-07T15:43:00+09:00"
 current_phase:
   id: "RELEASE-4"
   name: "OMR 정확도 최소 95% 개선·검증"
@@ -516,6 +516,14 @@ setup_required:
       - "사용자 이름과 비밀번호"
 
 decisions:
+  - id: "D-223"
+    date: "2026-10-07"
+    status: "active"
+    decision: "lead sheet 변환에서 엔진이 읽은 옥타브 기호(octave-shift)는 모두 지운다. 그 아래 음은 되돌렸을 때 같은 보표의 나머지 음에 더 가까워질 때만 되돌린다(기호가 있어도 음이 제자리인 경우가 더 많다 — 저장된 원시 결과 125건 중 14건에 기호, 음이 옮겨진 것은 1건). 2026-10-07 15:36 사용자 승인으로 서버에 배포했다."
+  - id: "D-222"
+    date: "2026-10-07"
+    status: "active"
+    decision: "교정 에디터는 PreSonus/Fender Notion Mobile의 입력 팔레트를 기준으로 기능을 갖춘다(우리 구현, 코드 복제 아님). 손글씨 인식·지판·드럼패드는 범위 밖. 3단계 로드맵은 ROADMAP의 2026-10-07 메모."
   - id: "D-221"
     date: "2026-10-07"
     status: "active"
@@ -1390,6 +1398,21 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-10-06T13:58:32+09:00"
   checks:
+    - name: "octave_line_rule_deploy_20261007"
+      result: "passed_with_known_gaps"
+      detail: "서버 배포(백업 ~/omr_backup_20261007_1536, MD5 일치, active, 외부 health 200)와 실변환: 선명한 원본의 보정본·AI 보정본에 옥타브 기호 0개, 2옥타브 이하 음 0개(원시 결과는 기호 4개·낮은 음 2개). release 4076 설치·실행. 공백: 사용자 실제 업로드 파일로 재변환 미확인, APK는 디버그 키 서명."
+    - name: "proofread_editor_stage3_20261007"
+      result: "passed_with_known_gaps"
+      detail: "교정 에디터 3단계(마디 범위·여러 음 범위·성부·보표·악기·줄바꿈): analyze 0건, 전체 테스트 781 통과, release 4075 에뮬레이터에서 복사·붙여넣기·조옮김·범위 옥타브·성부·악기·보표 확인, 앱 예외 0. 공백: 줄바꿈은 기기 미확인, 음표 단위 복사·붙여넣기 없음."
+    - name: "octave_line_rule_20261007"
+      result: "passed_with_known_gaps"
+      detail: "옥타브 기호 오인식 규칙(_undo_octave_shifts): 서버 테스트 180 통과, 저장된 원시 결과 125건에 적용해 이번 곡의 두 음만 되돌아오고 나머지는 변화 없음. 공백: 서버 미배포(사용자 승인 대기), 사용자 실제 업로드 파일로 재변환 미확인."
+    - name: "proofread_editor_stage2_20261007"
+      result: "passed_with_known_gaps"
+      detail: "교정 에디터 2단계(선 7종, 장식음 6종, 숨표, 1~4절 가사, 건반, 펜, 실제 오선 위치 읽기): analyze 0건, 전체 테스트 766 통과, release 4073 에뮬레이터에서 선·장식음·가사·건반·펜 5회·본 악보 화면 확인, 앱 예외 0. 공백: 헤어핀 재생 미반영, 8va 아래 펜 옥타브, 마디 중간 음자리표 변경 시 펜, 새로 그은 페달의 조판 미확인."
+    - name: "proofread_editor_stage1_20261007"
+      result: "passed_with_known_gaps"
+      detail: "교정 에디터 1단계(쉼표·나누기·넣기·잇단음표·붙임줄·기호·셈여림·꾸밈음·마디 기호, 팔레트 UI): 도메인 테스트 26개 추가, analyze 0건, 전체 테스트 729 통과, release 4069 에뮬레이터에서 팔레트 표시·나누기·셈여림 확인, 앱 예외 0. 공백: 잇단음표·반복 기호는 기기에서 미확인(테스트만), 2·3단계 미착수."
     - name: "package_rename_20261007"
       result: "passed_with_known_gaps"
       detail: "applicationId com.hansookim.worshipeasypeasy: analyze 0건, release 4067 APK의 패키지·표시 이름 확인, 에뮬레이터 설치·실행, 앱 예외 0. 공백: Google Drive OAuth Android 클라이언트 재등록(사용자 콘솔 작업) 전이라 새 앱의 Drive 로그인은 미확인."

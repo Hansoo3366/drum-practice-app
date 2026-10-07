@@ -1,7 +1,13 @@
 import 'dart:math' as math;
 
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
+import 'package:page_a_diddle/features/digital_score/domain/score_transpose.dart';
+import 'package:page_a_diddle/features/digital_score/domain/xml_transpose.dart';
 import 'package:xml/xml.dart';
+
+part 'xml_measure_editor_marks.dart';
+part 'xml_measure_editor_ranges.dart';
+part 'xml_measure_editor_spans.dart';
 
 /// Addresses the n-th `<note>` child of a measure in a `score-partwise` file.
 ///
@@ -554,6 +560,13 @@ class XmlNoteSummary {
     required this.harmony,
     this.lyric,
     this.leadsChord = true,
+    this.tieStart = false,
+    this.articulations = const {},
+    this.fermata = false,
+    this.dynamic,
+    this.ornaments = const {},
+    this.spans = const {},
+    this.lyrics = const {},
   });
 
   final bool isRest;
@@ -573,9 +586,36 @@ class XmlNoteSummary {
 
   /// False for the second and later notes of a chord.
   final bool leadsChord;
+
+  /// Whether a tie leaves this note.
+  final bool tieStart;
+
+  /// The articulations on the note's chord, as MusicXML names them.
+  final Set<String> articulations;
+  final bool fermata;
+
+  /// The dynamic mark written at the note ("mf"), if any.
+  final String? dynamic;
+
+  /// The ornaments on the note's chord ([ornamentNames]).
+  final Set<String> ornaments;
+
+  /// The lines that begin or end at the note's chord.
+  final Set<SpanKind> spans;
+
+  /// The syllable of each verse sung on this note, by verse number.
+  final Map<int, String> lyrics;
 }
 
-const noteDurationTypes = ['whole', 'half', 'quarter', 'eighth', '16th'];
+const noteDurationTypes = [
+  'whole',
+  'half',
+  'quarter',
+  'eighth',
+  '16th',
+  '32nd',
+  '64th',
+];
 
 /// Edits raw MusicXML one measure at a time.
 ///
@@ -623,7 +663,50 @@ class XmlMeasureEditor {
       harmony: harmony == null ? null : harmonyText(harmony),
       lyric: _lyricOf(head.element, 1)?.getElement('text')?.innerText,
       leadsChord: identical(head, info),
+      tieStart: info.tieStart,
+      articulations: {
+        for (final articulations
+            in head.element
+                    .getElement('notations')
+                    ?.findElements('articulations') ??
+                const <XmlElement>[])
+          for (final mark in articulations.childElements) mark.name.local,
+      },
+      fermata:
+          head.element.getElement('notations')?.getElement('fermata') != null,
+      dynamic: _dynamicAt(measure, head),
+      ornaments: {
+        for (final ornaments
+            in head.element
+                    .getElement('notations')
+                    ?.findElements('ornaments') ??
+                const <XmlElement>[])
+          for (final mark in ornaments.childElements) mark.name.local,
+        if (group.any(
+          (n) =>
+              n.element.getElement('notations')?.getElement('arpeggiate') !=
+              null,
+        ))
+          'arpeggiate',
+      },
+      spans: _spansAt(measure, head, group.last),
+      lyrics: {
+        for (final lyric in head.element.findElements('lyric'))
+          if (lyric.getElement('text')?.innerText case final text?)
+            int.tryParse(lyric.getAttribute('number') ?? '') ?? 1: text,
+      },
     );
+  }
+
+  /// The dynamic mark written right before [head], if any.
+  static String? _dynamicAt(_MeasureView measure, _NoteInfo head) {
+    for (final direction in _directionsBefore(measure.element, head.element)) {
+      for (final dynamics in direction.findAllElements('dynamics')) {
+        final mark = dynamics.childElements.firstOrNull;
+        if (mark != null) return mark.name.local;
+      }
+    }
+    return null;
   }
 
   /// Moves a note one staff position up or down in the key and measure
@@ -725,9 +808,7 @@ class XmlMeasureEditor {
     if (info.isRest) {
       throw const FormatException('이미 쉼표입니다.');
     }
-    if (info.isGrace || info.isCue) {
-      throw const FormatException('꾸밈음은 삭제할 수 없습니다.');
-    }
+    if (info.isGrace || info.isCue) return removeNote(xml, ref);
     final step = info.pitch!.step;
     doc.breakTies(ref.measureIndex, info);
     measure = doc.measure(ref);
@@ -753,6 +834,7 @@ class XmlMeasureEditor {
       _remove(element);
     } else {
       final element = current.element;
+      _detachNoteSpans(element);
       for (final name in const [
         'pitch',
         'accidental',

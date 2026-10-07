@@ -54,6 +54,7 @@ class VerovioScoreView extends StatefulWidget {
     this.onNoteTapped,
     this.onEventTapped,
     this.onStaffTapped,
+    this.onNotePlaced,
     this.onMeasureTapped,
     this.onMeasureMoved,
     this.onSystemsChanged,
@@ -63,6 +64,7 @@ class VerovioScoreView extends StatefulWidget {
     this.highlightedMeasureRange,
     this.rehearsalMarks,
     this.selectedNoteAddress,
+    this.alsoSelectedNotes = const [],
     this.absorbMeasureTaps = false,
     this.oneFingerPan = true,
     this.inputMode = 'off',
@@ -103,6 +105,10 @@ class VerovioScoreView extends StatefulWidget {
   /// moves beyond the touch slop is treated as a pan, not a selection.
   final ValueChanged<ScoreEventAddress>? onEventTapped;
   final ValueChanged<AlphaTabStaffTappedEvent>? onStaffTapped;
+
+  /// Fires in `place` mode: a line or space of the staff was pointed at,
+  /// over one of the notes or rests that are there.
+  final ValueChanged<NativeStaffPlace>? onNotePlaced;
   final ValueChanged<int>? onMeasureTapped;
   final void Function(int fromIndex, int toIndex)? onMeasureMoved;
   final ValueChanged<List<ScoreSystemSpan>>? onSystemsChanged;
@@ -118,6 +124,9 @@ class VerovioScoreView extends StatefulWidget {
   /// the printed ones. Null draws the score as written. Display only.
   final List<({int measureIndex, String label})>? rehearsalMarks;
   final ScoreEventAddress? selectedNoteAddress;
+
+  /// More notes outlined along with [selectedNoteAddress]: a run of notes.
+  final List<ScoreEventAddress> alsoSelectedNotes;
   final bool absorbMeasureTaps;
   final bool oneFingerPan;
   final String inputMode;
@@ -517,6 +526,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
             svg: prepared.svg,
             hitMap: hitMap,
             chords: prepared.labels,
+            staves: prepared.staves,
           ),
         );
         if (!mounted || generation != _renderGeneration) return;
@@ -649,6 +659,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
           .where((hit) => hit.type == 'clef')
           .toList();
       final pageMeasures = <_MeasureGeometry>[];
+      // Bars whose staff lines were read from the drawing: their pitches are
+      // where the lines are, and need not be estimated from the notes.
+      final drawnStaves = <int, Map<int, _StaffGeometry>>{};
       final pageMeasureSlots = <int, int>{};
       final pageMeasureSystems = <int, int>{};
       final systemTops = <double>[];
@@ -693,21 +706,48 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
           clefs: clefRects,
           measureIndex: measureIndex,
         );
+        final lines = [
+          for (final staff in page.staves)
+            if (hit.bbox.inflate(4).contains(staff.center)) staff,
+        ]..sort((a, b) => a.top.compareTo(b.top));
+        final drawn = <int, _StaffGeometry>{};
+        if (lines.length >= math.min(2, staffCount)) {
+          final clefs = measureIndex < (part?.measures.length ?? 0)
+              ? part!.measures[measureIndex].attributes.clefs
+              : const <int, MusicClef>{};
+          for (var staff = 1; staff <= math.min(2, staffCount); staff++) {
+            final gap = lines[staff - 1].gap * scale;
+            drawn[staff] = _StaffGeometry(
+              top: staffAnchorFromLines(
+                bottomLine: _scaledPoint(
+                  Offset(0, lines[staff - 1].bottom),
+                  scale,
+                  pageTop,
+                ).dy,
+                lineGap: gap,
+                clef: clefs[staff],
+                staff: staff,
+              ),
+              lineGap: gap,
+            );
+          }
+          drawnStaves[measureIndex] = drawn;
+        }
         final box = NativeMeasureBox(
           measureIndex: measureIndex,
           rect: rect.inflate(2),
-          trebleStaffTop: frame.trebleStaffTop,
-          bassStaffTop: frame.bassStaffTop,
-          lineGap: frame.lineGap,
+          trebleStaffTop: drawn[1]?.top ?? frame.trebleStaffTop,
+          bassStaffTop: drawn[2]?.top ?? frame.bassStaffTop,
+          lineGap: drawn[1]?.lineGap ?? frame.lineGap,
           contentLeft: contentLeft,
           contentWidth: math.max(12, rect.left + rect.width - 8 - contentLeft),
           staffTops: {
-            1: frame.trebleStaffTop,
-            if (staffCount > 1) 2: frame.bassStaffTop,
+            1: drawn[1]?.top ?? frame.trebleStaffTop,
+            if (staffCount > 1) 2: drawn[2]?.top ?? frame.bassStaffTop,
           },
           staffLineGaps: {
-            1: frame.lineGap,
-            if (staffCount > 1) 2: frame.lineGap,
+            1: drawn[1]?.lineGap ?? frame.lineGap,
+            if (staffCount > 1) 2: drawn[2]?.lineGap ?? frame.lineGap,
           },
         );
         pageMeasureSlots[measureIndex] = measures.length;
@@ -857,10 +897,11 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
               }
               systemStaffGeometry[system] = fittedByStaff;
             }
+            final drawn = drawnStaves[absoluteIndex];
             for (var staff = 1; staff <= math.min(2, staffCount); staff++) {
-              final fitted = fittedByStaff[staff]!;
-              staffTops[staff] = fitted.top;
-              staffLineGaps[staff] = fitted.lineGap;
+              final geometry = drawn?[staff] ?? fittedByStaff[staff]!;
+              staffTops[staff] = geometry.top;
+              staffLineGaps[staff] = geometry.lineGap;
             }
             final capacity = math.max(
               1,
@@ -1415,6 +1456,21 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       return;
     }
     if (widget.inputMode == 'select') return;
+    if (widget.inputMode == 'place') {
+      final place = layout.placeAt(content, score: widget.score);
+      if (place == null) {
+        _clearGhost();
+        return;
+      }
+      setState(() {
+        _ghostCenter = place.ghostCenter;
+        _ghostRest = false;
+        _ghostLineGap = place.lineGap;
+        _ghostDurationType = 'quarter';
+        _ghostAlter = 0;
+      });
+      return;
+    }
     if (widget.inputMode != 'note' && widget.inputMode != 'rest') {
       _clearGhost();
       return;
@@ -1492,6 +1548,12 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       }
       final measure = layout.measureAt(content);
       if (measure != null) widget.onMeasureTapped?.call(measure.measureIndex);
+      return;
+    }
+    if (widget.inputMode == 'place') {
+      final place = layout.placeAt(content, score: widget.score);
+      _clearGhost();
+      if (place != null) widget.onNotePlaced?.call(place);
       return;
     }
     final hit = layout.hitStaff(
@@ -1607,6 +1669,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
                                             widget.highlightedMeasureRange,
                                         selectedNoteAddress:
                                             widget.selectedNoteAddress,
+                                        alsoSelected: widget.alsoSelectedNotes,
                                         // The bar being played, and when
                                         // paused the bar it stopped in.
                                         playbackMeasure:
