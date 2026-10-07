@@ -282,6 +282,19 @@ void main() {
       expect(place.ghostCenter, const Offset(60, 90));
     });
 
+    test('beside a note is not on the note: a new one is meant there', () {
+      // The chord stands at x 160; lines are 10 apart.
+      final on = layout.placeAt(const Offset(170, 85), score: score)!;
+      final after = layout.placeAt(const Offset(190, 85), score: score)!;
+      final before = layout.placeAt(const Offset(130, 85), score: score)!;
+
+      expect((on.beside, on.ghostCenter.dx), (0, 160));
+      // The note to come is shown where the finger is, not over the chord.
+      expect((after.beside, after.ghostCenter.dx), (1, 190));
+      expect((before.beside, before.ghostCenter.dx), (-1, 130));
+      expect(after.eventIndex, on.eventIndex);
+    });
+
     test('of a chord the note nearest in height is meant', () {
       final high = layout.placeAt(const Offset(150, 62), score: score)!;
       final low = layout.placeAt(const Offset(150, 96), score: score)!;

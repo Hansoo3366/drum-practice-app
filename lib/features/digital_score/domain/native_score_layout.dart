@@ -172,6 +172,10 @@ class NativeStaffHit {
   final double lineGap;
 }
 
+/// How far to the side of a note's middle, in staff spaces, a point still
+/// is on that note: a notehead is a little over one space wide.
+const besideNoteSpaces = 1.3;
+
 /// A place on a staff that was pointed at: the note or rest nearest to it
 /// in time, and the line or space under the finger.
 class NativeStaffPlace {
@@ -183,6 +187,7 @@ class NativeStaffPlace {
     required this.octave,
     required this.ghostCenter,
     required this.lineGap,
+    this.beside = 0,
   });
 
   final int measureIndex;
@@ -191,9 +196,15 @@ class NativeStaffPlace {
   final PitchStep step;
   final int octave;
 
-  /// Where a note at that place is drawn: over the event, on the line.
+  /// Where a note at that place is drawn: over the event, on the line; or,
+  /// pointed at beside the event, where the finger is.
   final Offset ghostCenter;
   final double lineGap;
+
+  /// Whether the event itself was pointed at (0), or the room before (-1)
+  /// or after (+1) it: more than a notehead's width to its side. There a
+  /// new note is meant, where the bar has room for one.
+  final int beside;
 }
 
 class NativeScoreLayout {
@@ -333,14 +344,19 @@ class NativeScoreLayout {
       }
       return null;
     }
+    final aside = point.dx - best.center.dx;
+    final beside = aside.abs() <= lineGap * besideNoteSpaces
+        ? 0
+        : (aside < 0 ? -1 : 1);
     return NativeStaffPlace(
       measureIndex: box.measureIndex,
       eventIndex: best.eventIndex,
       staff: staff,
       step: pitch.step,
       octave: pitch.octave,
-      ghostCenter: Offset(best.center.dx, lineY),
+      ghostCenter: Offset(beside == 0 ? best.center.dx : point.dx, lineY),
       lineGap: lineGap,
+      beside: beside,
     );
   }
 

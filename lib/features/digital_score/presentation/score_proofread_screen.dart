@@ -903,8 +903,35 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
               pitch == null ||
               pitch.step != place.step ||
               pitch.octave != place.octave;
-    if (!value && !moves) return;
+    // Beside a note, where the bar has room: a new note or rest of the
+    // value in hand, not another pitch for the note that is there.
+    final beside = place.beside;
+    if (beside == 0 && !value && !moves) return;
     _apply((xml, ref) {
+      if (beside != 0) {
+        try {
+          final added = _editor.insertEvent(
+            xml,
+            ref,
+            before: beside < 0,
+            rest: rest,
+            value: (type: _entryType, dots: _entryDots),
+          );
+          return rest
+              ? added
+              : _editor.placeNote(
+                  added.xml,
+                  added.selection,
+                  place.step,
+                  place.octave,
+                );
+        } on FormatException {
+          // No room in the bar: the note that is there is meant, and
+          // when there is nothing to change on it either, the bar says
+          // why nothing happened.
+          if (!value && !moves) rethrow;
+        }
+      }
       final sized = _withEntryValue(xml, ref);
       final now = _editor.describe(sized.xml, sized.selection);
       if (rest) {
@@ -1702,6 +1729,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                             ref,
                             before: before,
                             rest: rest,
+                            value: (type: _entryType, dots: _entryDots),
                           ),
                         )
                       : null,

@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-07T17:13:00+09:00"
+last_updated: "2026-10-07T22:19:00+09:00"
 current_phase:
   id: "RELEASE-4"
   name: "OMR 정확도 최소 95% 개선·검증"
@@ -1406,6 +1406,9 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-10-06T13:58:32+09:00"
   checks:
+    - name: "note_tool_insert_20261007"
+      result: "passed_with_known_gaps"
+      detail: "음표 도구의 빈 자리 넣기: analyze 0건, 전체 테스트 800 통과, release 4085 에뮬레이터에서 쉼표가 있는 마디에 새 음표 삽입 확인, 앱 예외 0. 공백: 0.25박 모자란 마디 그대로는 기기에서 못 봄(테스트로 확인)."
     - name: "editor_same_lines_20261007"
       result: "passed"
       detail: "수정 화면의 줄 나눔을 본 악보와 같게: analyze 0건, 전체 테스트 796 통과, release 4084 에뮬레이터에서 변환한 32마디 악보의 본 악보·수정 화면 줄 구성이 같음(4·4·4·4·2·5·4·4), 앱 예외 0."

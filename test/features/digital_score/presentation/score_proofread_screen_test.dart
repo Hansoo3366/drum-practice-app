@@ -1342,6 +1342,68 @@ void main() {
       await _close(tester);
     });
 
+    testWidgets('beside a note the note tool adds one, where the bar is short', (
+      tester,
+    ) async {
+      // Three quarters in a bar of four: a beat is missing.
+      String q(String step) =>
+          '<note><pitch><step>$step</step><octave>4</octave></pitch>'
+          '<duration>1</duration><voice>1</voice><type>quarter</type></note>';
+      final short =
+          '<score-partwise version="4.0"><part-list><score-part id="P1">'
+          '<part-name>Voice</part-name></score-part></part-list><part id="P1">'
+          '<measure number="1"><attributes><divisions>1</divisions>'
+          '<key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time>'
+          '<clef><sign>G</sign><line>2</line></clef></attributes>${q('F')}${q('G')}${q('A')}${q('B')}</measure>'
+          '<measure number="2">${q('C')}${q('D')}${q('E')}</measure>'
+          '</part></score-partwise>';
+      final storage = _MemoryStorage();
+      await _open(tester, storage, musicXml: short);
+      // The second bar: a first bar may be a pickup and is not called short.
+      await _tapTool(tester, '다음 마디');
+      expect(find.textContaining('짧음'), findsOneWidget);
+      NativeStaffPlace beside(int bar, int index, int side) => NativeStaffPlace(
+        measureIndex: bar,
+        eventIndex: note(tester, bar, index).eventIndex,
+        staff: 1,
+        step: PitchStep.g,
+        octave: 4,
+        ghostCenter: Offset.zero,
+        lineGap: 10,
+        beside: side,
+      );
+
+      await tester.tap(find.byTooltip('음표 넣기'));
+      await _settle(tester);
+      // After the second note of the short bar: a new quarter, on G.
+      view(tester).onNotePlaced!(beside(1, 1, 1));
+      await _settle(tester);
+      expect(find.textContaining('짧음'), findsNothing);
+      // Beside a note of the full bar there is no room: that note is meant.
+      view(tester).onNotePlaced!(beside(0, 0, 1));
+      await _settle(tester);
+
+      await tester.tap(find.widgetWithText(FilledButton, '저장'));
+      await _settle(tester);
+      await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+      await _settle(tester);
+      final bars = const MusicXmlCodec()
+          .decodeXml(utf8.decode(storage.versions.values.single))
+          .parts
+          .first
+          .measures;
+      expect(
+        [for (final n in bars[1].notes) n.pitch!.step],
+        [PitchStep.c, PitchStep.d, PitchStep.g, PitchStep.e],
+      );
+      expect(bars[1].notes.map((n) => n.onset), [0, 1, 2, 3]);
+      expect(
+        [for (final n in bars[0].notes) n.pitch!.step],
+        [PitchStep.g, PitchStep.g, PitchStep.a, PitchStep.b],
+      );
+      await _close(tester);
+    });
+
     testWidgets('the rest tool writes a rest where it is tapped', (
       tester,
     ) async {

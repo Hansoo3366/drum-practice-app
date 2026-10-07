@@ -277,6 +277,76 @@ void main() {
       );
     });
 
+    test('a bar that is short takes a note of a given value into the gap', () {
+      // As read from a lead sheet: four eighths, a dotted quarter and a
+      // sixteenth, a sixteenth short of four beats (the tied note is
+      // missing).
+      String n(String step, int duration, String type, {String extra = ''}) =>
+          _note(step, 4, duration: duration, type: type, extra: extra);
+      final xml = _score(
+        [
+          '${n('F', 2, 'eighth')}${n('E', 2, 'eighth')}${n('F', 2, 'eighth')}'
+              '${n('G', 2, 'eighth')}${n('A', 6, 'quarter', extra: '<dot/>')}'
+              '${n('C', 1, '16th')}',
+        ],
+        divisions: 4,
+        staves: 1,
+      );
+
+      final result = _editor.insertEvent(
+        xml,
+        _ref(4),
+        before: false,
+        rest: false,
+        value: (type: '16th', dots: 0),
+      );
+
+      expect(
+        _types(result.xml),
+        'eighth eighth eighth eighth quarter. 16th 16th',
+      );
+      expect(_timeline(result.xml, '1'), [
+        (0, 2),
+        (2, 2),
+        (4, 2),
+        (6, 2),
+        (8, 6),
+        (14, 1),
+        (15, 1),
+      ]);
+      // The new note is the picked one, with the pitch of the note before.
+      expect(result.selection.noteIndex, 5);
+      expect(_pitchOf(_notes(result.xml)[5]), 'A:0:4');
+      // The bar is full now: another one has no room.
+      expect(
+        () => _editor.insertEvent(
+          result.xml,
+          _ref(4),
+          before: false,
+          rest: false,
+          value: (type: '16th', dots: 0),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('a value finer than the bar counts in is still inserted', () {
+      final xml = _score([
+        '${_note('C', 5)}${_note('D', 5)}${_note('E', 5)}',
+      ], staves: 1);
+
+      final result = _editor.insertEvent(
+        xml,
+        _ref(0),
+        before: true,
+        rest: true,
+        value: (type: 'eighth', dots: 0),
+      );
+
+      expect(_types(result.xml), 'reighth quarter quarter quarter');
+      expect(_timeline(result.xml, '1'), [(0, 1), (1, 2), (3, 2), (5, 2)]);
+    });
+
     test('a pickup bar grows and its backup with it', () {
       final xml = _score([
         '${_note('C', 5)}<backup><duration>1</duration></backup>'

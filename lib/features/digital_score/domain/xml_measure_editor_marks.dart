@@ -232,17 +232,28 @@ extension XmlMeasureMarks on XmlMeasureEditor {
     );
   }
 
-  /// Puts a new note or rest of the selected note's length before or after
-  /// it. What follows moves later; rests at the end of the bar give way,
-  /// and a bar with no rest left to give throws.
+  /// Puts a new note or rest before or after the selected note: of the
+  /// value [value] names, or without one of the selected note's length.
+  /// What follows moves later. A bar shorter than its time takes the new
+  /// note into what is missing; in a full bar rests at its end give way,
+  /// and a bar with no room left throws.
   XmlEditResult insertEvent(
     String xml,
     XmlNoteRef ref, {
     required bool before,
     required bool rest,
+    ({String type, int dots})? value,
   }) {
+    if (value != null &&
+        (!_typeQuarters.containsKey(value.type) ||
+            value.dots < 0 ||
+            value.dots > 2)) {
+      throw const FormatException('지원하지 않는 음가입니다.');
+    }
     final doc = _ScoreDoc(xml);
-    var measure = doc.measure(ref);
+    var measure = value == null
+        ? doc.measure(ref)
+        : _fitDivisions(doc, ref, [_quartersOf(value.type, value.dots)]);
     final info = measure.note(ref.noteIndex);
     _requirePlain(info);
     final voice = info.voice;
@@ -250,8 +261,8 @@ extension XmlMeasureMarks on XmlMeasureEditor {
     measure.requireSimpleVoice(groups);
     final group = measure.groupOf(info);
     final head = group.first;
-    var type = head.type;
-    var dots = head.dots;
+    var type = value?.type ?? head.type;
+    var dots = value?.dots ?? head.dots;
     if (type == null) {
       final spelled = _spellSingle(head.duration, measure.divisions);
       if (spelled == null) {
@@ -260,7 +271,9 @@ extension XmlMeasureMarks on XmlMeasureEditor {
       type = spelled.type;
       dots = spelled.dots;
     }
-    final length = head.duration;
+    final length = value == null
+        ? head.duration
+        : (measure.divisions * _quartersOf(type, dots)).round();
     final voiceEnd = groups.last.first.onset + groups.last.first.duration;
     final room = math.max(measure.capacity, voiceEnd);
     var need = voiceEnd + length - room;
