@@ -307,7 +307,354 @@ nm.MidiSequence playbackMidi(
       tied.midi,
     ));
   }
-  return mergeTiedNotes(sequence, staves);
+  final shapes = playedHairpins(copies.ready, played);
+  final tempo = playedTempo(copies.ready, played);
+  return shapeTempo(
+    shapeSwing(
+      shapeHairpins(
+        mergeTiedNotes(sequence, staves),
+        shapes.hairpins,
+        shapes.marks,
+      ),
+      tempo,
+    ),
+    tempo,
+    fallbackBpm: options.defaultBpm,
+  );
+}
+
+/// [sequence] with the eighths between the beats played late, as jazz
+/// players play them, from where the score says "Swing" to where it says
+/// "Straight" (or to the end): two eighths of a beat are a long one and a
+/// short one, two thirds and one third of the beat.
+nm.MidiSequence shapeSwing(nm.MidiSequence sequence, PlayedTempo tempo) {
+  final spans = <(int, int)>[];
+  int? from;
+  final tpq = sequence.ticksPerQuarter;
+  for (final word in tempo.words) {
+    final tick = (word.at * tpq).round();
+    if (word.word == TempoWord.swing) {
+      from ??= tick;
+    } else if (word.word == TempoWord.straight && from != null) {
+      spans.add((from, tick));
+      from = null;
+    }
+  }
+  if (from != null) spans.add((from, 1 << 40));
+  if (spans.isEmpty) return sequence;
+  final half = tpq ~/ 2;
+  final late = tpq * 2 ~/ 3 - half;
+  int swung(int tick) {
+    if (!spans.any((span) => tick >= span.$1 && tick < span.$2)) return tick;
+    // On the eighth between two beats, give or take what a shortened note
+    // ends early by.
+    return (tick % tpq - half).abs() <= tpq ~/ 16 ? tick + late : tick;
+  }
+
+  return nm.MidiSequence(
+    ticksPerQuarter: tpq,
+    tracks: [
+      for (final track in sequence.tracks)
+        nm.MidiTrack(
+          name: track.name,
+          channel: track.channel,
+          events: _inTickOrder([
+            for (final event in track.events)
+              if (event.type == nm.MidiEventType.noteOn &&
+                  (event.velocity ?? 0) > 0)
+                nm.MidiEvent.noteOn(
+                  tick: swung(event.tick),
+                  channel: event.channel,
+                  note: event.note!,
+                  velocity: event.velocity!,
+                )
+              else if (event.note != null &&
+                  (event.type == nm.MidiEventType.noteOff ||
+                      event.type == nm.MidiEventType.noteOn))
+                nm.MidiEvent.noteOff(
+                  tick: swung(event.tick),
+                  channel: event.channel,
+                  note: event.note!,
+                )
+              else
+                event,
+          ]),
+        ),
+    ],
+  );
+}
+
+/// [events] in the order of their ticks; those of one tick stay in the
+/// order they were in (a note that ends where the next begins must end
+/// first).
+List<nm.MidiEvent> _inTickOrder(List<nm.MidiEvent> events) {
+  final numbered = [for (final (index, event) in events.indexed) (index, event)]
+    ..sort(
+      (a, b) => a.$2.tick != b.$2.tick
+          ? a.$2.tick.compareTo(b.$2.tick)
+          : a.$1.compareTo(b.$1),
+    );
+  return [for (final (_, event) in numbered) event];
+}
+
+/// [sequence] with what the score says of its tempo in words and signs
+/// played: it slows down under "rit." and speeds up under "accel." (by
+/// about a quarter, beat by beat, until "a tempo", the next tempo mark, or
+/// two bars on), and a note under a fermata is held twice as long.
+nm.MidiSequence shapeTempo(
+  nm.MidiSequence sequence,
+  PlayedTempo tempo, {
+  required int fallbackBpm,
+}) {
+  final moves = [
+    for (final word in tempo.words)
+      if (word.word == TempoWord.slower || word.word == TempoWord.faster) word,
+  ];
+  if (moves.isEmpty && tempo.holds.isEmpty) return sequence;
+  final tpq = sequence.ticksPerQuarter;
+  int tickOf(double quarters) => (quarters * tpq).round();
+  // The tempo as written, by tick.
+  final written = <int, int>{};
+  for (final track in sequence.tracks) {
+    for (final event in track.events) {
+      if (event.type == nm.MidiEventType.tempo && (event.bpm ?? 0) > 0) {
+        written[event.tick] = event.bpm!;
+      }
+    }
+  }
+  final marks = written.keys.toList()..sort();
+  int bpmAt(int tick) {
+    var bpm = fallbackBpm <= 0 ? 120 : fallbackBpm;
+    for (final mark in marks) {
+      if (mark > tick) break;
+      bpm = written[mark]!;
+    }
+    return bpm;
+  }
+
+  // The tempo as played, by tick: the written one with the changes below.
+  final played = <int, int>{};
+  for (final (index, move) in moves.indexed) {
+    final from = tickOf(move.at);
+    // Until the score says how fast again: a tempo mark, "a tempo", the
+    // next "rit." or "accel."; without any, two bars on.
+    final bar = tempo.bars.lastIndexWhere((start) => start <= move.at + 1e-6);
+    final twoBars = bar + 2 < tempo.bars.length
+        ? tempo.bars[bar + 2]
+        : tempo.end;
+    var until = tickOf(twoBars);
+    for (final mark in marks) {
+      if (mark > from && mark < until) until = mark;
+    }
+    for (final word in tempo.words) {
+      final tick = tickOf(word.at);
+      if (word.word == TempoWord.asBefore && tick > from && tick < until) {
+        until = tick;
+      }
+    }
+    if (index + 1 < moves.length) {
+      final next = tickOf(moves[index + 1].at);
+      if (next > from && next < until) until = next;
+    }
+    if (until <= from) continue;
+    final base = bpmAt(from);
+    final goal = base * (move.word == TempoWord.slower ? 0.72 : 1.3);
+    // A step every beat, the last one at the goal.
+    final steps = math.max(1, ((until - from) / tpq).round());
+    for (var step = 0; step < steps; step++) {
+      final tick = from + (until - from) * step ~/ steps;
+      played[tick] = (base + (goal - base) * (step + 1) / steps).round();
+    }
+    // What follows goes as it was written, unless it says itself how fast.
+    played.putIfAbsent(until, () => bpmAt(until));
+  }
+  for (final hold in tempo.holds) {
+    final from = tickOf(hold.from);
+    final to = tickOf(hold.to);
+    if (to <= from) continue;
+    int nowAt(int tick) {
+      var bpm = bpmAt(tick);
+      final earlier = played.keys.where((at) => at <= tick).toList()..sort();
+      if (earlier.isNotEmpty &&
+          !marks.any((m) => m > earlier.last && m <= tick)) {
+        bpm = played[earlier.last]!;
+      }
+      return bpm;
+    }
+
+    final after = nowAt(to);
+    played[from] = math.max(10, (nowAt(from) / 2).round());
+    // Changes inside the held note would end the hold early.
+    played.removeWhere((tick, _) => tick > from && tick < to);
+    played[to] = written[to] ?? after;
+  }
+  if (played.isEmpty) return sequence;
+  final conductor = sequence.tracks.indexWhere(
+    (track) => track.events.any((e) => e.type == nm.MidiEventType.tempo),
+  );
+  final target = conductor < 0 ? 0 : conductor;
+  return nm.MidiSequence(
+    ticksPerQuarter: tpq,
+    tracks: [
+      for (final (index, track) in sequence.tracks.indexed)
+        if (index != target)
+          track
+        else
+          nm.MidiTrack(
+            name: track.name,
+            channel: track.channel,
+            events: _inTickOrder([
+              for (final event in track.events)
+                if (event.type != nm.MidiEventType.tempo ||
+                    !played.containsKey(event.tick))
+                  event,
+              for (final MapEntry(key: tick, value: bpm) in played.entries)
+                nm.MidiEvent.tempo(tick: tick, bpm: bpm),
+            ]),
+          ),
+    ],
+  );
+}
+
+/// [sequence] with its hairpins played: under a crescendo every note is a
+/// little louder than the one before, under a diminuendo softer.
+///
+/// Where a dynamic mark follows the hairpin, the notes grow to what it
+/// says. Without one they grow by about a mark's worth (mf to f) and stay
+/// there, as a player does, until the next dynamic mark.
+///
+/// The mapper writes one track per staff, in score order.
+nm.MidiSequence shapeHairpins(
+  nm.MidiSequence sequence,
+  List<PlayedHairpin> hairpins,
+  List<({double at, int firstStaff})> marks,
+) {
+  if (hairpins.isEmpty) return sequence;
+  bool isOn(nm.MidiEvent e) =>
+      e.type == nm.MidiEventType.noteOn && (e.velocity ?? 0) > 0;
+  final staffTracks = [
+    for (final track in sequence.tracks)
+      if (track.name != 'Conductor') track,
+  ];
+  final tpq = sequence.ticksPerQuarter;
+  // By how much a note at a tick is louder or softer than written, per
+  // staff track: pieces of a line, each from one factor to another.
+  final shapes =
+      <nm.MidiTrack, List<({int from, int to, double begin, double end})>>{};
+  final byPart = <int, List<PlayedHairpin>>{};
+  for (final hairpin in hairpins) {
+    byPart.putIfAbsent(hairpin.firstStaff, () => []).add(hairpin);
+  }
+  for (final MapEntry(key: firstStaff, value: ofPart) in byPart.entries) {
+    ofPart.sort((a, b) => a.from.compareTo(b.from));
+    final staves = ofPart.first.staves;
+    if (firstStaff + staves > staffTracks.length) continue;
+    final tracks = staffTracks.sublist(firstStaff, firstStaff + staves);
+    final notes = [
+      for (final track in tracks)
+        for (final event in track.events)
+          if (isOn(event)) event,
+    ]..sort((a, b) => a.tick.compareTo(b.tick));
+    if (notes.isEmpty) continue;
+    final markTicks = [
+      for (final mark in marks)
+        if (mark.firstStaff == firstStaff) (mark.at * tpq).round(),
+    ]..sort();
+    final pieces = <({int from, int to, double begin, double end})>[];
+    // What the last hairpin left the notes at, and until where.
+    var held = 1.0;
+    var heldUntil = 0;
+    for (var i = 0; i < ofPart.length; i++) {
+      final hairpin = ofPart[i];
+      final from = (hairpin.from * tpq).round();
+      final to = (hairpin.to * tpq).round();
+      final begin = from < heldUntil ? held : 1.0;
+      // As loud as written where the hairpin begins, and where it ends.
+      final before = notes.lastWhere(
+        (note) => note.tick <= from,
+        orElse: () => notes.first,
+      );
+      // A mark under the hairpin, or right at its end, is where it goes:
+      // the last note under a hairpin is often the one that is marked.
+      final goal =
+          markTicks
+              .where((tick) => tick > from + 2 && tick <= to + 2)
+              .lastOrNull ??
+          to;
+      final after = notes.where((note) => note.tick >= goal - 2).firstOrNull;
+      final written = after == null
+          ? 1.0
+          : (after.velocity ?? 1) / math.max(1, before.velocity ?? 1);
+      final marked = hairpin.louder ? written > 1.05 : written < 0.95;
+      if (marked) {
+        // The mark after it says where it goes.
+        pieces.add((from: from, to: goal, begin: begin, end: written));
+        held = 1.0;
+        heldUntil = goal;
+        continue;
+      }
+      final end = (begin * (hairpin.louder ? 1.3 : 1 / 1.3)).clamp(0.4, 2.0);
+      pieces.add((from: from, to: to, begin: begin, end: end));
+      // It stays there until a mark says otherwise, or the next hairpin
+      // takes over.
+      final nextMark = markTicks.where((tick) => tick >= to - 2).firstOrNull;
+      final nextHairpin = i + 1 < ofPart.length
+          ? (ofPart[i + 1].from * tpq).round()
+          : null;
+      final until = [?nextMark, ?nextHairpin].fold<int?>(
+        null,
+        (least, tick) => least == null || tick < least ? tick : least,
+      );
+      held = end;
+      heldUntil = until ?? (1 << 40);
+      if (heldUntil > to) {
+        pieces.add((from: to, to: heldUntil, begin: end, end: end));
+      }
+    }
+    for (final track in tracks) {
+      shapes[track] = pieces;
+    }
+  }
+  if (shapes.isEmpty) return sequence;
+  return nm.MidiSequence(
+    ticksPerQuarter: tpq,
+    tracks: [
+      for (final track in sequence.tracks)
+        if (shapes[track] case final pieces?)
+          nm.MidiTrack(
+            name: track.name,
+            channel: track.channel,
+            events: [
+              for (final event in track.events)
+                if (isOn(event)) _shaped(event, pieces) else event,
+            ],
+          )
+        else
+          track,
+    ],
+  );
+}
+
+nm.MidiEvent _shaped(
+  nm.MidiEvent event,
+  List<({int from, int to, double begin, double end})> pieces,
+) {
+  for (final piece in pieces) {
+    if (event.tick < piece.from || event.tick >= piece.to) continue;
+    final along = piece.to == piece.from
+        ? 1.0
+        : (event.tick - piece.from) / (piece.to - piece.from);
+    final factor = piece.begin + (piece.end - piece.begin) * along;
+    final velocity = ((event.velocity ?? 0) * factor).round().clamp(1, 127);
+    if (velocity == event.velocity) return event;
+    return nm.MidiEvent.noteOn(
+      tick: event.tick,
+      channel: event.channel,
+      note: event.note!,
+      velocity: velocity,
+    );
+  }
+  return event;
 }
 
 /// The MIDI of a score with the instrument of each channel.

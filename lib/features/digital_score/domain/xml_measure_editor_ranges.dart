@@ -150,6 +150,125 @@ extension XmlMeasureRanges on XmlMeasureEditor {
     );
   }
 
+  /// Empties the bars [from]..[to] of every part: the bars stay, with
+  /// their barlines, repeats, section boxes and tempo marks, and what was
+  /// written in them (notes, chord symbols, words, dynamics) gives way to
+  /// rests. What a notation program does when a run of bars is cut or
+  /// deleted; [deleteMeasures] takes the bars themselves out.
+  XmlEditResult clearMeasures(String xml, int partIndex, int from, int to) {
+    final doc = _ScoreDoc(xml);
+    _checkRange(from, to, doc.measureCount(partIndex));
+    for (final (index, _) in doc.parts.indexed) {
+      final count = doc._measures(index).length;
+      for (var bar = from; bar <= to && bar < count; bar++) {
+        var view = doc.measureAt(index, bar);
+        final (_, length) = _barLength(view);
+        final staves = math.max(1, view.context.staves);
+        final steps = <int, Set<PitchStep>>{};
+        for (final note in view.notes) {
+          doc.breakTies(bar, note);
+          if (note.pitch case final pitch?) {
+            steps.putIfAbsent(note.staff, () => {}).add(pitch.step);
+          }
+        }
+        view = doc.measureAt(index, bar);
+        for (final note in view.notes) {
+          _detachNoteSpans(note.element);
+        }
+        final measure = view.element;
+        for (final child in measure.childElements.toList()) {
+          switch (child.name.local) {
+            case 'note' || 'backup' || 'forward' || 'harmony' || 'figured-bass':
+              _remove(child);
+            case 'direction':
+              // A jump or a tempo mark belongs to the bar, not its music.
+              final jumps = child
+                  .findElements('sound')
+                  .any(
+                    (sound) => sound.attributes.any(
+                      (a) => [
+                        ..._jumpSounds,
+                        'segno',
+                        'coda',
+                      ].contains(a.name.local),
+                    ),
+                  );
+              if (jumps || _setsTempo(child)) break;
+              for (final type
+                  in child.findElements('direction-type').toList()) {
+                if (!type.childElements.any(
+                  (e) => const {
+                    'rehearsal',
+                    'segno',
+                    'coda',
+                  }.contains(e.name.local),
+                )) {
+                  _remove(type);
+                }
+              }
+              if (child.findElements('direction-type').isEmpty) _remove(child);
+          }
+        }
+        for (var staff = 1; staff <= staves; staff++) {
+          if (staff > 1) _insertAtEnd(measure, _timing(-length));
+          _insertAtEnd(
+            measure,
+            _barRest(
+              length,
+              // Voices 1-4 belong to the first staff, 5-8 to the second.
+              voice: '${(staff - 1) * 4 + 1}',
+              staff: staves > 1 ? '$staff' : null,
+            ),
+          );
+        }
+        // Ties into the bar from the bars around it end where it begins.
+        for (final MapEntry(key: staff, value: set) in steps.entries) {
+          doc.measureAt(index, bar).refreshAccidentals(staff, set);
+        }
+      }
+    }
+    return XmlEditResult(doc.toXml(), _barRef(partIndex, from));
+  }
+
+  /// Writes the bars of [clip] over the bars from the selected note's bar
+  /// on, in every part: as many bars as were copied give way to them, and
+  /// keep their place in the score (their barlines and repeats, line
+  /// breaks, section boxes, segno and coda, and what they are in the
+  /// original). Past the last bar the score grows. What a notation program
+  /// calls paste; [pasteMeasures] puts the bars in between instead.
+  XmlEditResult overwriteMeasures(
+    String xml,
+    XmlNoteRef ref,
+    MeasureClip clip,
+  ) {
+    if (clip.length == 0) throw const FormatException('복사한 마디가 없습니다.');
+    final at = ref.measureIndex;
+    final before = _ScoreDoc(xml);
+    final count = before.measureCount(ref.partIndex);
+    before.measureAt(ref.partIndex, at);
+    final origins = _readOrigins(before, ref.partIndex);
+    before.keep(xml);
+    final end = math.min(at + clip.length - 1, count - 1);
+    // The copied bars after the ones they replace, then those taken out.
+    final pasted = pasteMeasures(xml, ref.inBar(end, 0), clip).xml;
+    final doc = _ScoreDoc(pasted);
+    for (final (index, _) in doc.parts.indexed) {
+      final measures = doc._measures(index);
+      for (var i = 0; at + i <= end; i++) {
+        if (end + 1 + i >= measures.length) break;
+        _movePlace(from: measures[at + i], to: measures[end + 1 + i]);
+      }
+    }
+    final result = deleteMeasures(doc.toXml(), ref.partIndex, at, end).xml;
+    final after = _ScoreDoc(result);
+    final kept = _readOrigins(after, ref.partIndex);
+    for (var i = 0; at + i <= end && at + i < kept.length; i++) {
+      kept[at + i] = origins[at + i];
+    }
+    _writeOrigins(after, kept);
+    return XmlEditResult(after.toXml(), ref.inBar(at, 0));
+  }
+
   /// Removes the bars [from]..[to] (both included) from every part, as
   /// [XmlMeasureEditor.deleteMeasure] removes one. One bar at least stays.
   XmlEditResult deleteMeasures(String xml, int partIndex, int from, int to) {
@@ -545,6 +664,80 @@ extension XmlMeasureRanges on XmlMeasureEditor {
 }
 
 // --- Helpers ------------------------------------------------------------------
+
+/// Moves what belongs to a bar's place in the score, and not to its music,
+/// from one bar to another: line and page breaks, barlines with their
+/// repeats and endings, section boxes, segno and coda, jumps, and whether
+/// the bar is a pickup.
+void _movePlace({required XmlElement from, required XmlElement to}) {
+  if (from.getAttribute('implicit') == 'yes') {
+    to.setAttribute('implicit', 'yes');
+  }
+  // What stands at the start of a bar goes in after what the bar opens
+  // with (its line break, its clef, key and time).
+  int opening() {
+    var index = 0;
+    for (final child in to.children) {
+      if (child is XmlElement &&
+          !const {'print', 'attributes'}.contains(child.name.local)) {
+        break;
+      }
+      index++;
+    }
+    return index;
+  }
+
+  for (final print in from.findElements('print').toList()) {
+    to.findElements('print').toList().forEach(_remove);
+    _remove(print);
+    to.children.insert(0, print);
+  }
+  for (final barline in from.findElements('barline').toList()) {
+    final location = barline.getAttribute('location') ?? 'right';
+    for (final other in to.findElements('barline').toList()) {
+      if ((other.getAttribute('location') ?? 'right') == location) {
+        _remove(other);
+      }
+    }
+    _remove(barline);
+    if (location == 'left') {
+      to.children.insert(opening(), barline);
+    } else {
+      to.children.add(barline);
+    }
+  }
+  bool jumps(XmlElement sound) => sound.attributes.any(
+    (a) => [..._jumpSounds, 'segno', 'coda'].contains(a.name.local),
+  );
+  const placed = {'rehearsal', 'segno', 'coda'};
+  for (final direction in from.findElements('direction').toList()) {
+    final types = [
+      for (final type in direction.findElements('direction-type'))
+        if (type.childElements.any((e) => placed.contains(e.name.local))) type,
+    ];
+    final sounds = direction.findElements('sound').where(jumps).toList();
+    if (types.isEmpty && sounds.isEmpty) continue;
+    if (sounds.isNotEmpty) {
+      // A jump is its words and its sound together: the whole of it moves.
+      _remove(direction);
+      to.children.insert(opening(), direction);
+      continue;
+    }
+    final moved = XmlElement(XmlName('direction'), [
+      for (final attribute in direction.attributes) attribute.copy(),
+    ]);
+    for (final type in types) {
+      _remove(type);
+      moved.children.add(type);
+    }
+    if (direction.findElements('direction-type').isEmpty) _remove(direction);
+    to.children.insert(opening(), moved);
+  }
+  for (final sound in from.findElements('sound').where(jumps).toList()) {
+    _remove(sound);
+    to.children.insert(opening(), sound);
+  }
+}
 
 void _checkRange(int from, int to, int count) {
   if (from < 0 || to < from || to >= count) {

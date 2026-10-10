@@ -55,6 +55,13 @@ class VerovioScoreView extends StatefulWidget {
     this.onEventTapped,
     this.onStaffTapped,
     this.onNotePlaced,
+    this.onSelectionDragged,
+    this.onRangeDragged,
+    this.onMeasureDoubleTapped,
+    this.onTextTapped,
+    this.onBlankTapped,
+    this.onLongPressed,
+    this.rangeHandles = false,
     this.onMeasureTapped,
     this.onMeasureMoved,
     this.onSystemsChanged,
@@ -112,6 +119,40 @@ class VerovioScoreView extends StatefulWidget {
   /// Fires in `place` mode: a line or space of the staff was pointed at,
   /// over one of the notes or rests that are there.
   final ValueChanged<NativeStaffPlace>? onNotePlaced;
+
+  /// Fires in `select` mode when a finger that went down on a picked note
+  /// ([selectedNoteAddress], [alsoSelectedNotes]) was moved and lifted: up
+  /// or down by [steps] lines and spaces (up is positive), or to the side
+  /// for an accidental ([alter]: +1 sharper, -1 flatter). The picked notes
+  /// are what is moved; a finger on any other note moves the page.
+  final void Function(int steps, int alter)? onSelectionDragged;
+
+  /// Fires in `select` mode while a finger that was held down and then
+  /// moved goes over the score, and while a range handle is dragged: the
+  /// notes from [from] to [to] are meant. [from] stays where it began.
+  final void Function(ScoreEventAddress from, ScoreEventAddress to)?
+  onRangeDragged;
+
+  /// Fires in `select` mode for two taps in a row on a bar.
+  final ValueChanged<int>? onMeasureDoubleTapped;
+
+  /// Fires in `select` mode for a tap on words of the score: [above] the
+  /// staff (a chord symbol) or under it (a lyric). [address] is the note
+  /// or rest they stand at.
+  final void Function(ScoreEventAddress address, bool above)? onTextTapped;
+
+  /// Fires in `select` mode for a tap on the page where nothing is: what
+  /// was picked is let go, as when one clicks away from it.
+  final VoidCallback? onBlankTapped;
+
+  /// Fires in `select` mode when a finger held down on the score is lifted
+  /// where it went down: the note or rest there is asked about, as with a
+  /// long press or a right click in a notation program.
+  final ValueChanged<ScoreEventAddress>? onLongPressed;
+
+  /// Draws a round handle at each end of the picked notes; dragging one
+  /// moves that end ([onRangeDragged]).
+  final bool rangeHandles;
   final ValueChanged<int>? onMeasureTapped;
   final void Function(int fromIndex, int toIndex)? onMeasureMoved;
   final ValueChanged<List<ScoreSystemSpan>>? onSystemsChanged;
@@ -235,6 +276,45 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   double _ghostLineGap = nativeStaffLineGap;
   String _ghostDurationType = 'quarter';
   int _ghostAlter = 0;
+
+  /// The pitch of the note to come, written above the finger that hides
+  /// it.
+  String? _ghostLabel;
+
+  /// A picked note under a finger: where the finger went down, and how far
+  /// it has carried the note.
+  ({Offset down, NativeNotePlacement note, double gap})? _noteDrag;
+  var _dragSteps = 0;
+  var _dragAlter = 0;
+
+  /// A run of notes being picked by a finger: the end that stays, and the
+  /// end under the finger.
+  ScoreEventAddress? _rangeFrom;
+  ScoreEventAddress? _rangeAt;
+  Timer? _holdTimer;
+
+  /// Where the finger went down in `place` mode. The note or rest meant is
+  /// the one under that point; moving the finger then chooses the line, and
+  /// to the side an accidental.
+  ({Offset view, Offset scene})? _placeDown;
+  Duration? _lastTapAt;
+  Offset? _lastTapPosition;
+
+  /// How long a finger rests before what it does next picks a run of notes
+  /// instead of moving the page.
+  static const _holdTime = Duration(milliseconds: 350);
+  static const _doubleTapTime = Duration(milliseconds: 320);
+
+  bool get _fingerEdits => _noteDrag != null || _rangeFrom != null || _aiming;
+
+  /// In `place` mode: a finger was held still, and now carries the note to
+  /// come up and down the staff until it is lifted. A finger that moves
+  /// before that moves the page; one that is lifted at once places the
+  /// note where it tapped.
+  var _aiming = false;
+
+  /// In `place` mode: the finger went on to move the page.
+  var _placePanned = false;
   int? _measureDragFrom;
   int? _measureDragTo;
   Timer? _playbackTimer;
@@ -348,6 +428,31 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       _measureDragFrom = null;
       _measureDragTo = null;
     });
+  }
+
+  /// Sounds [midis] together for a moment, as a notation program lets a
+  /// note be heard when it is written or moved. Not while the score plays.
+  Future<void> sound(List<int> midis) async {
+    if (!mounted || midis.isEmpty || widget.playback.state.playing) return;
+    if (!_audioReady) await _ensureAudio();
+    if (!mounted || !_audioReady || widget.playback.state.playing) return;
+    try {
+      await _audio.stop();
+      await _audio.clearScheduledEvents();
+      await _audio.setTicksPerQuarter(480);
+      await _audio.setTempo(120);
+      for (final midi in midis) {
+        await _audio.scheduleNote(
+          midiNote: midi.clamp(0, 127),
+          startTick: 0,
+          durationTicks: 400,
+          velocity: 84,
+        );
+      }
+      await _audio.start();
+    } on Object {
+      // No sound is not a reason to stop writing.
+    }
   }
 
   Future<void> _ensureAudio() async {
@@ -1597,10 +1702,356 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     setState(() {
       _ghostCenter = null;
       _ghostRest = false;
+      _ghostLabel = null;
     });
   }
 
-  void _updateInputAt(Offset content) {
+  double get _viewScale => _transform.value.getMaxScaleOnAxis();
+
+  /// Whether [content] is on the staff [place] is of, or within a few
+  /// lines and spaces of it: where a quick tap may write a note.
+  bool _nearStaff(
+    NativeScoreLayout layout,
+    NativeStaffPlace place,
+    Offset content,
+  ) {
+    for (final box in layout.measures) {
+      if (box.measureIndex != place.measureIndex) continue;
+      final gap = box.lineGapFor(place.staff);
+      final bottom = box.staffTopFor(place.staff);
+      final top = bottom - 4 * gap;
+      final away = content.dy < top
+          ? top - content.dy
+          : (content.dy > bottom ? content.dy - bottom : 0.0);
+      return away <= gap * tapReachSpaces;
+    }
+    return true;
+  }
+
+  /// The words of the score under [content], if any: whether they stand
+  /// above their staff or under it, and the note or rest they belong to.
+  ({ScoreEventAddress address, bool above})? _textAt(
+    NativeScoreLayout layout,
+    Offset content,
+  ) {
+    final reach = 4 / _viewScale;
+    for (final rect in _chordRects) {
+      if (!rect.inflate(reach).contains(content)) continue;
+      final center = rect.center;
+      // The bar the words are over or under: the nearest of those at
+      // their place across the page.
+      NativeMeasureBox? box;
+      var nearest = double.infinity;
+      for (final measure in layout.measures) {
+        final bar = measure.rect;
+        if (center.dx < bar.left || center.dx > bar.right) continue;
+        final away = center.dy < bar.top
+            ? bar.top - center.dy
+            : (center.dy > bar.bottom ? center.dy - bar.bottom : 0.0);
+        if (away < nearest) {
+          nearest = away;
+          box = measure;
+        }
+      }
+      if (box == null) continue;
+      final staves = box.staffTops.keys.toList()..sort();
+      if (staves.isEmpty) staves.add(1);
+      final top =
+          box.staffTopFor(staves.first) - 4 * box.lineGapFor(staves.first);
+      final above = center.dy < top;
+      // Words under a staff belong to the staff they are under.
+      var staff = staves.first;
+      if (!above) {
+        var found = false;
+        for (final candidate in staves) {
+          if (box.staffTopFor(candidate) < center.dy) {
+            staff = candidate;
+            found = true;
+          }
+        }
+        if (!found) continue;
+      }
+      NativeNotePlacement? note;
+      var off = double.infinity;
+      for (final candidate in layout.notes) {
+        if (candidate.measureIndex != box.measureIndex ||
+            candidate.staff != staff) {
+          continue;
+        }
+        // A chord symbol begins at its note; a syllable is centred on it.
+        final distance = (candidate.center.dx - (above ? rect.left : center.dx))
+            .abs();
+        if (distance < off) {
+          off = distance;
+          note = candidate;
+        }
+      }
+      if (note == null) continue;
+      return (
+        address: ScoreEventAddress(
+          partIndex: note.partIndex,
+          measureIndex: note.measureIndex,
+          eventIndex: note.eventIndex,
+        ),
+        above: above,
+      );
+    }
+    return null;
+  }
+
+  /// The place meant in `place` mode by a finger at [content]: the note or
+  /// rest under the point where it went down, on the line it is on now.
+  NativeStaffPlace? _placeUnderFinger(
+    NativeScoreLayout layout,
+    Offset content,
+    Offset? view,
+  ) {
+    final down = _placeDown;
+    if (down == null || view == null) {
+      return layout.placeAt(content, score: widget.score);
+    }
+    final place = layout.placeAt(
+      Offset(down.scene.dx, content.dy),
+      score: widget.score,
+    );
+    if (place == null) return null;
+    if (!_aiming) return place;
+    final alter = fingerCarry(
+      view - down.view,
+      lineGap: place.lineGap,
+      scale: _viewScale,
+    ).alter;
+    return alter == 0 ? place : place.withAlter(alter);
+  }
+
+  static String _pitchName(PitchStep step, int octave, int alter) {
+    final sign = switch (alter) {
+      > 0 => '♯',
+      < 0 => '♭',
+      _ => '',
+    };
+    return '${step.name.toUpperCase()}$sign$octave';
+  }
+
+  bool _isPicked(NativeNotePlacement note) {
+    bool same(ScoreEventAddress? address) =>
+        address != null &&
+        address.partIndex == note.partIndex &&
+        address.measureIndex == note.measureIndex &&
+        address.eventIndex == note.eventIndex;
+    return same(widget.selectedNoteAddress) ||
+        widget.alsoSelectedNotes.any(same);
+  }
+
+  /// The note or rest a finger at [content] means: the one it is on, or
+  /// the one of the staff under it that is nearest in time.
+  ScoreEventAddress? _eventNear(NativeScoreLayout layout, Offset content) {
+    final note = layout.noteAt(content, includeRests: true);
+    if (note != null) {
+      return ScoreEventAddress(
+        partIndex: note.partIndex,
+        measureIndex: note.measureIndex,
+        eventIndex: note.eventIndex,
+      );
+    }
+    final place = layout.placeAt(content, score: widget.score);
+    if (place == null) return null;
+    return ScoreEventAddress(
+      partIndex: 0,
+      measureIndex: place.measureIndex,
+      eventIndex: place.eventIndex,
+    );
+  }
+
+  /// The two ends of the picked notes as they are drawn, first and last in
+  /// reading order, with the point where each one's handle stands.
+  ({
+    ScoreEventAddress first,
+    Offset firstAt,
+    ScoreEventAddress last,
+    Offset lastAt,
+  })?
+  _handles(NativeScoreLayout layout) {
+    if (!widget.rangeHandles) return null;
+    final picked = [?widget.selectedNoteAddress, ...widget.alsoSelectedNotes];
+    if (picked.length < 2) return null;
+    picked.sort(
+      (a, b) => a.measureIndex != b.measureIndex
+          ? a.measureIndex.compareTo(b.measureIndex)
+          : a.eventIndex.compareTo(b.eventIndex),
+    );
+    Offset? at(ScoreEventAddress address, {required bool left}) {
+      for (final note in layout.notes) {
+        if (note.measureIndex != address.measureIndex ||
+            note.eventIndex != address.eventIndex ||
+            note.partIndex != address.partIndex) {
+          continue;
+        }
+        NativeMeasureBox? box;
+        for (final measure in layout.measures) {
+          if (measure.measureIndex == note.measureIndex) {
+            box = measure;
+            break;
+          }
+        }
+        final bounds = note.bounds;
+        final x = bounds == null
+            ? note.center.dx
+            : (left ? bounds.left : bounds.right);
+        // Under the staff, clear of the notes it would cover.
+        final y = math.max(
+          box?.rect.bottom ?? note.center.dy,
+          (bounds?.bottom ?? note.center.dy),
+        );
+        return Offset(x, y);
+      }
+      return null;
+    }
+
+    final firstAt = at(picked.first, left: true);
+    final lastAt = at(picked.last, left: false);
+    if (firstAt == null || lastAt == null) return null;
+    return (
+      first: picked.first,
+      firstAt: firstAt,
+      last: picked.last,
+      lastAt: lastAt,
+    );
+  }
+
+  /// The radius of a range handle on the page, the same on screen at any
+  /// zoom.
+  double get _handleRadius => 9 / _viewScale;
+
+  void _beginRange(ScoreEventAddress from, ScoreEventAddress at) {
+    _holdTimer?.cancel();
+    setState(() {
+      _rangeFrom = from;
+      _rangeAt = at;
+    });
+    widget.onRangeDragged?.call(from, at);
+  }
+
+  void _endFingerEdit() {
+    _holdTimer?.cancel();
+    _holdTimer = null;
+    if (!_fingerEdits && _ghostCenter == null && !_placePanned) return;
+    setState(() {
+      _noteDrag = null;
+      _dragSteps = 0;
+      _dragAlter = 0;
+      _rangeFrom = null;
+      _rangeAt = null;
+      _aiming = false;
+      _placePanned = false;
+      _ghostCenter = null;
+      _ghostRest = false;
+      _ghostLabel = null;
+    });
+  }
+
+  /// What a finger going down in `select` mode starts: carrying the picked
+  /// notes, moving an end of the run, or, held still, picking a run.
+  void _beginSelectGesture(PointerDownEvent event) {
+    final layout = _layout;
+    if (layout == null || _pagesStale) return;
+    final scene = _scenePosition(event);
+    if (widget.onRangeDragged != null) {
+      final handles = _handles(layout);
+      if (handles != null) {
+        final reach = _handleRadius * 2.2;
+        if ((handles.lastAt.translate(0, _handleRadius) - scene).distance <=
+            reach) {
+          _beginRange(handles.first, handles.last);
+          return;
+        }
+        if ((handles.firstAt.translate(0, _handleRadius) - scene).distance <=
+            reach) {
+          _beginRange(handles.last, handles.first);
+          return;
+        }
+      }
+    }
+    final note = layout.noteAt(scene);
+    if (note != null && widget.onSelectionDragged != null && _isPicked(note)) {
+      NativeMeasureBox? box;
+      for (final measure in layout.measures) {
+        if (measure.measureIndex == note.measureIndex) {
+          box = measure;
+          break;
+        }
+      }
+      setState(() {
+        _noteDrag = (
+          down: event.localPosition,
+          note: note,
+          gap: box?.lineGapFor(note.staff) ?? nativeStaffLineGap,
+        );
+        _dragSteps = 0;
+        _dragAlter = 0;
+      });
+      return;
+    }
+    if (widget.onRangeDragged == null) return;
+    _holdTimer?.cancel();
+    _holdTimer = Timer(_holdTime, () {
+      _holdTimer = null;
+      if (!mounted || _activePointers.length != 1 || _multiPointerGesture) {
+        return;
+      }
+      final now = _layout;
+      if (now == null || _pagesStale) return;
+      final from = _eventNear(now, scene);
+      if (from == null) return;
+      unawaited(HapticFeedback.selectionClick());
+      _beginRange(from, from);
+    });
+  }
+
+  void _moveSelectGesture(PointerMoveEvent event) {
+    final start = _pointerDownAt;
+    if (_holdTimer != null &&
+        start != null &&
+        (event.position - start).distance > kTouchSlop) {
+      // Moved before it was held: the page is what moves.
+      _holdTimer?.cancel();
+      _holdTimer = null;
+    }
+    final layout = _layout;
+    if (layout == null) return;
+    if (_noteDrag case final drag?) {
+      final (:steps, :alter) = fingerCarry(
+        event.localPosition - drag.down,
+        lineGap: drag.gap,
+        scale: _viewScale,
+      );
+      if (steps == _dragSteps && alter == _dragAlter) return;
+      setState(() {
+        _dragSteps = steps;
+        _dragAlter = alter;
+        if (steps == 0 && alter == 0) {
+          _ghostCenter = null;
+        } else {
+          _ghostCenter = drag.note.center.translate(0, -steps * drag.gap / 2);
+          _ghostRest = false;
+          _ghostLineGap = drag.gap;
+          _ghostDurationType = 'quarter';
+          _ghostAlter = alter;
+          _ghostLabel = null;
+        }
+      });
+      return;
+    }
+    final from = _rangeFrom;
+    if (from != null) {
+      final at = _eventNear(layout, _scenePosition(event));
+      if (at == null || at == _rangeAt) return;
+      setState(() => _rangeAt = at);
+      widget.onRangeDragged?.call(from, at);
+    }
+  }
+
+  void _updateInputAt(Offset content, {Offset? view}) {
     final layout = _layout;
     if (layout == null) return;
     if (_measureDragFrom != null) {
@@ -1612,7 +2063,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     }
     if (widget.inputMode == 'select') return;
     if (widget.inputMode == 'place') {
-      final place = layout.placeAt(content, score: widget.score);
+      final place = _placeUnderFinger(layout, content, view);
       if (place == null) {
         _clearGhost();
         return;
@@ -1622,7 +2073,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         _ghostRest = false;
         _ghostLineGap = place.lineGap;
         _ghostDurationType = 'quarter';
-        _ghostAlter = 0;
+        _ghostAlter = place.alter;
+        _ghostLabel = _pitchName(place.step, place.octave, place.alter);
       });
       return;
     }
@@ -1648,7 +2100,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     });
   }
 
-  void _commitInputAt(Offset content) {
+  void _commitInputAt(Offset content, {Offset? view}) {
     final layout = _layout;
     if (layout == null) return;
     // What is on screen is the score before the last edit: its notes are
@@ -1665,6 +2117,12 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       return;
     }
     if (widget.inputMode == 'select' || widget.inputMode == 'off') {
+      if (widget.onTextTapped != null && widget.inputMode == 'select') {
+        if (_textAt(layout, content) case final text?) {
+          widget.onTextTapped!(text.address, text.above);
+          return;
+        }
+      }
       final note = layout.noteAt(
         content,
         includeRests: widget.onEventTapped != null,
@@ -1678,6 +2136,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
               eventIndex: note.eventIndex,
             ),
           );
+        } else {
+          widget.onBlankTapped?.call();
         }
         return;
       }
@@ -1709,9 +2169,17 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       return;
     }
     if (widget.inputMode == 'place') {
-      final place = layout.placeAt(content, score: widget.score);
+      final place = _placeUnderFinger(layout, content, view);
       _clearGhost();
-      if (place != null) widget.onNotePlaced?.call(place);
+      if (place == null) return;
+      // A tap writes where it falls only on the staff or near it: one on
+      // the words under the staff, or between two lines of the score, is
+      // not a note four ledger lines down. A finger held still may carry
+      // the note as far as ledger lines reach.
+      if (!_aiming && view != null && !_nearStaff(layout, place, content)) {
+        return;
+      }
+      widget.onNotePlaced?.call(place);
       return;
     }
     final hit = layout.hitStaff(
@@ -1797,10 +2265,13 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
                         // Trackpad scroll is a pan in MuseScore/forScore-style
                         // score navigation. Pinch remains the zoom gesture.
                         trackpadScrollCausesScale: false,
+                        // A finger carrying a note or picking a run of
+                        // notes does not move the page as well.
                         panEnabled:
-                            widget.oneFingerPan ||
-                            widget.inputMode == 'off' ||
-                            _multiPointerGesture,
+                            !_fingerEdits &&
+                            (widget.oneFingerPan ||
+                                widget.inputMode == 'off' ||
+                                _multiPointerGesture),
                         scaleEnabled: true,
                         onInteractionEnd: (_) => setState(() {}),
                         child: SizedBox(
@@ -1858,6 +2329,10 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
                                         ghostDurationType: _ghostDurationType,
                                         ghostAlter: _ghostAlter,
                                         ghostDots: widget.inputDots,
+                                        ghostLabel: _ghostLabel,
+                                        viewScale: _viewScale,
+                                        handles: _handles(layout),
+                                        handleRadius: _handleRadius,
                                         caret: _caretRect(layout),
                                         measureDragTo: _measureDragTo,
                                       ),
@@ -2039,6 +2514,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     _activePointers.add(event.pointer);
     _pointerDownAt = event.position;
     if (_activePointers.length > 1) {
+      // Two fingers move and zoom the page, whatever one had begun.
+      _placeDown = null;
+      _endFingerEdit();
       if (!_multiPointerGesture) {
         _multiPointerGesture = true;
         _clearGhost();
@@ -2046,15 +2524,57 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       }
       return;
     }
+    if (widget.inputMode == 'select') _beginSelectGesture(event);
     if (_handlesPointerInput) {
-      _updateInputAt(_scenePosition(event));
+      final scene = _scenePosition(event);
+      _placePanned = false;
+      if (widget.inputMode == 'place' &&
+          event.kind != PointerDeviceKind.mouse) {
+        _placeDown = (view: event.localPosition, scene: scene);
+        // Held still, the finger takes the note to come and carries it.
+        _holdTimer?.cancel();
+        _holdTimer = Timer(_holdTime, () {
+          _holdTimer = null;
+          if (!mounted ||
+              _placeDown == null ||
+              _placePanned ||
+              _activePointers.length != 1 ||
+              _multiPointerGesture) {
+            return;
+          }
+          unawaited(HapticFeedback.selectionClick());
+          setState(() => _aiming = true);
+        });
+      } else {
+        _placeDown = widget.inputMode == 'place'
+            ? (view: event.localPosition, scene: scene)
+            : null;
+        // A mouse has its wheel for the page: its button carries the note
+        // from the start.
+        if (_placeDown != null) _aiming = true;
+      }
+      _updateInputAt(scene, view: event.localPosition);
     }
   }
 
   void _handlePointerMove(PointerMoveEvent event) {
     if (_multiPointerGesture || _activePointers.length != 1) return;
+    if (widget.inputMode == 'select') _moveSelectGesture(event);
     if (_handlesPointerInput) {
-      _updateInputAt(_scenePosition(event));
+      if (widget.inputMode == 'place' && !_aiming) {
+        final start = _pointerDownAt;
+        if (!_placePanned &&
+            start != null &&
+            (event.position - start).distance > kTouchSlop) {
+          // Moved before it was held: the page is what moves.
+          _holdTimer?.cancel();
+          _holdTimer = null;
+          _placePanned = true;
+          _clearGhost();
+        }
+        return;
+      }
+      _updateInputAt(_scenePosition(event), view: event.localPosition);
     }
   }
 
@@ -2064,18 +2584,69 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         (widget.onEventTapped != null || widget.inputMode == 'select') &&
         start != null &&
         (event.position - start).distance > kTouchSlop;
+    final single = !_multiPointerGesture && _activePointers.length == 1;
+    // A finger that carried the picked notes or picked a run of them has
+    // done its work: it is not a tap as well.
+    final steps = _dragSteps;
+    final alter = _dragAlter;
+    final carried = _noteDrag != null && (steps != 0 || alter != 0);
+    final ranged = _rangeFrom != null;
+    // Held and lifted without going anywhere: not a run, a question.
+    final pressed = _rangeFrom != null && _rangeAt == _rangeFrom
+        ? _rangeFrom
+        : null;
+    final placePanned = _placePanned;
     final shouldCommit =
-        !_multiPointerGesture && _activePointers.length == 1 && !panned;
+        single && !panned && !carried && !ranged && !placePanned;
+    // The note is placed while the finger still counts as carrying it:
+    // where it went down and what it asked for are read then.
     if (shouldCommit && _handlesPointerInput) {
-      _commitInputAt(_scenePosition(event));
+      final scene = _scenePosition(event);
+      if (!_doubleTapped(event, scene)) {
+        _commitInputAt(scene, view: event.localPosition);
+      }
     }
+    _endFingerEdit();
+    if (single && carried && !_pagesStale) {
+      widget.onSelectionDragged?.call(steps, alter);
+    }
+    if (single && pressed != null) widget.onLongPressed?.call(pressed);
+    _placeDown = null;
     _activePointers.remove(event.pointer);
     if (_activePointers.isEmpty && _multiPointerGesture) {
       setState(() => _multiPointerGesture = false);
     }
   }
 
+  /// Whether this tap is the second of two on a bar, and was told as such.
+  bool _doubleTapped(PointerUpEvent event, Offset scene) {
+    final before = _lastTapAt;
+    final where = _lastTapPosition;
+    _lastTapAt = event.timeStamp;
+    _lastTapPosition = event.position;
+    if (widget.inputMode != 'select' ||
+        widget.onMeasureDoubleTapped == null ||
+        before == null ||
+        where == null ||
+        _pagesStale) {
+      return false;
+    }
+    final since = event.timeStamp - before;
+    if (since <= Duration.zero ||
+        since > _doubleTapTime ||
+        (event.position - where).distance > 36) {
+      return false;
+    }
+    final measure = _layout?.measureAt(scene);
+    if (measure == null) return false;
+    _lastTapAt = null;
+    widget.onMeasureDoubleTapped!(measure.measureIndex);
+    return true;
+  }
+
   void _handlePointerCancel(PointerCancelEvent event) {
+    _placeDown = null;
+    _endFingerEdit();
     _activePointers.remove(event.pointer);
     if (_activePointers.isEmpty && _multiPointerGesture) {
       setState(() => _multiPointerGesture = false);

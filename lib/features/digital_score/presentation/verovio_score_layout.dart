@@ -533,3 +533,29 @@ Rect _scaledRect(Rect rect, double scale, double pageTop) {
 Offset _scaledPoint(Offset point, double scale, double pageTop) {
   return Offset(point.dx * scale, pageTop + point.dy * scale);
 }
+
+/// What a finger that has moved by [moved] (in screen pixels) since it went
+/// down on a note asks for: the note [steps] lines and spaces higher (up is
+/// positive), or with an accidental ([alter]: +1 to the right, -1 to the
+/// left). One or the other, by the way the finger went mostly.
+///
+/// On a score that fits a phone a line or space is a pixel or two: the
+/// finger moves the note by a distance it can keep to, never less than
+/// seven pixels a step, and asks for an accidental only well to the side.
+({int steps, int alter}) fingerCarry(
+  Offset moved, {
+  required double lineGap,
+  required double scale,
+}) {
+  if (moved.dx.abs() > moved.dy.abs()) {
+    final far = math.max(lineGap * 2 * scale, 28.0);
+    return (steps: 0, alter: moved.dx > far ? 1 : (moved.dx < -far ? -1 : 0));
+  }
+  final step = math.max(lineGap / 2 * scale, 7.0);
+  return (steps: (-moved.dy / step).round(), alter: 0);
+}
+
+/// How far above or below a staff, in staff spaces, a quick tap still
+/// writes a note: up to the third ledger line or so. Chord symbols and
+/// lyrics stand further off.
+const tapReachSpaces = 3.5;

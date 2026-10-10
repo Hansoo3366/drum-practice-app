@@ -680,7 +680,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get barMenuTooltip => 'Edit bar';
 
   @override
-  String get playBar => 'Play this bar';
+  String get playBar => 'Play from here';
 
   @override
   String barTooShort(String beats) {
@@ -2453,7 +2453,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get penTool => 'Pen';
 
   @override
-  String get penHint => 'Tap a line or space to put the note there';
+  String get penHint => 'Tap to place a note · hold to carry it to its line';
 
   @override
   String get rangeTool => 'Range';
@@ -2510,7 +2510,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get barRangeCut => 'Cut';
 
   @override
-  String get barRangeDelete => 'Delete';
+  String get barRangeDelete => 'Clear';
 
   @override
   String get barRangeTranspose => 'Transpose';
@@ -2522,7 +2522,7 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String pasteBars(int n) {
-    return 'Paste $n copied bars';
+    return 'Insert $n copied bars';
   }
 
   @override
@@ -2534,7 +2534,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get barRangeInvalid => 'Check the bar numbers';
 
   @override
-  String get pasteBarsNone => 'Paste (no bars copied)';
+  String get pasteBarsNone => 'Insert (no bars copied)';
 
   @override
   String get breaksReflow =>
@@ -2563,4 +2563,241 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get eraserHint => 'Tap the note to erase';
+
+  @override
+  String get barEditPaste => 'Paste';
+
+  @override
+  String get barEditDuplicate => 'Duplicate';
+
+  @override
+  String barPicked(int n) {
+    return 'Bar $n';
+  }
+
+  @override
+  String barsPicked(int from, int to) {
+    return 'Bars $from–$to';
+  }
+
+  @override
+  String get keysAppendHint => 'The next key adds a new note after this one';
+
+  @override
+  String get lyricJoinHint =>
+      'End with - to join the next syllable, with _ to hold it. Words with spaces go onto the notes that follow';
+
+  @override
+  String get respell => 'Respell (enharmonic)';
+
+  @override
+  String get fingeringMenu => 'Fingering';
+
+  @override
+  String get graceSlash => 'Grace slash';
+
+  @override
+  String get beamMenu => 'Beam';
+
+  @override
+  String get beamJoin => 'Join with a beam';
+
+  @override
+  String get beamBreak => 'Remove the beam';
+
+  @override
+  String get notesMenu => 'Copy · paste notes';
+
+  @override
+  String get notesCopy => 'Copy the picked notes';
+
+  @override
+  String notesPaste(int n) {
+    return 'Paste from here ($n)';
+  }
+
+  @override
+  String get notesPasteNone => 'Paste (nothing copied)';
+
+  @override
+  String get notesDuplicate => 'Duplicate right after';
+
+  @override
+  String notesCopied(int n) {
+    return 'Copied $n';
+  }
+
+  @override
+  String get pickupBar => 'Pickup bar';
+
+  @override
+  String get barsPerLine => 'Bars per line';
+
+  @override
+  String get barsPerLineAuto => 'Automatic (fit the page)';
+
+  @override
+  String barsPerLineOf(int n) {
+    return '$n bars';
+  }
+
+  @override
+  String get chordKeys => 'Build a chord';
+
+  @override
+  String get chordRepeat => 'Repeat the last chord';
+
+  @override
+  String get keyWidthTool => 'Key width';
+
+  @override
+  String get draftTitle => 'There are unsaved corrections';
+
+  @override
+  String get draftBody =>
+      'What you were correcting last time was kept. Go on with it?';
+
+  @override
+  String get draftResume => 'Go on';
+
+  @override
+  String get soundNotes => 'Sound a note when it is written';
+
+  @override
+  String get toolsLooks => 'Looks';
+
+  @override
+  String get stemMenu => 'Stem';
+
+  @override
+  String get stemUp => 'Up';
+
+  @override
+  String get stemDown => 'Down';
+
+  @override
+  String get stemHide => 'Hide';
+
+  @override
+  String get automatic => 'Automatic';
+
+  @override
+  String get noteheadMenu => 'Notehead';
+
+  @override
+  String get noteheadNormal => 'Normal';
+
+  @override
+  String get noteheadSlash => 'Slash';
+
+  @override
+  String get noteheadGhost => 'Parentheses (ghost note)';
+
+  @override
+  String get otherStaff => 'To the other staff';
+
+  @override
+  String get markSideMenu => 'Side of marks';
+
+  @override
+  String get sideAbove => 'Above';
+
+  @override
+  String get sideBelow => 'Below';
+
+  @override
+  String get clearMarksTool => 'Remove all marks';
+
+  @override
+  String get clearAccidentalTool => 'Remove accidentals';
+
+  @override
+  String get doubleMenu => 'Double at an interval';
+
+  @override
+  String get doubleThirdUp => 'A third above';
+
+  @override
+  String get doubleSixthUp => 'A sixth above';
+
+  @override
+  String get doubleOctaveUp => 'An octave above';
+
+  @override
+  String get doubleThirdDown => 'A third below';
+
+  @override
+  String get doubleOctaveDown => 'An octave below';
+
+  @override
+  String get jazzMenu => 'Jazz articulations';
+
+  @override
+  String get selectMenu => 'Selection';
+
+  @override
+  String get selectAll => 'Select all';
+
+  @override
+  String get selectBar => 'Select this bar';
+
+  @override
+  String get onlyAll => 'All picked notes';
+
+  @override
+  String get onlyTop => 'Highest notes only';
+
+  @override
+  String get onlyBottom => 'Lowest notes only';
+
+  @override
+  String get clearLyrics => 'Remove the lyrics of the picked notes';
+
+  @override
+  String get clearChords => 'Remove the chord symbols of the picked notes';
+
+  @override
+  String get optRailRight => 'Tools on the right';
+
+  @override
+  String get optSmallTools => 'Small buttons';
+
+  @override
+  String get optDarkScore => 'Dark score';
+
+  @override
+  String get noteSizeMenu => 'Note size';
+
+  @override
+  String get noteSizeSmall => 'Small';
+
+  @override
+  String get noteSizeLarge => 'Large';
+
+  @override
+  String get noteSizeLarger => 'Larger';
+
+  @override
+  String get voiceSwap => 'Swap the two voices';
+
+  @override
+  String get barEditPasteInsert => 'Insert';
+
+  @override
+  String get tupletGroup => 'Make the picked notes a tuplet';
+
+  @override
+  String get tupletOneBar => 'Pick notes of one bar';
+
+  @override
+  String get keyRest => 'Write a rest and go on';
+
+  @override
+  String get favourFlats => 'Spell with flats';
+
+  @override
+  String get favourSharps => 'Spell with sharps';
+
+  @override
+  String get tempoChange => 'Tempo change';
 }

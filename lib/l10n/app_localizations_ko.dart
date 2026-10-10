@@ -676,7 +676,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get barMenuTooltip => '마디 편집';
 
   @override
-  String get playBar => '이 마디 듣기';
+  String get playBar => '여기부터 듣기';
 
   @override
   String barTooShort(String beats) {
@@ -2441,7 +2441,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get penTool => '펜';
 
   @override
-  String get penHint => '줄이나 칸을 눌러 그 자리에 음을 놓기';
+  String get penHint => '눌러서 음 놓기 · 꾹 누르면 높이를 맞춤';
 
   @override
   String get rangeTool => '범위';
@@ -2498,7 +2498,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get barRangeCut => '잘라내기';
 
   @override
-  String get barRangeDelete => '지우기';
+  String get barRangeDelete => '비우기';
 
   @override
   String get barRangeTranspose => '조옮김';
@@ -2510,7 +2510,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String pasteBars(int n) {
-    return '복사한 $n마디 붙여넣기';
+    return '복사한 $n마디 끼워 넣기';
   }
 
   @override
@@ -2522,7 +2522,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get barRangeInvalid => '마디 번호를 확인하세요';
 
   @override
-  String get pasteBarsNone => '붙여넣기 (복사한 마디 없음)';
+  String get pasteBarsNone => '끼워 넣기 (복사한 마디 없음)';
 
   @override
   String get breaksReflow => '이 악보는 화면 너비에 맞춰 줄이 바뀝니다. 줄이 정해진 악보에서만 쓸 수 있어요.';
@@ -2550,4 +2550,240 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get eraserHint => '지울 음을 누르세요';
+
+  @override
+  String get barEditPaste => '붙여넣기';
+
+  @override
+  String get barEditDuplicate => '복제';
+
+  @override
+  String barPicked(int n) {
+    return '$n마디';
+  }
+
+  @override
+  String barsPicked(int from, int to) {
+    return '$from~$to마디';
+  }
+
+  @override
+  String get keysAppendHint => '다음 건반은 이 음 뒤에 새 음으로 들어갑니다';
+
+  @override
+  String get lyricJoinHint =>
+      '끝에 - 를 붙이면 다음 글자와 잇고, _ 를 붙이면 길게 끕니다. 띄어 쓰면 다음 음들에 차례로 들어갑니다';
+
+  @override
+  String get respell => '이명동음으로 바꾸기';
+
+  @override
+  String get fingeringMenu => '손가락 번호';
+
+  @override
+  String get graceSlash => '꾸밈음 사선';
+
+  @override
+  String get beamMenu => '빔';
+
+  @override
+  String get beamJoin => '빔으로 묶기';
+
+  @override
+  String get beamBreak => '빔 풀기';
+
+  @override
+  String get notesMenu => '음 복사 · 붙여넣기';
+
+  @override
+  String get notesCopy => '고른 음 복사';
+
+  @override
+  String notesPaste(int n) {
+    return '여기부터 붙여넣기 ($n개)';
+  }
+
+  @override
+  String get notesPasteNone => '붙여넣기 (복사한 음 없음)';
+
+  @override
+  String get notesDuplicate => '바로 뒤에 복제';
+
+  @override
+  String notesCopied(int n) {
+    return '$n개를 복사했습니다';
+  }
+
+  @override
+  String get pickupBar => '못갖춘마디';
+
+  @override
+  String get barsPerLine => '한 줄 마디 수';
+
+  @override
+  String get barsPerLineAuto => '자동 (쪽에 맞춤)';
+
+  @override
+  String barsPerLineOf(int n) {
+    return '$n마디';
+  }
+
+  @override
+  String get chordKeys => '화음 쌓기';
+
+  @override
+  String get chordRepeat => '직전 화음 다시 넣기';
+
+  @override
+  String get keyWidthTool => '건반 폭';
+
+  @override
+  String get draftTitle => '저장하지 않은 수정이 있습니다';
+
+  @override
+  String get draftBody => '지난번에 고치다 만 내용이 남아 있습니다. 이어서 할까요?';
+
+  @override
+  String get draftResume => '이어서 하기';
+
+  @override
+  String get soundNotes => '음을 놓을 때 소리 듣기';
+
+  @override
+  String get toolsLooks => '모양';
+
+  @override
+  String get stemMenu => '기둥';
+
+  @override
+  String get stemUp => '위로';
+
+  @override
+  String get stemDown => '아래로';
+
+  @override
+  String get stemHide => '숨기기';
+
+  @override
+  String get automatic => '자동';
+
+  @override
+  String get noteheadMenu => '음표 머리';
+
+  @override
+  String get noteheadNormal => '보통';
+
+  @override
+  String get noteheadSlash => '슬래시';
+
+  @override
+  String get noteheadGhost => '괄호 (ghost note)';
+
+  @override
+  String get otherStaff => '다른 보표로';
+
+  @override
+  String get markSideMenu => '기호 위치';
+
+  @override
+  String get sideAbove => '위';
+
+  @override
+  String get sideBelow => '아래';
+
+  @override
+  String get clearMarksTool => '기호 모두 지우기';
+
+  @override
+  String get clearAccidentalTool => '임시표 지우기';
+
+  @override
+  String get doubleMenu => '음정 겹치기';
+
+  @override
+  String get doubleThirdUp => '3도 위';
+
+  @override
+  String get doubleSixthUp => '6도 위';
+
+  @override
+  String get doubleOctaveUp => '옥타브 위';
+
+  @override
+  String get doubleThirdDown => '3도 아래';
+
+  @override
+  String get doubleOctaveDown => '옥타브 아래';
+
+  @override
+  String get jazzMenu => '재즈 주법';
+
+  @override
+  String get selectMenu => '선택 범위';
+
+  @override
+  String get selectAll => '전체 선택';
+
+  @override
+  String get selectBar => '이 마디 선택';
+
+  @override
+  String get onlyAll => '고른 음 모두';
+
+  @override
+  String get onlyTop => '가장 높은 음만';
+
+  @override
+  String get onlyBottom => '가장 낮은 음만';
+
+  @override
+  String get clearLyrics => '고른 음의 가사 지우기';
+
+  @override
+  String get clearChords => '고른 음의 코드 지우기';
+
+  @override
+  String get optRailRight => '도구를 오른쪽에';
+
+  @override
+  String get optSmallTools => '작은 단추';
+
+  @override
+  String get optDarkScore => '어두운 악보';
+
+  @override
+  String get noteSizeMenu => '음표 크기';
+
+  @override
+  String get noteSizeSmall => '작게';
+
+  @override
+  String get noteSizeLarge => '크게';
+
+  @override
+  String get noteSizeLarger => '아주 크게';
+
+  @override
+  String get voiceSwap => '두 성부 맞바꾸기';
+
+  @override
+  String get barEditPasteInsert => '끼워 넣기';
+
+  @override
+  String get tupletGroup => '고른 음을 잇단음표로';
+
+  @override
+  String get tupletOneBar => '한 마디 안의 음을 고르세요';
+
+  @override
+  String get keyRest => '쉼표 넣고 다음으로';
+
+  @override
+  String get favourFlats => '플랫으로 적기';
+
+  @override
+  String get favourSharps => '샵으로 적기';
+
+  @override
+  String get tempoChange => '빠르기 변화';
 }

@@ -110,4 +110,58 @@ void main() {
     final edited = _editor.setLyric(_xml, _note(0), '<b>&"').xml;
     expect(_editor.describe(edited, _note(0)).lyric, '<b>&"');
   });
+
+  group('typed as in a notation program', () {
+    test('the hyphen and the held line show at the end of the syllable', () {
+      final first = _editor.describe(_xml, _note(0));
+      expect(first.lyricTyped(1), '몬-');
+      expect(first.lyricTyped(2), '둘');
+      expect(_editor.describe(_xml, _note(1)).lyricTyped(1), '');
+    });
+
+    test('a hyphen joins the syllable to the next, which ends the word', () {
+      // "님" on the second note, joined to "화" on the chord after it. The
+      // syllable before it ("몬-") already runs into it.
+      final edited = _editor.setLyric(_xml, _note(1), '님-', typed: true).xml;
+
+      expect(_editor.describe(edited, _note(1)).lyric, '님');
+      expect(_editor.describe(edited, _note(1)).lyricTyped(1), '님-');
+      expect(edited, contains('<syllabic>middle</syllabic><text>님</text>'));
+      expect(edited, contains('<syllabic>end</syllabic><text>화</text>'));
+      // The other verse is not part of the word.
+      expect(edited, contains('<syllabic>single</syllabic><text>둘</text>'));
+    });
+
+    test(
+      'without its hyphen a syllable stands alone, and so does the next',
+      () {
+        // "몬-" runs into it and it runs on: the middle of a word.
+        final joined = _editor.setLyric(_xml, _note(2), '화-', typed: true).xml;
+        expect(joined, contains('<syllabic>middle</syllabic><text>화</text>'));
+
+        // The first syllable loses its hyphen: "주" and "화-" are two words.
+        final edited = _editor.setLyric(joined, _note(0), '주', typed: true).xml;
+
+        expect(edited, contains('<syllabic>single</syllabic><text>주</text>'));
+        expect(edited, contains('<syllabic>begin</syllabic><text>화</text>'));
+      },
+    );
+
+    test('an underscore holds the syllable over the notes after it', () {
+      final edited = _editor.setLyric(_xml, _note(2), '화_', typed: true).xml;
+
+      expect(_editor.describe(edited, _note(2)).lyric, '화');
+      expect(_editor.describe(edited, _note(2)).lyricTyped(1), '화_');
+      expect(edited, contains('<text>화</text><extend type="start"/></lyric>'));
+      // Typed again without it, the line goes.
+      final plain = _editor.setLyric(edited, _note(2), '화', typed: true).xml;
+      expect(plain, isNot(contains('<extend')));
+      expect(const MusicXmlCodec().decodeXml(edited).measureCount, 1);
+    });
+
+    test('a hyphen or underscore alone is a word like any other', () {
+      final edited = _editor.setLyric(_xml, _note(1), '-', typed: true).xml;
+      expect(_editor.describe(edited, _note(1)).lyric, '-');
+    });
+  });
 }

@@ -123,4 +123,188 @@ void main() {
     ];
     expect(tempos, contains(60));
   });
+
+  group('a hairpin is heard', () {
+    test('under a crescendo every note is louder than the one before', () {
+      final xml = _editor
+          .addSpan(_score, _ref(0), _ref(3), SpanKind.crescendo)
+          .xml;
+
+      final plain = _played(_score);
+      final notes = _played(xml);
+
+      expect(notes[0].velocity, plain[0].velocity);
+      for (var i = 1; i < 4; i++) {
+        expect(notes[i].velocity, greaterThan(notes[i - 1].velocity));
+      }
+      // About a mark louder by its end, not a jump to the loudest: the
+      // last note, three quarters along, is most of the way there.
+      expect(
+        notes[3].velocity / plain[3].velocity,
+        inInclusiveRange(1.15, 1.3),
+      );
+      // Only how loud: when and how long stay as written.
+      expect(
+        [for (final note in notes) (note.tick, note.key, note.length)],
+        [for (final note in plain) (note.tick, note.key, note.length)],
+      );
+    });
+
+    test('a diminuendo goes down to the mark that follows it', () {
+      final loud = _editor.setDynamic(_score, _ref(0), 'ff').xml;
+      final soft = _editor.setDynamic(loud, _ref(3), 'pp').xml;
+      final marked = _played(soft);
+      final xml = _editor
+          .addSpan(soft, _ref(0), _ref(3), SpanKind.diminuendo)
+          .xml;
+
+      final notes = _played(xml);
+
+      // From ff down to pp, step by step; the marks stay what they were.
+      expect(notes[0].velocity, marked[0].velocity);
+      expect(notes[3].velocity, marked[3].velocity);
+      expect(notes[1].velocity, lessThan(notes[0].velocity));
+      expect(notes[2].velocity, lessThan(notes[1].velocity));
+      expect(notes[2].velocity, greaterThan(notes[3].velocity));
+    });
+
+    test('what a hairpin reached holds until the next dynamic mark', () {
+      // Two bars: a crescendo over the first two notes, mf on the last
+      // note of the second bar.
+      final two = _score.replaceFirst(
+        '</measure>',
+        '</measure><measure number="2">'
+            '${_note('C', 5)}${_note('D', 5)}${_note('E', 5)}${_note('F', 5)}'
+            '</measure>',
+      );
+      XmlNoteRef second(int note) =>
+          XmlNoteRef(partIndex: 0, measureIndex: 1, noteIndex: note);
+      final swelled = _editor
+          .addSpan(two, _ref(0), _ref(1), SpanKind.crescendo)
+          .xml;
+      final xml = _editor.setDynamic(swelled, second(3), 'mf').xml;
+
+      final plain = _played(two);
+      final notes = _played(xml);
+
+      expect(notes, hasLength(8));
+      // Louder than written from the end of the hairpin on…
+      for (var i = 2; i < 7; i++) {
+        expect(notes[i].velocity, greaterThan(plain[i].velocity), reason: '$i');
+        expect(notes[i].velocity, notes[2].velocity, reason: '$i');
+      }
+      // …until the mark, which is played as it says.
+      final marked = _played(_editor.setDynamic(two, second(3), 'mf').xml);
+      expect(notes[7].velocity, marked[7].velocity);
+    });
+  });
+
+  group('what the score says of its tempo is heard', () {
+    // Four bars of four quarters.
+    final four = _score.replaceFirst(
+      '</measure>',
+      '</measure>${[for (var i = 2; i <= 4; i++) '<measure number="$i">'
+            '${_note('C', 5)}${_note('D', 5)}${_note('E', 5)}${_note('F', 5)}'
+            '</measure>'].join()}',
+    );
+    nm.MidiSequence midi(String xml) => playbackMidi(
+      xml,
+      options: const nm.MidiGenerationOptions(
+        defaultBpm: 120,
+        includeMetronome: false,
+      ),
+    );
+    double msOfBar(String xml, int bar) {
+      final sequence = midi(xml);
+      final timing = MidiTiming(sequence, fallbackBpm: 120);
+      final tpq = sequence.ticksPerQuarter;
+      return timing.msAt((bar + 1) * 4 * tpq) - timing.msAt(bar * 4 * tpq);
+    }
+
+    test('a ritardando makes its bars longer, beat by beat', () {
+      final xml = _editor.addWords(four, 0, 1, 'rit.').xml;
+
+      // Two seconds a bar as written.
+      expect(msOfBar(four, 1), closeTo(2000, 1));
+      expect(msOfBar(xml, 0), closeTo(2000, 1));
+      // It holds for two bars: each slower than the one before.
+      expect(msOfBar(xml, 1), greaterThan(2100));
+      expect(msOfBar(xml, 2), greaterThan(msOfBar(xml, 1)));
+      // Then the score goes on as it was written.
+      expect(msOfBar(xml, 3), closeTo(2000, 1));
+    });
+
+    test('"a tempo" ends it, and an accelerando goes the other way', () {
+      final slowed = _editor.addWords(four, 0, 1, 'ritardando').xml;
+      final back = _editor.addWords(slowed, 0, 2, 'a tempo').xml;
+      expect(msOfBar(back, 1), greaterThan(2100));
+      expect(msOfBar(back, 2), closeTo(2000, 1));
+
+      final faster = _editor.addWords(four, 0, 1, 'accel.').xml;
+      expect(msOfBar(faster, 1), lessThan(1950));
+      expect(msOfBar(faster, 2), lessThan(msOfBar(faster, 1)));
+      // Words that say nothing of the tempo change nothing.
+      expect(
+        msOfBar(_editor.addWords(four, 0, 1, 'with feeling').xml, 1),
+        closeTo(2000, 1),
+      );
+    });
+
+    test('a note under a fermata is held twice as long', () {
+      final xml = _editor
+          .toggleArticulation(
+            four,
+            XmlNoteRef(partIndex: 0, measureIndex: 1, noteIndex: 3),
+            'fermata',
+          )
+          .xml;
+
+      // The last beat of bar 2 lasts two: the bar is a beat longer.
+      expect(msOfBar(xml, 1), closeTo(2500, 2));
+      expect(msOfBar(xml, 0), closeTo(2000, 1));
+      expect(msOfBar(xml, 2), closeTo(2000, 1));
+    });
+
+    test('under "Swing" the eighth between two beats comes late', () {
+      String eighth(String step) =>
+          '<note><pitch><step>$step</step><octave>5</octave></pitch>'
+          '<duration>1</duration><voice>1</voice><type>eighth</type></note>';
+      final eighths =
+          '<?xml version="1.0" encoding="UTF-8"?>'
+          '<score-partwise version="4.0"><part-list>'
+          '<score-part id="P1"><part-name>Voice</part-name></score-part>'
+          '</part-list><part id="P1">'
+          '${[
+            for (var bar = 1; bar <= 2; bar++) '<measure number="$bar">'
+                  '${bar == 1 ? '<attributes><divisions>2</divisions><key><fifths>0</fifths></key>'
+                            '<time><beats>4</beats><beat-type>4</beat-type></time>'
+                            '<clef><sign>G</sign><line>2</line></clef></attributes>' : ''}'
+                  '${[for (final step in 'CDEFGABC'.split('')) eighth(step)].join()}'
+                  '</measure>',
+          ].join()}'
+          '</part></score-partwise>';
+      final swung = _editor.addWords(eighths, 0, 0, 'Swing').xml;
+      final straightAgain = _editor.addWords(swung, 0, 1, 'Straight').xml;
+
+      final plain = _played(eighths);
+      final notes = _played(straightAgain);
+      final tpq = midi(eighths).ticksPerQuarter;
+
+      expect(notes, hasLength(16));
+      for (var i = 0; i < 8; i++) {
+        // On the beat as written; between the beats two thirds along.
+        expect(
+          notes[i].tick,
+          i.isEven ? plain[i].tick : (i ~/ 2) * tpq + tpq * 2 ~/ 3,
+          reason: 'note $i',
+        );
+      }
+      // The note on the beat lasts up to the late one.
+      expect(notes[0].length, greaterThan(plain[0].length));
+      // From "Straight" on, as written.
+      for (var i = 8; i < 16; i++) {
+        expect(notes[i].tick, plain[i].tick, reason: 'note $i');
+      }
+    });
+  });
 }

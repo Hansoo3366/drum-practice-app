@@ -138,6 +138,90 @@ void main() {
       expect(_steps(result.xml), ['FFFF', 'GABC', 'AAAA']);
     });
 
+    test('is emptied: the bars stay, with what belongs to their place', () {
+      final xml = _score([
+        _bar('CDEF'),
+        '<print new-system="yes"/>'
+            '<barline location="left"><bar-style>heavy-light</bar-style>'
+            '<repeat direction="forward"/></barline>'
+            '<direction><direction-type><rehearsal>A</rehearsal></direction-type></direction>'
+            '<direction><direction-type><dynamics><f/></dynamics></direction-type></direction>'
+            '${_harmony('G')}${_bar('GABC')}'
+            '<barline location="right"><bar-style>light-heavy</bar-style>'
+            '<repeat direction="backward"/></barline>',
+        _bar('EEEE'),
+      ]);
+
+      final result = _editor.clearMeasures(xml, 0, 1, 1);
+
+      expect(_measures(result.xml), hasLength(3));
+      expect(_steps(result.xml), ['CDEF', '-', 'EEEE']);
+      final bar = _measures(result.xml)[1];
+      // One rest as long as the bar, where the notes were.
+      expect(bar.findElements('note'), hasLength(1));
+      expect(bar.findAllElements('rest'), hasLength(1));
+      expect(bar.findAllElements('harmony'), isEmpty);
+      expect(bar.findAllElements('dynamics'), isEmpty);
+      // The line break, the repeat and the section box are the bar's.
+      expect(bar.getElement('print')?.getAttribute('new-system'), 'yes');
+      expect(bar.findAllElements('repeat'), hasLength(2));
+      expect(bar.findAllElements('rehearsal').single.innerText, 'A');
+      expect(_timeline(result.xml, '1', measureIndex: 1), [(0, 4)]);
+      expect(result.selection, _ref(0, measureIndex: 1));
+    });
+
+    test('is written over other bars, which keep their place', () {
+      final xml = _score([
+        _bar('CDEF'),
+        _bar('GABC'),
+        '<print new-system="yes"/>'
+            '<direction><direction-type><rehearsal>B</rehearsal></direction-type></direction>'
+            '${_bar('EEEE')}',
+        '${_bar('FFFF')}'
+            '<barline location="right"><bar-style>light-heavy</bar-style>'
+            '<repeat direction="backward"/></barline>',
+        _bar('AAAA'),
+      ]);
+
+      // Bars 1-2 over bars 3-4.
+      final clip = _editor.copyMeasures(xml, 0, 1);
+      final result = _editor.overwriteMeasures(
+        xml,
+        _ref(0, measureIndex: 2),
+        clip,
+      );
+
+      expect(_steps(result.xml), ['CDEF', 'GABC', 'CDEF', 'GABC', 'AAAA']);
+      final bars = _measures(result.xml);
+      expect(bars.map((b) => b.getAttribute('number')), [
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+      ]);
+      // Bar 3 still begins the line and the section, bar 4 still ends the
+      // repeat: only the music is another.
+      expect(bars[2].getElement('print')?.getAttribute('new-system'), 'yes');
+      expect(bars[2].findAllElements('rehearsal').single.innerText, 'B');
+      expect(bars[3].findAllElements('repeat'), hasLength(1));
+      expect(bars[1].findAllElements('repeat'), isEmpty);
+      expect(result.selection, _ref(0, measureIndex: 2));
+    });
+
+    test('written over the end, the score grows by what does not fit', () {
+      final xml = _score([_bar('CDEF'), _bar('GABC'), _bar('EEEE')]);
+
+      final clip = _editor.copyMeasures(xml, 0, 1);
+      final result = _editor.overwriteMeasures(
+        xml,
+        _ref(0, measureIndex: 2),
+        clip,
+      );
+
+      expect(_steps(result.xml), ['CDEF', 'GABC', 'CDEF', 'GABC']);
+    });
+
     test('is removed, but never the whole piece', () {
       final xml = _score([
         _bar('CCCC'),

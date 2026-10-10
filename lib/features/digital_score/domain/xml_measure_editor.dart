@@ -8,6 +8,8 @@ import 'package:xml/xml.dart';
 part 'xml_measure_editor_marks.dart';
 part 'xml_measure_editor_ranges.dart';
 part 'xml_measure_editor_spans.dart';
+part 'xml_measure_editor_looks.dart';
+part 'xml_measure_editor_touches.dart';
 
 /// Addresses the n-th `<note>` child of a measure in a `score-partwise` file.
 ///
@@ -26,6 +28,12 @@ class XmlNoteRef {
   final int noteIndex;
 
   XmlNoteRef withNote(int noteIndex) => XmlNoteRef(
+    partIndex: partIndex,
+    measureIndex: measureIndex,
+    noteIndex: noteIndex,
+  );
+
+  XmlNoteRef inBar(int measureIndex, int noteIndex) => XmlNoteRef(
     partIndex: partIndex,
     measureIndex: measureIndex,
     noteIndex: noteIndex,
@@ -783,6 +791,13 @@ class XmlNoteSummary {
     this.ornaments = const {},
     this.spans = const {},
     this.lyrics = const {},
+    this.lyricJoins = const {},
+    this.fingering,
+    this.graceSlash = false,
+    this.beamed = false,
+    this.stem,
+    this.notehead,
+    this.staff = 1,
   });
 
   final bool isRest;
@@ -821,6 +836,35 @@ class XmlNoteSummary {
 
   /// The syllable of each verse sung on this note, by verse number.
   final Map<int, String> lyrics;
+
+  /// How the syllable of a verse goes on, for the verses where it does:
+  /// `-` into the next syllable of its word, `_` held over the notes after
+  /// it (a melisma).
+  final Map<int, String> lyricJoins;
+
+  /// The finger written at this note (not its chord), if any.
+  final String? fingering;
+
+  /// Whether a grace note has a slash through its stem.
+  final bool graceSlash;
+
+  /// Whether the note is under a beam.
+  final bool beamed;
+
+  /// How the stem is told to stand (`up`, `down`, `none`), null when the
+  /// engraver decides.
+  final String? stem;
+
+  /// How the notehead is drawn when not as usual: `slash`, or
+  /// `parentheses` for a ghost note.
+  final String? notehead;
+
+  /// The staff the note is written on.
+  final int staff;
+
+  /// The syllable of [verse] as it is typed: with its `-` or `_`.
+  String lyricTyped(int verse) =>
+      '${lyrics[verse] ?? ''}${lyrics[verse] == null ? '' : lyricJoins[verse] ?? ''}';
 }
 
 const noteDurationTypes = [
@@ -911,6 +955,23 @@ class XmlMeasureEditor {
           if (lyric.getElement('text')?.innerText case final text?)
             int.tryParse(lyric.getAttribute('number') ?? '') ?? 1: text,
       },
+      lyricJoins: {
+        for (final lyric in head.element.findElements('lyric'))
+          if (_lyricJoin(lyric) case final join when join.isNotEmpty)
+            int.tryParse(lyric.getAttribute('number') ?? '') ?? 1: join,
+      },
+      fingering: info.element
+          .getElement('notations')
+          ?.getElement('technical')
+          ?.getElement('fingering')
+          ?.innerText
+          .trim(),
+      graceSlash:
+          info.element.getElement('grace')?.getAttribute('slash') == 'yes',
+      beamed: head.element.getElement('beam') != null,
+      stem: head.element.getElement('stem')?.innerText.trim(),
+      notehead: _noteheadOf(info.element),
+      staff: info.staff,
     );
   }
 
@@ -965,8 +1026,9 @@ class XmlMeasureEditor {
     });
   }
 
-  /// Adds a note a third above the top note of the selected chord.
-  XmlEditResult addChordNote(String xml, XmlNoteRef ref) {
+  /// Adds a note a third above the top note of the selected chord, or the
+  /// note [at] where one is named.
+  XmlEditResult addChordNote(String xml, XmlNoteRef ref, {MusicPitch? at}) {
     final doc = _ScoreDoc(xml);
     final measure = doc.measure(ref);
     final info = measure.note(ref.noteIndex);
@@ -981,13 +1043,15 @@ class XmlMeasureEditor {
       (a, b) => (a.pitch!.midi >= b.pitch!.midi) ? a : b,
     );
     final number = top.pitch!.octave * 7 + top.pitch!.step.index + 2;
-    final step = PitchStep.values[number % 7];
-    final octave = number ~/ 7;
-    final pitch = MusicPitch(
-      step: step,
-      octave: octave,
-      alter: measure.contextAlter(top, step, octave),
-    );
+    final step = at?.step ?? PitchStep.values[number % 7];
+    final octave = at?.octave ?? number ~/ 7;
+    final pitch =
+        at ??
+        MusicPitch(
+          step: step,
+          octave: octave,
+          alter: measure.contextAlter(top, step, octave),
+        );
     if (group.any((note) => note.pitch!.midi == pitch.midi)) {
       throw const FormatException('같은 음이 이미 있습니다.');
     }
@@ -1439,11 +1503,18 @@ class XmlMeasureEditor {
   ///
   /// A syllable that is there keeps how it joins its neighbours (the hyphen
   /// or the held line after it); a new one stands on its own.
+  ///
+  /// With [typed] the end of [text] says how the syllable goes on, as it is
+  /// typed in a notation program: `-` joins it to the next syllable of the
+  /// word, `_` holds it over the notes that follow, and neither means it
+  /// stands on its own. The syllable after it is told that it begins a word
+  /// or goes on in one.
   XmlEditResult setLyric(
     String xml,
     XmlNoteRef ref,
     String? text, {
     int verse = 1,
+    bool typed = false,
   }) {
     final doc = _ScoreDoc(xml);
     final measure = doc.measure(ref);
@@ -1457,39 +1528,108 @@ class XmlMeasureEditor {
     // The words of a chord are written on its first note.
     final head = measure.groupOf(info).first.element;
     final existing = _lyricOf(head, verse);
-    final trimmed = text?.trim() ?? '';
+    var trimmed = text?.trim() ?? '';
     if (trimmed.isEmpty) {
       if (existing == null) throw const FormatException('지울 가사가 없습니다.');
       _remove(existing);
       return XmlEditResult(doc.toXml(), ref);
     }
+    String? join;
+    if (typed) {
+      join = '';
+      if (trimmed.length > 1 &&
+          (trimmed.endsWith('-') || trimmed.endsWith('_'))) {
+        join = trimmed[trimmed.length - 1];
+        trimmed = trimmed.substring(0, trimmed.length - 1).trimRight();
+      }
+    }
     if (trimmed.length > maxLyricLength) {
       throw const FormatException('가사가 너무 깁니다.');
     }
-    if (existing != null) {
-      final words = existing.getElement('text');
+    var lyric = existing;
+    if (lyric != null) {
+      final words = lyric.getElement('text');
       if (words != null) {
         words.innerText = trimmed;
       } else {
-        existing.children.add(
-          XmlElement(XmlName('text'), [], [XmlText(trimmed)]),
-        );
+        lyric.children.add(XmlElement(XmlName('text'), [], [XmlText(trimmed)]));
       }
-      return XmlEditResult(doc.toXml(), ref);
-    }
-    _insertOrdered(
-      head,
-      XmlElement(
+    } else {
+      lyric = XmlElement(
         XmlName('lyric'),
         [XmlAttribute(XmlName('number'), '$verse')],
         [
           XmlElement(XmlName('syllabic'), [], [XmlText('single')]),
           XmlElement(XmlName('text'), [], [XmlText(trimmed)]),
         ],
-      ),
-      _noteOrder,
-    );
+      );
+      _insertOrdered(head, lyric, _noteOrder);
+    }
+    if (join != null) _joinLyric(doc, ref.partIndex, head, lyric, verse, join);
     return XmlEditResult(doc.toXml(), ref);
+  }
+
+  /// Writes how [lyric] (of [head], in [verse]) goes on: [join] is `-`, `_`
+  /// or nothing. The syllables before and after it in the verse say and are
+  /// told whether a word runs through.
+  static void _joinLyric(
+    _ScoreDoc doc,
+    int partIndex,
+    XmlElement head,
+    XmlElement lyric,
+    int verse,
+    String join,
+  ) {
+    bool goesOn(XmlElement? other) => const {
+      'begin',
+      'middle',
+    }.contains(other?.getElement('syllabic')?.innerText.trim());
+    void say(XmlElement of, String syllabic) {
+      final written = of.getElement('syllabic');
+      if (written != null) {
+        written.innerText = syllabic;
+      } else {
+        of.children.insert(
+          0,
+          XmlElement(XmlName('syllabic'), [], [XmlText(syllabic)]),
+        );
+      }
+    }
+
+    final sung = [
+      for (final note in doc.parts[partIndex].findAllElements('note'))
+        if (identical(note, head) || _lyricOf(note, verse) != null) note,
+    ];
+    final at = sung.indexWhere((note) => identical(note, head));
+    final before = at > 0 ? _lyricOf(sung[at - 1], verse) : null;
+    final after = at >= 0 && at + 1 < sung.length
+        ? _lyricOf(sung[at + 1], verse)
+        : null;
+    final hyphen = join == '-';
+    say(
+      lyric,
+      goesOn(before)
+          ? (hyphen ? 'middle' : 'end')
+          : (hyphen ? 'begin' : 'single'),
+    );
+    if (after != null) {
+      say(
+        after,
+        goesOn(after)
+            ? (hyphen ? 'middle' : 'begin')
+            : (hyphen ? 'end' : 'single'),
+      );
+    }
+    lyric.findElements('extend').toList().forEach(_remove);
+    if (join == '_') {
+      final words = lyric.getElement('text');
+      lyric.children.insert(
+        words == null
+            ? lyric.children.length
+            : lyric.children.indexOf(words) + 1,
+        XmlElement(XmlName('extend'), [XmlAttribute(XmlName('type'), 'start')]),
+      );
+    }
   }
 
   /// Adds an empty bar (a whole-bar rest) after the selected note's bar, in
@@ -3369,6 +3509,19 @@ const maxLyricLength = 40;
 
 /// The lyric of [verse] on [note]. A lyric without a number is of the first
 /// verse.
+/// How a syllable goes on: `-` into the next of its word, `_` held over
+/// the notes after it, or nothing.
+String _lyricJoin(XmlElement lyric) {
+  final extend = lyric.getElement('extend');
+  if (extend != null && extend.getAttribute('type') != 'stop') return '_';
+  return const {
+        'begin',
+        'middle',
+      }.contains(lyric.getElement('syllabic')?.innerText.trim())
+      ? '-'
+      : '';
+}
+
 XmlElement? _lyricOf(XmlElement note, int verse) {
   for (final lyric in note.findElements('lyric')) {
     final number = int.tryParse(lyric.getAttribute('number') ?? '') ?? 1;

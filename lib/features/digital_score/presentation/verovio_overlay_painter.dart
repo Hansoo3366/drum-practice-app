@@ -18,6 +18,10 @@ class _VerovioOverlayPainter extends CustomPainter {
     required this.ghostDurationType,
     required this.ghostAlter,
     required this.ghostDots,
+    this.ghostLabel,
+    this.viewScale = 1,
+    this.handles,
+    this.handleRadius = 9,
     required this.caret,
     required this.measureDragTo,
   });
@@ -40,6 +44,23 @@ class _VerovioOverlayPainter extends CustomPainter {
   final String ghostDurationType;
   final int ghostAlter;
   final int ghostDots;
+
+  /// The pitch of the ghost note, written above the finger over it.
+  final String? ghostLabel;
+
+  /// How much the page is magnified, so that what is drawn for a finger
+  /// (label, handles) has the same size on screen at any zoom.
+  final double viewScale;
+
+  /// The two ends of a run of picked notes, each with a handle to drag.
+  final ({
+    ScoreEventAddress first,
+    Offset firstAt,
+    ScoreEventAddress last,
+    Offset lastAt,
+  })?
+  handles;
+  final double handleRadius;
   final Rect? caret;
   final int? measureDragTo;
 
@@ -132,13 +153,72 @@ class _VerovioOverlayPainter extends CustomPainter {
         caretPaint,
       );
     }
+    _paintHandles(canvas);
     final ghost = ghostCenter;
     if (ghost == null) return;
     if (ghostRest) {
       _drawGhostRest(canvas, ghost);
     } else {
       _drawGhostNote(canvas, ghost);
+      _paintGhostGuide(canvas, ghost);
     }
+  }
+
+  /// A round handle under each end of the run of picked notes, on a stalk
+  /// from the staff: what a finger takes to make the run longer or shorter.
+  void _paintHandles(Canvas canvas) {
+    final ends = handles;
+    if (ends == null) return;
+    final fill = Paint()..color = AppColors.accent;
+    final stalk = Paint()
+      ..color = AppColors.accent
+      ..strokeWidth = math.max(1.0, handleRadius * 0.22);
+    for (final at in [ends.firstAt, ends.lastAt]) {
+      final center = at.translate(0, handleRadius);
+      canvas.drawLine(at.translate(0, -handleRadius), center, stalk);
+      canvas.drawCircle(center, handleRadius, fill);
+    }
+  }
+
+  /// The line the note to come is on, drawn out to both sides of the
+  /// finger, and its name above: the finger covers the note itself.
+  void _paintGhostGuide(Canvas canvas, Offset center) {
+    final scale = viewScale <= 0 ? 1.0 : viewScale;
+    final reach = 36 / scale;
+    canvas.drawLine(
+      center.translate(-reach, 0),
+      center.translate(reach, 0),
+      Paint()
+        ..color = AppColors.accent.withValues(alpha: 0.55)
+        ..strokeWidth = 1 / scale,
+    );
+    final label = ghostLabel;
+    if (label == null) return;
+    final text = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 13 / scale,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final pad = 5 / scale;
+    final box = Rect.fromCenter(
+      center: center.translate(0, -52 / scale),
+      width: text.width + pad * 2,
+      height: text.height + pad,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(box, Radius.circular(6 / scale)),
+      Paint()..color = AppColors.accent,
+    );
+    text.paint(
+      canvas,
+      Offset(box.center.dx - text.width / 2, box.center.dy - text.height / 2),
+    );
   }
 
   void _drawGhostNote(Canvas canvas, Offset center) {
@@ -335,6 +415,10 @@ class _VerovioOverlayPainter extends CustomPainter {
         oldDelegate.ghostDurationType != ghostDurationType ||
         oldDelegate.ghostAlter != ghostAlter ||
         oldDelegate.ghostDots != ghostDots ||
+        oldDelegate.ghostLabel != ghostLabel ||
+        oldDelegate.viewScale != viewScale ||
+        oldDelegate.handles != handles ||
+        oldDelegate.handleRadius != handleRadius ||
         oldDelegate.caret != caret ||
         oldDelegate.measureDragTo != measureDragTo;
   }

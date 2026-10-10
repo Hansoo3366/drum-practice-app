@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:page_a_diddle/app/l10n/l10n.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
@@ -126,6 +126,22 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// The octave the keyboard begins at.
   var _keyboardOctave = 4;
 
+  /// Whether the keys build a chord on the picked note instead of going on
+  /// to the next: the first key is the note, the ones after it join it.
+  var _chordKeys = false;
+
+  /// The keys pressed for the chord being built, and the chord built
+  /// before it, which one button writes again.
+  var _chordNow = <int>[];
+  var _chordBefore = <int>[];
+
+  /// The width of the white keys: three sizes, for a thumb or for reach.
+  var _keyWidth = 1;
+  static const _keyWidths = [34.0, 44.0, 58.0];
+
+  /// A run of notes copied with the note tools, to be written elsewhere.
+  NoteClip? _noteClip;
+
   /// What a tap on the score does: pick a note, rub one out, or write a
   /// note or rest of the value in hand.
   var _tool = _Tool.select;
@@ -172,27 +188,138 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// Bars copied with the bar range tool, to be pasted after another bar.
   MeasureClip? _clip;
 
-  /// Whether a tap picks the other end of a run of notes, and that end: the
-  /// tools for pitch and marks then work on every note from the picked one
-  /// to it.
+  /// Whether a tap picks the other end of a run of notes (the range tool).
   var _ranging = false;
-  int? _rangeTo;
 
-  /// The notes the tools work on: the picked one, or with a run picked every
-  /// note of its staff from one end to the other.
-  List<int> get _picked {
+  /// The other end of a run of notes, in whatever bar: the tools for pitch,
+  /// length and marks then work on every note from the picked one to it.
+  /// Picked with the range tool, or by a finger held down and moved.
+  ({int bar, int note})? _rangeEnd;
+
+  /// Whole bars picked (a bar tapped twice, and bars added with the
+  /// handles): what is cut, copied, repeated or transposed as bars.
+  ({int from, int to})? _barSel;
+
+  /// The notes of bar [index], counted as the editor counts them.
+  List<MusicNote> _notesOf(int index) => index == _measureIndex
+      ? _previewMeasure.notes.toList()
+      : _shownMeasure(index).notes.toList();
+
+  /// The notes the tools work on, in the order of the score: the picked
+  /// one, or with a run picked every note from one end to the other. A run
+  /// of notes keeps to the staff it began on; whole bars are all of them.
+  List<XmlNoteRef> get _pickedRefs {
     final from = _noteIndex;
     if (from == null) return const [];
-    final to = _rangeTo;
-    if (!_ranging || to == null) return [from];
-    final notes = _previewMeasure.notes.toList();
-    if (from >= notes.length || to >= notes.length) return [from];
-    final staff = notes[from].staff;
+    XmlNoteRef at(int bar, int note) => XmlNoteRef(
+      partIndex: widget.partIndex,
+      measureIndex: bar,
+      noteIndex: note,
+    );
+    final end = _rangeEnd;
+    if (end == null || end.bar < 0 || end.bar >= _measureCount) {
+      return [at(_measureIndex, from)];
+    }
+    final here = _notesOf(_measureIndex);
+    if (from >= here.length) return [at(_measureIndex, from)];
+    final staff = _barSel == null ? here[from].staff : null;
+    final forward =
+        end.bar > _measureIndex ||
+        (end.bar == _measureIndex && end.note >= from);
+    final first = forward ? (bar: _measureIndex, note: from) : end;
+    final last = forward ? end : (bar: _measureIndex, note: from);
+    final refs = <XmlNoteRef>[];
+    for (var bar = first.bar; bar <= last.bar; bar++) {
+      final notes = _notesOf(bar);
+      for (final (index, note) in notes.indexed) {
+        if ((bar < first.bar || index < first.note) && bar == first.bar) {
+          continue;
+        }
+        if (bar == last.bar && index > last.note) continue;
+        if (staff != null && note.staff != staff) continue;
+        if (_only != _Only.all && !_isOuterNote(notes, index)) continue;
+        refs.add(at(bar, index));
+      }
+    }
+    return refs;
+  }
+
+  /// Whether note [index] of [notes] is the highest (or lowest, as [_only]
+  /// says) of its chord. A note on its own is; a rest is not.
+  bool _isOuterNote(List<MusicNote> notes, int index) {
+    final pitch = notes[index].pitch;
+    if (pitch == null) return false;
+    var start = index;
+    while (start > 0 && notes[start].isChord) {
+      start--;
+    }
+    var best = pitch.midi;
+    var bestAt = index;
+    for (var i = start; i < notes.length; i++) {
+      if (i > start && !notes[i].isChord) break;
+      final midi = notes[i].pitch?.midi;
+      if (midi == null) continue;
+      final better = _only == _Only.top ? midi > best : midi < best;
+      if (better) {
+        best = midi;
+        bestAt = i;
+      }
+    }
+    return bestAt == index;
+  }
+
+  /// What the editor says of each picked note.
+  List<XmlNoteSummary> get _pickedSummaries {
+    final bars = <int, List<XmlNoteSummary>>{};
     return [
-      for (var i = math.min(from, to); i <= math.max(from, to); i++)
-        if (notes[i].staff == staff) i,
+      for (final ref in _pickedRefs)
+        if ((bars[ref.measureIndex] ??= _summariesOf(_xml, ref.measureIndex))
+            case final notes when ref.noteIndex < notes.length)
+          notes[ref.noteIndex],
     ];
   }
+
+  List<XmlNoteSummary> _summariesOf(String xml, int bar) =>
+      bar == _measureIndex && identical(xml, _xml)
+      ? _bar.notes
+      : _editor.inspect(xml, widget.partIndex, bar).notes;
+
+  void _dropRange() {
+    _rangeEnd = null;
+    _barSel = null;
+    _only = _Only.all;
+  }
+
+  /// Of the chords in a run of notes, which note the tools work on: all
+  /// of them, or the highest or lowest of each (a melody, a bass line).
+  var _only = _Only.all;
+
+  /// How the editor is laid out, for the hand and the light it is used in.
+  /// Kept while the app runs: the same next time the editor is opened.
+  static var _railRight = false;
+  static var _smallTools = false;
+  static var _darkScore = false;
+
+  /// How large the notes are engraved, next to the page they are engraved
+  /// on: the lines keep their bars, the notes grow or shrink in them.
+  static var _noteSize = 1.0;
+  static const _noteSizes = [0.85, 1.0, 1.2, 1.45];
+
+  /// The bar after which the player stops, when only picked bars play.
+  int? _playUntil;
+
+  /// The chord the keys were building is done: it is the chord before now.
+  void _endChord() {
+    if (_chordNow.isEmpty) return;
+    _chordBefore = _chordNow;
+    _chordNow = <int>[];
+  }
+
+  /// Whether the next key of the keyboard writes a new note after the
+  /// picked one, instead of giving the picked one its pitch: the keys have
+  /// come to the end of a bar that is shorter than its time, and go on into
+  /// what is missing.
+  var _keysAppend = false;
 
   var _saving = false;
 
@@ -251,6 +378,128 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     _measureIndex = _measureIndex.clamp(0, _measureCount - 1);
     _refresh(select: 0);
     unawaited(_loadPlaces());
+    unawaited(_offerDraft());
+  }
+
+  /// Whether a note is sounded when it is written, moved or stepped to.
+  var _sounds = true;
+
+  /// Lets the picked note (its whole chord) be heard.
+  void _soundPicked() {
+    if (!_sounds) return;
+    final index = _noteIndex;
+    if (index == null || index >= _bar.notes.length) return;
+    final notes = _bar.notes;
+    // The notes of the chord stand one after the other, the first leading.
+    var first = index;
+    while (first > 0 && !notes[first].leadsChord) {
+      first--;
+    }
+    final midis = <int>[];
+    for (var i = first; i < notes.length; i++) {
+      if (i > first && notes[i].leadsChord) break;
+      if (notes[i].pitch case final pitch?) midis.add(pitch.midi);
+    }
+    if (midis.isEmpty) return;
+    unawaited(_scoreKey.currentState?.sound(midis));
+  }
+
+  Timer? _draftTimer;
+
+  /// Read once: the draft is also written when the screen is left, when
+  /// nothing may be looked up any more.
+  late final DigitalScoreEditorService _drafts = ref.read(
+    digitalScoreEditorServiceProvider,
+  );
+
+  /// Keeps what was edited, a moment after the last edit: a call, a dead
+  /// battery or a closed app does not take the corrections with it.
+  void _keepDraft() {
+    _draftTimer?.cancel();
+    _draftTimer = Timer(const Duration(seconds: 2), _writeDraft);
+  }
+
+  void _writeDraft() {
+    _draftTimer = null;
+    final service = _drafts;
+    if (!_dirty) {
+      unawaited(service.discardDraft(widget.songId));
+      return;
+    }
+    unawaited(
+      service
+          .saveDraft(
+            songId: widget.songId,
+            base: widget.musicXml,
+            xml: _xml,
+            bars: _bars[_cursor],
+          )
+          .then((_) {}, onError: (Object _) {}),
+    );
+  }
+
+  /// Offers the corrections that were being made when the editor was last
+  /// left without saving.
+  Future<void> _offerDraft() async {
+    final service = _drafts;
+    final draft = await service.loadDraft(
+      songId: widget.songId,
+      base: widget.musicXml,
+    );
+    if (draft == null || !mounted || _cursor != 0) return;
+    final l10n = context.l10n;
+    final resume = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.draftTitle),
+        content: Text(l10n.draftBody),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.discardChanges),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l10n.draftResume),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (resume != true) {
+      if (resume == false) unawaited(service.discardDraft(widget.songId));
+      return;
+    }
+    if (_cursor != 0) return;
+    try {
+      final before = _measureIndex;
+      _measureIndex = _measureIndex.clamp(0, draft.bars.length - 1);
+      final _Read read;
+      try {
+        read = _inspect(draft.xml);
+      } on FormatException {
+        _measureIndex = before;
+        rethrow;
+      }
+      setState(() {
+        // One step of undo back to the score as it was opened.
+        _history.add(draft.xml);
+        _bars.add(draft.bars);
+        _edits.add((
+          measure: before,
+          before: _noteIndex ?? 0,
+          measureAfter: _measureIndex,
+          after: 0,
+        ));
+        _cursor = 1;
+        for (final bar in draft.bars) {
+          if (bar >= _nextBarId) _nextBarId = bar + 1;
+        }
+        _show(read, select: 0);
+      });
+    } on FormatException catch (error) {
+      _showMessage(error.message);
+    }
   }
 
   Future<void> _loadPlaces() async {
@@ -262,6 +511,12 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   @override
   void dispose() {
+    _toolHintTimer?.cancel();
+    // What was waiting to be kept is kept now.
+    if (_draftTimer != null) {
+      _draftTimer!.cancel();
+      _writeDraft();
+    }
     _playback.removeListener(_onPlayback);
     _playback.dispose();
     super.dispose();
@@ -401,13 +656,18 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
           _savedCursor--;
         }
         _show(read, select: result.selection.noteIndex);
+        _keepDraft();
         // A run of notes stays picked only for edits that leave every note
         // where it is.
-        final end = _rangeTo;
-        _rangeTo =
-            keepRange && end != null && end < _previewMeasure.notes.length
-            ? end
-            : null;
+        final end = _rangeEnd;
+        if (keepRange &&
+            end != null &&
+            end.bar < _measureCount &&
+            end.note < _notesOf(end.bar).length) {
+          _rangeEnd = end;
+        } else {
+          _dropRange();
+        }
       });
     } on FormatException catch (error) {
       _showMessage(error.message);
@@ -418,12 +678,14 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     if (_cursor == 0) return;
     setState(() {
       _spanFrom = null;
-      _rangeTo = null;
+      _keysAppend = false;
+      _dropRange();
       final edit = _edits[_cursor - 1];
       _cursor--;
       _measureIndex = edit.measure;
       _refresh(select: edit.before);
     });
+    _keepDraft();
     _reveal();
   }
 
@@ -431,12 +693,14 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     if (_cursor >= _history.length - 1) return;
     setState(() {
       _spanFrom = null;
-      _rangeTo = null;
+      _keysAppend = false;
+      _dropRange();
       final edit = _edits[_cursor];
       _cursor++;
       _measureIndex = edit.measureAfter;
       _refresh(select: edit.after);
     });
+    _keepDraft();
     _reveal();
   }
 
@@ -444,7 +708,9 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     if (index < 0 || index >= _measureCount || index == _measureIndex) return;
     setState(() {
       _measureIndex = index;
-      _rangeTo = null;
+      _keysAppend = false;
+      _endChord();
+      _dropRange();
       _refresh(select: select);
     });
     _reveal();
@@ -465,7 +731,9 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     try {
       setState(() {
         _measureIndex = index;
-        _rangeTo = null;
+        _keysAppend = false;
+        _endChord();
+        _dropRange();
         _refresh(select: 0);
       });
       return true;
@@ -478,10 +746,17 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// The note before (-1) or after (+1) the picked one, into the next bar
   /// where the bar ends.
   void _stepNote(int by) {
+    // Building chords, the arrow goes on to the next note or rest: the
+    // tones of the chord just built are not stops on the way.
+    if (_chordKeys && by > 0) {
+      _stepEvent();
+      return;
+    }
     final index = _noteIndex;
     final count = _previewMeasure.notes.length;
     if (index != null && index + by >= 0 && index + by < count) {
       _selectNote(index + by);
+      _soundPicked();
     } else if (by < 0 && _measureIndex > 0) {
       _goToMeasure(_measureIndex - 1, select: 1 << 20);
     } else if (by > 0 && _measureIndex < _measureCount - 1) {
@@ -494,12 +769,31 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     if (index < 0 || index >= count) return;
     // The bar is already read: picking another note needs no new pass.
     setState(() {
+      _keysAppend = false;
+      _endChord();
       _noteIndex = index;
       _summary = index < _bar.notes.length ? _bar.notes[index] : null;
     });
   }
 
   void _onEventTapped(ScoreEventAddress address) {
+    // With the range tool a tap is the other end of the run, in whatever
+    // bar: the bar being worked on stays the one the run began in.
+    if (_ranging &&
+        _noteIndex != null &&
+        _spanFrom == null &&
+        _tool == _Tool.select) {
+      final end = xmlNoteIndexForEvent(
+        _shownMeasure(address.measureIndex),
+        address.eventIndex,
+      );
+      if (end == null) return;
+      setState(() {
+        _barSel = null;
+        _rangeEnd = (bar: address.measureIndex, note: end);
+      });
+      return;
+    }
     if (!_enterBar(address.measureIndex)) return;
     final index = xmlNoteIndexForEvent(
       _shownMeasure(address.measureIndex),
@@ -515,10 +809,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       _erase();
       return;
     }
-    if (_ranging && _noteIndex != null) {
-      setState(() => _rangeTo = index);
-      return;
-    }
+    // A tap on one note lets a run of notes go.
+    if (_rangeEnd != null || _barSel != null) setState(_dropRange);
     _selectNote(index);
     // The keyboard shows the octave of the note that was picked.
     if (index < _bar.notes.length) {
@@ -536,11 +828,23 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     _apply(summary.isGrace ? _editor.removeNote : _editor.deleteNote);
   }
 
+  /// Whether the word on what a tap does with the tool in hand is shown:
+  /// for a moment after the tool is taken up, then the score is clear
+  /// again.
+  var _toolHint = false;
+  Timer? _toolHintTimer;
+
   void _setTool(_Tool tool) => setState(() {
     _tool = tool;
+    _toolHint = true;
+    _toolHintTimer?.cancel();
+    _toolHintTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _toolHint = false);
+    });
+    _keysAppend = false;
     if (tool != _Tool.select) {
       _ranging = false;
-      _rangeTo = null;
+      _dropRange();
     }
   });
 
@@ -573,7 +877,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     if (type == null) return;
     final dots = (summary.dots + 1) % 3;
     setState(() => _entryDots = dots);
-    _apply((xml, ref) => _editor.setDuration(xml, ref, type, dots));
+    _setLength(type, dots);
   }
 
   /// Opens the note values beside the note tool; the one picked is the
@@ -658,6 +962,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                     _Palette.marks => const MusicGlyph(
                       MusicGlyphs.fermataAbove,
                     ),
+                    _Palette.looks => const Icon(Icons.auto_fix_high_rounded),
                     _Palette.words => const Text(
                       'C7',
                       style: TextStyle(
@@ -697,6 +1002,16 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       _apply((xml, ref) => _editor.removeSpan(xml, ref, kind));
       return;
     }
+    // With a run of notes picked the line is drawn over the run at once,
+    // as when a selection is made first and the tool tapped then.
+    final picked = _pickedRefs;
+    if (_rangeEnd != null && picked.length > 1) {
+      _apply(
+        (xml, ref) => _editor.addSpan(xml, picked.first, picked.last, kind),
+        keepRange: true,
+      );
+      return;
+    }
     setState(
       () => _spanFrom = (kind: kind, measure: _measureIndex, note: index),
     );
@@ -723,20 +1038,25 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     bool Function(XmlNoteSummary note)? where,
     bool backwards = false,
   }) {
-    final picked = _picked;
+    final picked = _pickedRefs;
     if (picked.length <= 1) {
       _apply(edit);
       return;
     }
-    final notes = _bar.notes;
+    final bars = _barSel;
     _apply((xml, ref) {
       var current = xml;
       var done = 0;
-      for (final index in backwards ? picked.reversed : picked) {
-        if (index >= notes.length) continue;
-        if (where != null && !where(notes[index])) continue;
+      final read = <int, List<XmlNoteSummary>>{};
+      for (final at in backwards ? picked.reversed : picked) {
+        final notes = read[at.measureIndex] ??= _summariesOf(
+          xml,
+          at.measureIndex,
+        );
+        if (at.noteIndex >= notes.length) continue;
+        if (where != null && !where(notes[at.noteIndex])) continue;
         try {
-          current = edit(current, ref.withNote(index)).xml;
+          current = edit(current, at).xml;
           done++;
         } on FormatException {
           // A note the edit does not fit is passed over.
@@ -747,6 +1067,11 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       }
       return XmlEditResult(current, ref);
     }, keepRange: !backwards);
+    // Whole bars stay picked whatever was done to their notes: the bars
+    // are the same bars, with other notes in them.
+    if (bars != null && _barSel == null && bars.to < _measureCount) {
+      _pickBars(bars.from, bars.to);
+    }
   }
 
   /// Puts an articulation on every picked note, or takes it off them all
@@ -756,10 +1081,9 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         name == 'fermata' ? note.fermata : note.articulations.contains(name);
     bool takes(XmlNoteSummary note) =>
         note.leadsChord && !note.isGrace && (restsToo || !note.isRest);
-    final notes = _bar.notes;
     final all = [
-      for (final index in _picked)
-        if (index < notes.length && takes(notes[index])) notes[index],
+      for (final note in _pickedSummaries)
+        if (takes(note)) note,
     ];
     final allHave = all.isNotEmpty && all.every(has);
     _applyEach(
@@ -768,26 +1092,39 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     );
   }
 
-  Future<void> _askBarRange() async {
-    final l10n = context.l10n;
+  Future<void> _askBarRange({int? from, int? to}) async {
     final first = _firstBarNumber;
     final choice = await showDialog<_BarRangeChoice>(
       context: context,
       builder: (_) => _BarRangeDialog(
-        current: _measureIndex + first,
+        current: (from ?? _measureIndex) + first,
+        currentTo: (to ?? from ?? _measureIndex) + first,
         first: first,
         last: _measureCount - 1 + first,
       ),
     );
     if (choice == null || !mounted) return;
-    final from = choice.from - first;
-    final to = choice.to - first;
-    if (choice.action == _BarRangeAction.copy ||
-        choice.action == _BarRangeAction.cut) {
+    _actOnBars(
+      choice.action,
+      choice.from - first,
+      choice.to - first,
+      semitones: choice.semitones,
+    );
+  }
+
+  /// Copies, cuts, removes or transposes the bars [from]..[to].
+  void _actOnBars(
+    _BarRangeAction action,
+    int from,
+    int to, {
+    int semitones = 0,
+  }) {
+    final l10n = context.l10n;
+    if (action == _BarRangeAction.copy || action == _BarRangeAction.cut) {
       try {
         final clip = _editor.copyMeasures(_xml, from, to);
         setState(() => _clip = clip);
-        if (choice.action == _BarRangeAction.copy) {
+        if (action == _BarRangeAction.copy) {
           _showMessage(l10n.barsCopied(clip.length));
           return;
         }
@@ -796,10 +1133,17 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         return;
       }
     }
-    switch (choice.action) {
+    switch (action) {
       case _BarRangeAction.copy:
         break;
       case _BarRangeAction.cut || _BarRangeAction.delete:
+        _apply(
+          (xml, ref) => _editor.clearMeasures(xml, widget.partIndex, from, to),
+          bars: (bars, _) => bars,
+          keepRange: true,
+        );
+        if (_barSel == null) _pickBars(from, to);
+      case _BarRangeAction.remove:
         _apply(
           (xml, ref) => _editor.deleteMeasures(xml, widget.partIndex, from, to),
           bars: (bars, _) => [...bars]..removeRange(from, to + 1),
@@ -811,23 +1155,207 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             widget.partIndex,
             from,
             to,
-            choice.semitones,
+            semitones,
           ),
           bars: (bars, _) => bars,
+          keepRange: true,
         );
     }
   }
 
-  void _pasteBars() {
+  /// Puts the copied bars after bar [after], or after the bar being worked
+  /// on.
+  void _pasteBars({int? after, MeasureClip? clip}) {
+    final pasted = clip ?? _clip;
+    if (pasted == null) return;
+    final at = after ?? _measureIndex;
+    _apply(
+      (xml, ref) => _editor.pasteMeasures(
+        xml,
+        XmlNoteRef(partIndex: widget.partIndex, measureIndex: at, noteIndex: 0),
+        pasted,
+      ),
+      bars: (bars, _) => [...bars]
+        ..insertAll(at + 1, [
+          for (var i = 0; i < pasted.length; i++) _nextBarId++,
+        ]),
+    );
+  }
+
+  /// Writes the copied bars over the bars from [at] on: as many bars give
+  /// way as were copied, and the score grows where they do not fit.
+  void _overwriteBars(int at) {
     final clip = _clip;
     if (clip == null) return;
     _apply(
-      (xml, ref) => _editor.pasteMeasures(xml, ref, clip),
-      bars: (bars, at) => [...bars]
-        ..insertAll(at + 1, [
-          for (var i = 0; i < clip.length; i++) _nextBarId++,
-        ]),
+      (xml, ref) => _editor.overwriteMeasures(xml, ref.inBar(at, 0), clip),
+      bars: (bars, _) => [
+        ...bars,
+        for (var i = bars.length; i < at + clip.length; i++) _nextBarId++,
+      ],
     );
+    if (at + clip.length <= _measureCount) {
+      _pickBars(at, at + clip.length - 1);
+    }
+  }
+
+  /// The picked bars once more, right after themselves.
+  void _duplicateBars(int from, int to) {
+    try {
+      _pasteBars(after: to, clip: _editor.copyMeasures(_xml, from, to));
+    } on FormatException catch (error) {
+      _showMessage(error.message);
+    }
+  }
+
+  /// A finger carried the picked notes: up or down the staff, or to the
+  /// side for an accidental.
+  void _onSelectionDragged(int steps, int alter) {
+    if (steps != 0) {
+      _applyEach(
+        (xml, ref) => _editor.moveDiatonic(xml, ref, steps),
+        where: (note) => !note.isRest,
+      );
+    }
+    if (alter != 0) {
+      _applyEach((xml, ref) {
+        final now = _editor.describe(xml, ref).pitch?.alter ?? 0;
+        return _editor.setAlter(xml, ref, (now + alter).clamp(-2, 2));
+      }, where: (note) => !note.isRest);
+    }
+    _soundPicked();
+  }
+
+  /// Words of the score were tapped: the chord symbol or the syllable of
+  /// the note they stand at is what is to be corrected.
+  void _onTextTapped(ScoreEventAddress address, bool above) {
+    if (!_enterBar(address.measureIndex)) return;
+    final index = xmlNoteIndexForEvent(
+      _shownMeasure(address.measureIndex),
+      address.eventIndex,
+    );
+    if (index == null) return;
+    if (_rangeEnd != null || _barSel != null) setState(_dropRange);
+    _selectNote(index);
+    final summary = _summary;
+    if (summary == null) return;
+    if (above) {
+      unawaited(_editChordSymbol());
+    } else if (!summary.isRest && !summary.isGrace) {
+      unawaited(_editLyric());
+    }
+  }
+
+  /// A finger held down and moved, or a handle of the run, goes over the
+  /// score: the notes from where it began to where it is are picked.
+  void _onRangeDragged(ScoreEventAddress from, ScoreEventAddress to) {
+    final bars = _barSel;
+    if (from.measureIndex != _measureIndex && !_enterBar(from.measureIndex)) {
+      return;
+    }
+    final start = xmlNoteIndexForEvent(
+      _shownMeasure(from.measureIndex),
+      from.eventIndex,
+    );
+    final end = xmlNoteIndexForEvent(
+      _shownMeasure(to.measureIndex),
+      to.eventIndex,
+    );
+    if (start == null || end == null) return;
+    setState(() {
+      _ranging = false;
+      if (bars != null) {
+        // Whole bars stay whole bars.
+        final forward = to.measureIndex >= from.measureIndex;
+        final count = _notesOf(from.measureIndex).length;
+        final last = _notesOf(to.measureIndex).length - 1;
+        _noteIndex = count == 0 ? null : (forward ? 0 : count - 1);
+        _rangeEnd = (
+          bar: to.measureIndex,
+          note: forward ? math.max(0, last) : 0,
+        );
+        _barSel = (
+          from: math.min(from.measureIndex, to.measureIndex),
+          to: math.max(from.measureIndex, to.measureIndex),
+        );
+      } else {
+        _noteIndex = start;
+        _rangeEnd = (bar: to.measureIndex, note: end);
+        _barSel = null;
+      }
+      final index = _noteIndex;
+      _summary = index != null && index < _bar.notes.length
+          ? _bar.notes[index]
+          : null;
+    });
+  }
+
+  /// A bar tapped twice: the whole bar is picked, and what is done to bars
+  /// stands ready under the score.
+  void _onBarDoubleTapped(int index) => _pickBars(index, index);
+
+  /// Picks the bars [from]..[to] whole.
+  void _pickBars(int from, int to) {
+    if (!_enterBar(from)) return;
+    final count = _previewMeasure.notes.length;
+    final last = _notesOf(to).length;
+    setState(() {
+      _tool = _Tool.select;
+      _ranging = false;
+      _only = _Only.all;
+      _barSel = (from: from, to: to);
+      _noteIndex = count == 0 ? null : 0;
+      _summary = _bar.notes.isEmpty ? null : _bar.notes.first;
+      _rangeEnd = count == 0 ? null : (bar: to, note: math.max(0, last - 1));
+    });
+  }
+
+  /// Gives every picked note the same value. A run of notes closes up, the
+  /// notes following one another as before; a single note keeps the notes
+  /// after it where they are.
+  void _setLength(String type, int dots) {
+    final picked = _pickedRefs;
+    if (picked.length <= 1) {
+      _apply((xml, ref) => _editor.setDuration(xml, ref, type, dots));
+      return;
+    }
+    final bars = <int, List<int>>{};
+    for (final ref in picked) {
+      final notes = _summariesOf(_xml, ref.measureIndex);
+      if (ref.noteIndex >= notes.length) continue;
+      final note = notes[ref.noteIndex];
+      if (!note.leadsChord || note.isGrace || note.inTuplet) continue;
+      bars.putIfAbsent(ref.measureIndex, () => []).add(ref.noteIndex);
+    }
+    _apply((xml, ref) {
+      var current = xml;
+      var done = 0;
+      for (final MapEntry(key: bar, value: notes) in bars.entries) {
+        try {
+          current = _editor.setNoteLengths(current, widget.partIndex, bar, {
+            for (final note in notes) note: (type: type, dots: dots),
+          }).xml;
+          done += notes.length;
+        } on FormatException {
+          // A bar that cannot close up (voices, tuplets): note by note,
+          // the last first, so the ones before keep their numbers.
+          for (final note in notes.reversed) {
+            try {
+              current = _editor
+                  .setDuration(current, ref.inBar(bar, note), type, dots)
+                  .xml;
+              done++;
+            } on FormatException {
+              // A note that cannot take the value is passed over.
+            }
+          }
+        }
+      }
+      if (done == 0) {
+        throw const FormatException('고른 음에는 할 수 없는 편집입니다.');
+      }
+      return XmlEditResult(current, ref);
+    });
   }
 
   static String _spanLabel(AppLocalizations l10n, SpanKind kind) =>
@@ -846,6 +1374,33 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     final index = _noteIndex;
     final summary = _summary;
     if (index == null || summary == null) return;
+    if (_chordKeys) {
+      _chordKey(midi);
+      return;
+    }
+    if (_keysAppend && _tool == _Tool.note) {
+      final before = _xml;
+      _apply((xml, ref) {
+        final added = _editor.insertEvent(
+          xml,
+          ref,
+          before: false,
+          rest: false,
+          value: (type: _entryType, dots: _entryDots),
+        );
+        return _editor.enterPitch(added.xml, added.selection, midi);
+      });
+      // The bar is full now, or the value did not fit: the keys go on in
+      // the next bar.
+      final wrote = !identical(before, _xml);
+      if (wrote) _soundPicked();
+      final more = wrote && (_lengthOff ?? 0) < 0;
+      setState(() => _keysAppend = more);
+      if (wrote && !more && _measureIndex < _measureCount - 1) {
+        _goToMeasure(_measureIndex + 1);
+      }
+      return;
+    }
     final value =
         _tool == _Tool.note &&
         !summary.isGrace &&
@@ -865,18 +1420,143 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       });
       if (identical(before, _xml)) return;
     }
-    // On to the next note or rest, not to another note of the same chord:
-    // a line is played in one key after the other.
+    _soundPicked();
+    _afterKey();
+  }
+
+  /// On to the next note or rest, not to another note of the same chord:
+  /// a line is played in one key after the other.
+  void _afterKey() {
+    if (_stepEvent(intoNextBar: false)) return;
+    if (_tool == _Tool.note && (_lengthOff ?? 0) < 0) {
+      // The bar is short of its time: the next key writes into what is
+      // missing, a new note after this one.
+      setState(() => _keysAppend = true);
+    } else if (_measureIndex < _measureCount - 1) {
+      _goToMeasure(_measureIndex + 1);
+    }
+  }
+
+  /// The rest key of the keyboard: a rest of the value in hand where the
+  /// cursor is, and on to the next, as a key writes a note.
+  void _enterRest() {
+    if (_noteIndex == null || _summary == null) return;
+    final before = _xml;
+    if (_keysAppend && _tool == _Tool.note) {
+      _apply(
+        (xml, ref) => _editor.insertEvent(
+          xml,
+          ref,
+          before: false,
+          rest: true,
+          value: (type: _entryType, dots: _entryDots),
+        ),
+      );
+      final wrote = !identical(before, _xml);
+      final more = wrote && (_lengthOff ?? 0) < 0;
+      setState(() => _keysAppend = more);
+      if (wrote && !more && _measureIndex < _measureCount - 1) {
+        _goToMeasure(_measureIndex + 1);
+      }
+      return;
+    }
+    _apply((xml, ref) {
+      var current = _tool == _Tool.note
+          ? _withEntryValue(xml, ref)
+          : XmlEditResult(xml, ref);
+      // A chord goes note by note until a rest is left.
+      for (var i = 0; i < 8; i++) {
+        if (_editor.describe(current.xml, current.selection).isRest) break;
+        current = _editor.deleteNote(current.xml, current.selection);
+      }
+      return current;
+    });
+    _afterKey();
+  }
+
+  /// Picks the next note, chord or rest of the bar, passing over the other
+  /// notes of a chord and over ornament notes; at the end of the bar the
+  /// first of the next, with [intoNextBar]. Says whether it moved.
+  bool _stepEvent({bool intoNextBar = true}) {
+    final index = _noteIndex;
+    if (index == null) return false;
     final notes = _bar.notes;
-    var next = (_noteIndex ?? index) + 1;
+    var next = index + 1;
     while (next < notes.length &&
         (!notes[next].leadsChord || notes[next].isGrace)) {
       next++;
     }
     if (next < notes.length) {
       _selectNote(next);
-    } else if (_measureIndex < _measureCount - 1) {
-      _goToMeasure(_measureIndex + 1);
+      return true;
+    }
+    if (!intoNextBar || _measureIndex >= _measureCount - 1) return false;
+    _goToMeasure(_measureIndex + 1);
+    return true;
+  }
+
+  /// A key in chord mode: the first is the note itself, the ones after it
+  /// join it. The cursor stays; the arrow goes on to the next note.
+  void _chordKey(int midi) {
+    if (_chordNow.contains(midi)) return;
+    final before = _xml;
+    final first = _chordNow.isEmpty;
+    _apply((xml, ref) {
+      if (!first) {
+        // The picked note stays the one the chord is built on.
+        return XmlEditResult(_editor.addChordPitch(xml, ref, midi).xml, ref);
+      }
+      final sized = _tool == _Tool.note
+          ? _withEntryValue(xml, ref)
+          : XmlEditResult(xml, ref);
+      final now = _editor.describe(sized.xml, sized.selection);
+      return now.isRest || now.pitch?.midi != midi
+          ? _editor.enterPitch(sized.xml, sized.selection, midi)
+          : sized;
+    });
+    // The first key may find the note as it should be: it still counts.
+    if (!first && identical(before, _xml)) return;
+    setState(() => _chordNow = [..._chordNow, midi]);
+    _soundPicked();
+  }
+
+  /// Writes the chord built before on the picked note, and goes on.
+  void _repeatChord() {
+    final chord = _chordBefore;
+    if (chord.isEmpty || _noteIndex == null) return;
+    final before = _xml;
+    _apply((xml, ref) {
+      final sized = _tool == _Tool.note
+          ? _withEntryValue(xml, ref)
+          : XmlEditResult(xml, ref);
+      final now = _editor.describe(sized.xml, sized.selection);
+      var current = now.isRest || now.pitch?.midi != chord.first
+          ? _editor.enterPitch(sized.xml, sized.selection, chord.first).xml
+          : sized.xml;
+      for (final midi in chord.skip(1)) {
+        try {
+          current = _editor.addChordPitch(current, ref, midi).xml;
+        } on FormatException {
+          // A tone the chord there already has.
+        }
+      }
+      return XmlEditResult(current, ref);
+    });
+    if (identical(before, _xml)) return;
+    _stepEvent();
+    // Going on made the repeated chord "the chord before" only if keys
+    // were pressed; it stays what it was.
+    _chordBefore = chord;
+  }
+
+  /// Takes the picked notes to be written elsewhere.
+  void _copyNotes() {
+    try {
+      final clip = _editor.copyNotes(_xml, _pickedRefs);
+      setState(() => _noteClip = clip);
+      _showMessage(context.l10n.notesCopied(clip.length));
+    } on FormatException catch (error) {
+      _showMessage(error.message);
     }
   }
 
@@ -906,52 +1586,87 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     // Beside a note, where the bar has room: a new note or rest of the
     // value in hand, not another pitch for the note that is there.
     final beside = place.beside;
-    if (beside == 0 && !value && !moves) return;
+    // A finger moved to the side asks for an accidental with the note.
+    final sharpen = rest ? 0 : place.alter;
+    if (beside == 0 && !value && !moves && sharpen == 0) return;
     _apply((xml, ref) {
-      if (beside != 0) {
-        try {
-          final added = _editor.insertEvent(
-            xml,
-            ref,
-            before: beside < 0,
-            rest: rest,
-            value: (type: _entryType, dots: _entryDots),
-          );
-          return rest
-              ? added
-              : _editor.placeNote(
-                  added.xml,
-                  added.selection,
-                  place.step,
-                  place.octave,
-                );
-        } on FormatException {
-          // No room in the bar: the note that is there is meant, and
-          // when there is nothing to change on it either, the bar says
-          // why nothing happened.
-          if (!value && !moves) rethrow;
-        }
+      final written = _writeAt(
+        xml,
+        ref,
+        place,
+        rest: rest,
+        plain: !value && !moves && sharpen == 0,
+      );
+      if (sharpen == 0) return written;
+      final now = _editor.describe(written.xml, written.selection).pitch;
+      if (now == null) return written;
+      try {
+        return _editor.setAlter(
+          written.xml,
+          written.selection,
+          (now.alter + sharpen).clamp(-2, 2),
+        );
+      } on FormatException {
+        return written;
       }
-      final sized = _withEntryValue(xml, ref);
-      final now = _editor.describe(sized.xml, sized.selection);
-      if (rest) {
-        return now.isRest
-            ? sized
-            : _editor.deleteNote(sized.xml, sized.selection);
-      }
-      final at = now.pitch;
-      return !now.isRest &&
-              at != null &&
-              at.step == place.step &&
-              at.octave == place.octave
-          ? sized
-          : _editor.placeNote(
-              sized.xml,
-              sized.selection,
-              place.step,
-              place.octave,
-            );
     });
+    if (!rest) _soundPicked();
+  }
+
+  /// Writes the note or rest [place] asks for at [ref]: a new one beside
+  /// the note there where the bar has room, or else that note on the line
+  /// pointed at, with the value in hand. With [plain] the note there is
+  /// already as asked.
+  XmlEditResult _writeAt(
+    String xml,
+    XmlNoteRef ref,
+    NativeStaffPlace place, {
+    required bool rest,
+    required bool plain,
+  }) {
+    if (place.beside != 0) {
+      try {
+        final added = _editor.insertEvent(
+          xml,
+          ref,
+          before: place.beside < 0,
+          rest: rest,
+          value: (type: _entryType, dots: _entryDots),
+        );
+        return rest
+            ? added
+            : _editor.placeNote(
+                added.xml,
+                added.selection,
+                place.step,
+                place.octave,
+              );
+      } on FormatException {
+        // No room in the bar: the note that is there is meant, and when
+        // there is nothing to change on it either, the bar says why
+        // nothing happened.
+        if (plain) rethrow;
+      }
+    }
+    final sized = _withEntryValue(xml, ref);
+    final now = _editor.describe(sized.xml, sized.selection);
+    if (rest) {
+      return now.isRest
+          ? sized
+          : _editor.deleteNote(sized.xml, sized.selection);
+    }
+    final at = now.pitch;
+    return !now.isRest &&
+            at != null &&
+            at.step == place.step &&
+            at.octave == place.octave
+        ? sized
+        : _editor.placeNote(
+            sized.xml,
+            sized.selection,
+            place.step,
+            place.octave,
+          );
   }
 
   void _showMessage(String message) {
@@ -993,6 +1708,16 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// rebuilt: the button is then drawn again after the frame.
   void _onPlayback() {
     final playing = _playback.state.playing;
+    // Only the picked bars were asked for: the player stops after them.
+    final until = _playUntil;
+    if (until != null) {
+      if (!playing) {
+        _playUntil = null;
+      } else if (_playback.state.measureNumber - 1 > until) {
+        _playUntil = null;
+        unawaited(_playback.stop());
+      }
+    }
     if (playing == _barPlaying || !mounted) return;
     if (SchedulerBinding.instance.schedulerPhase ==
         SchedulerPhase.persistentCallbacks) {
@@ -1011,7 +1736,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       return;
     }
     await _playback.stop();
-    await _playback.playFromMeasure(_measureIndex);
+    // Picked bars play alone; without any, the score from this bar on.
+    final bars = _barSel;
+    await _playback.playFromMeasure(bars?.from ?? _measureIndex);
+    _playUntil = bars?.to;
   }
 
   /// How the bar's notes fall short of or run over its time, in beats of
@@ -1026,7 +1754,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     final off =
         bar.durationDivisions / bar.attributes.divisions / beat - time.beats;
     if (off.abs() < 1e-6) return null;
-    if (_measureIndex == 0 && off < 0) return null;
+    if (off < 0 && (_measureIndex == 0 || _signs.pickup)) return null;
     return off;
   }
 
@@ -1039,15 +1767,29 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       final index = _noteIndex;
       if (_ref == null || summary == null || index == null) return;
       if (summary.isRest || summary.isGrace) return;
-      final initial = summary.lyrics[_verse] ?? '';
+      // As it is typed: a hyphen or a held line shows at its end.
+      final initial = summary.lyricTyped(_verse);
       final result = await showDialog<({String text, bool next})>(
         context: context,
         builder: (_) => _LyricDialog(initial: initial),
       );
       if (result == null || !mounted) return;
+      final words = result.text.trim().split(RegExp(r'\s+'));
+      if (words.length > 1) {
+        // A line of words, as it is pasted into a notation program: one
+        // to each sung note from here on.
+        _spreadLyrics(words);
+        return;
+      }
       if (result.text != initial) {
         _apply(
-          (xml, ref) => _editor.setLyric(xml, ref, result.text, verse: _verse),
+          (xml, ref) => _editor.setLyric(
+            xml,
+            ref,
+            result.text,
+            verse: _verse,
+            typed: true,
+          ),
         );
       }
       if (!result.next) return;
@@ -1064,6 +1806,45 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       if (next >= notes.length) return;
       _selectNote(next);
     }
+  }
+
+  /// Writes [words] under the sung notes from the picked one on, one to
+  /// each, in the staff of the picked note and on into the next bars.
+  void _spreadLyrics(List<String> words) {
+    final staff = _summary?.staff;
+    final count = _measureCount;
+    _apply((xml, ref) {
+      var current = xml;
+      var bar = ref.measureIndex;
+      var note = ref.noteIndex;
+      var last = ref;
+      for (final word in words) {
+        XmlNoteRef? at;
+        while (bar < count && at == null) {
+          final notes = _editor.inspect(current, widget.partIndex, bar).notes;
+          while (note < notes.length &&
+              (notes[note].isRest ||
+                  notes[note].isGrace ||
+                  !notes[note].leadsChord ||
+                  (staff != null && notes[note].staff != staff))) {
+            note++;
+          }
+          if (note < notes.length) {
+            at = ref.inBar(bar, note);
+          } else {
+            bar++;
+            note = 0;
+          }
+        }
+        if (at == null) break;
+        current = _editor
+            .setLyric(current, at, word, verse: _verse, typed: true)
+            .xml;
+        last = at;
+        note++;
+      }
+      return XmlEditResult(current, last);
+    });
   }
 
   void _insertBar() => _apply(
@@ -1151,6 +1932,9 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
               ),
       );
       _savedCursor = _cursor;
+      _draftTimer?.cancel();
+      _draftTimer = null;
+      await service.discardDraft(widget.songId);
       if (mounted) Navigator.of(context).pop(true);
       return true;
     } on FormatException catch (error) {
@@ -1189,19 +1973,37 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     if (!mounted || choice == null) return;
     switch (choice) {
       case _LeaveChoice.discard:
-        Navigator.of(context).pop(false);
+        // Thrown away on purpose: not offered again.
+        _draftTimer?.cancel();
+        _draftTimer = null;
+        _savedCursor = _cursor;
+        await _drafts.discardDraft(widget.songId);
+        if (mounted) Navigator.of(context).pop(false);
       case _LeaveChoice.save:
         await _save();
     }
   }
 
   Widget _engraving(AppLocalizations l10n, int? selectedEvent) {
+    final picked = _pickedRefs;
+    // With only the outer notes of chords picked, the note the run began
+    // on may not be one of them: it is then not shown as picked.
+    final anchored = picked.any(
+      (ref) => ref.measureIndex == _measureIndex && ref.noteIndex == _noteIndex,
+    );
     return LayoutBuilder(
       builder: (context, constraints) => VerovioScoreView(
         key: _scoreKey,
         score: _previewScore,
         // Line by line: an edit engraves the line it is in, not the score.
         engravingChunks: _chunks,
+        // A narrower page for the same lines: larger notes.
+        engravingPageSize: _noteSize == 1.0
+            ? null
+            : Size(
+                (2100 / _noteSize).roundToDouble(),
+                (2970 / _noteSize).roundToDouble(),
+              ),
         playbackXml: () => partAloneXml(_xml, widget.partIndex),
         showZoomControls: false,
         semanticsLabel: l10n.proofreadBar(
@@ -1213,14 +2015,46 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         // Every edit changes the score: the page stays while the new one
         // is engraved.
         keepPagesOnChange: true,
-        // Writing, a finger on the staff carries the note, so it must not
-        // move the page as well; two fingers do.
+        // One finger moves the page with every tool. Writing, a tap places
+        // the note and a finger held still carries it to its line.
         inputMode: _writing ? 'place' : 'select',
-        oneFingerPan: !_writing,
         onEventTapped: _writing ? null : _onEventTapped,
         onNotePlaced: _onNotePlaced,
-        highlightedMeasureIndex: _measureIndex,
-        selectedNoteAddress: selectedEvent == null
+        // With the select tool a finger also carries the picked notes,
+        // picks a run of them when held, and picks a bar tapped twice.
+        onSelectionDragged: _tool == _Tool.select ? _onSelectionDragged : null,
+        onRangeDragged: _tool == _Tool.select ? _onRangeDragged : null,
+        onMeasureDoubleTapped: _tool == _Tool.select
+            ? _onBarDoubleTapped
+            : null,
+        onTextTapped: _tool == _Tool.select && _spanFrom == null && !_ranging
+            ? _onTextTapped
+            : null,
+        // Held and lifted on a note: what can be done to it is offered,
+        // as a long press opens the menu of a notation program.
+        onLongPressed: _tool == _Tool.select && _spanFrom == null
+            ? (address) {
+                if (!_enterBar(address.measureIndex)) return;
+                final index = xmlNoteIndexForEvent(
+                  _shownMeasure(address.measureIndex),
+                  address.eventIndex,
+                );
+                if (index == null) return;
+                setState(_dropRange);
+                _selectNote(index);
+                unawaited(_choosePalette());
+              }
+            : null,
+        // A tap on the bare page lets a run of notes or bars go.
+        onBlankTapped: () {
+          if (_rangeEnd != null || _barSel != null) setState(_dropRange);
+        },
+        rangeHandles: _tool == _Tool.select && _rangeEnd != null,
+        highlightedMeasureIndex: _barSel == null ? _measureIndex : null,
+        highlightedMeasureRange: _barSel == null
+            ? null
+            : (start: _barSel!.from, end: _barSel!.to),
+        selectedNoteAddress: selectedEvent == null || !anchored
             ? null
             : ScoreEventAddress(
                 partIndex: 0,
@@ -1228,13 +2062,17 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 eventIndex: selectedEvent,
               ),
         alsoSelectedNotes: [
-          for (final index in _picked)
-            if (index != _noteIndex)
-              if (eventIndexForXmlNote(_shownMeasure(_measureIndex), index)
+          for (final ref in picked)
+            if (ref.measureIndex != _measureIndex ||
+                ref.noteIndex != _noteIndex)
+              if (eventIndexForXmlNote(
+                    _shownMeasure(ref.measureIndex),
+                    ref.noteIndex,
+                  )
                   case final event?)
                 ScoreEventAddress(
                   partIndex: 0,
-                  measureIndex: _measureIndex,
+                  measureIndex: ref.measureIndex,
                   eventIndex: event,
                 ),
         ],
@@ -1277,7 +2115,9 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       EditorToolButton(
         tooltip: l10n.toolRest,
         selected: _tool == _Tool.rest,
-        onPressed: () => _setTool(_Tool.rest),
+        // A second tap goes back to writing notes.
+        onPressed: () =>
+            _setTool(_tool == _Tool.rest ? _Tool.note : _Tool.rest),
         child: MusicGlyph(MusicGlyphs.duration(_entryType, rest: true)),
       ),
       EditorToolButton(
@@ -1293,6 +2133,12 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
           onPressed: hasNote ? () => unawaited(_pickAccidental(context)) : null,
           child: const MusicGlyph(MusicGlyphs.accidentalSharp),
         ),
+      ),
+      EditorToolButton(
+        tooltip: l10n.tieTool,
+        selected: summary?.tieStart ?? false,
+        onPressed: hasNote ? () => _apply(_editor.toggleTie) : null,
+        child: const TieIcon(),
       ),
       const EditorRailDivider(),
       EditorToolButton(
@@ -1321,7 +2167,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     final index = _noteIndex;
     final count = _previewMeasure.notes.length;
     // Seven keys and the bar: on a small phone they stand closer.
-    final compact = MediaQuery.sizeOf(context).width < 400;
+    final compact = _smallTools || MediaQuery.sizeOf(context).width < 400;
     return ColoredBox(
       color: AppColors.canvas,
       child: Padding(
@@ -1411,8 +2257,9 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         ? null
         : eventIndexForXmlNote(_shownMeasure(_measureIndex), _noteIndex!);
     final hint = switch (_tool) {
-      _Tool.note || _Tool.rest => l10n.penHint,
-      _Tool.eraser => l10n.eraserHint,
+      _Tool.note when _keysAppend => l10n.keysAppendHint,
+      _Tool.note || _Tool.rest => _toolHint ? l10n.penHint : null,
+      _Tool.eraser => _toolHint ? l10n.eraserHint : null,
       _Tool.select => _ranging ? l10n.rangeHint : null,
     };
     return PopScope(
@@ -1489,6 +2336,30 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                   icon: Icons.select_all_rounded,
                 ),
                 _MenuItem(
+                  l10n.soundNotes,
+                  () => setState(() => _sounds = !_sounds),
+                  icon: Icons.volume_up_outlined,
+                  checked: _sounds,
+                ),
+                _MenuItem(
+                  l10n.optRailRight,
+                  () => setState(() => _railRight = !_railRight),
+                  icon: Icons.swap_horiz_rounded,
+                  checked: _railRight,
+                ),
+                _MenuItem(
+                  l10n.optSmallTools,
+                  () => setState(() => _smallTools = !_smallTools),
+                  icon: Icons.photo_size_select_small_rounded,
+                  checked: _smallTools,
+                ),
+                _MenuItem(
+                  l10n.optDarkScore,
+                  () => setState(() => _darkScore = !_darkScore),
+                  icon: Icons.dark_mode_outlined,
+                  checked: _darkScore,
+                ),
+                _MenuItem(
                   _clip == null
                       ? l10n.pasteBarsNone
                       : l10n.pasteBars(_clip!.length),
@@ -1506,132 +2377,399 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             ),
           ],
         ),
-        body: SafeArea(
-          top: false,
-          child: Column(
-            children: [
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, area) {
-                    // The original beside the score where there is width
-                    // for both, above it on a phone held upright.
-                    final beside = area.maxWidth >= 700;
-                    return Flex(
-                      direction: beside ? Axis.horizontal : Axis.vertical,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (_showOriginal && _places != null)
-                          SizedBox(
-                            width: beside ? area.maxWidth * 0.32 : null,
-                            height: beside
-                                ? null
-                                : (area.maxHeight * 0.24).clamp(84.0, 170.0),
-                            child: _Captioned(
-                              caption: l10n.scoreOriginal,
-                              child: _OriginalStrip(
-                                place: _place,
-                                image: _place == null
+        // An attached keyboard works the editor as it does a notation
+        // program on a desk.
+        body: CallbackShortcuts(
+          bindings: _shortcuts,
+          child: Focus(
+            autofocus: true,
+            child: SafeArea(
+              top: false,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, area) {
+                        // The original beside the score where there is width
+                        // for both, above it on a phone held upright.
+                        final beside = area.maxWidth >= 700;
+                        return Flex(
+                          direction: beside ? Axis.horizontal : Axis.vertical,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (_showOriginal && _places != null)
+                              SizedBox(
+                                width: beside ? area.maxWidth * 0.32 : null,
+                                height: beside
                                     ? null
-                                    : _original(_place!.image),
-                                beside: beside,
-                              ),
-                            ),
-                          ),
-                        // Keyed: showing or hiding the original must not
-                        // make the engraving start over.
-                        Expanded(
-                          key: const ValueKey('engraving'),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              EditorRail(children: _railTools(l10n)),
-                              Expanded(
-                                child: Stack(
-                                  children: [
-                                    Positioned.fill(
-                                      child: _engraving(l10n, selectedEvent),
-                                    ),
-                                    if (hint != null)
-                                      Positioned(
-                                        left: 8,
-                                        top: 6,
-                                        right: 8,
-                                        child: _HintChip(hint),
+                                    : (area.maxHeight * 0.24).clamp(
+                                        84.0,
+                                        170.0,
                                       ),
-                                  ],
+                                child: _Captioned(
+                                  caption: l10n.scoreOriginal,
+                                  child: _OriginalStrip(
+                                    place: _place,
+                                    image: _place == null
+                                        ? null
+                                        : _original(_place!.image),
+                                    beside: beside,
+                                  ),
                                 ),
                               ),
-                            ],
+                            // Keyed: showing or hiding the original must not
+                            // make the engraving start over.
+                            Expanded(
+                              key: const ValueKey('engraving'),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                textDirection: _railRight
+                                    ? TextDirection.rtl
+                                    : TextDirection.ltr,
+                                children: [
+                                  EditorRail(
+                                    onRight: _railRight,
+                                    compact: _smallTools,
+                                    children: _railTools(l10n),
+                                  ),
+                                  Expanded(
+                                    child: Directionality(
+                                      textDirection: Directionality.of(context),
+                                      child: Stack(
+                                        children: [
+                                          Positioned.fill(
+                                            child: _darkScore
+                                                // Light notes on a dark page,
+                                                // for a dim room.
+                                                ? ColorFiltered(
+                                                    colorFilter:
+                                                        const ColorFilter.matrix(
+                                                          [
+                                                            -1, 0, 0, 0, 255, //
+                                                            0, -1, 0, 0, 255, //
+                                                            0, 0, -1, 0, 255, //
+                                                            0, 0, 0, 1, 0,
+                                                          ],
+                                                        ),
+                                                    child: _engraving(
+                                                      l10n,
+                                                      selectedEvent,
+                                                    ),
+                                                  )
+                                                : _engraving(
+                                                    l10n,
+                                                    selectedEvent,
+                                                  ),
+                                          ),
+                                          if (hint != null)
+                                            Positioned(
+                                              left: 8,
+                                              top: 6,
+                                              right: 8,
+                                              child: _HintChip(hint),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                  if (_barSel case final bars?)
+                    _BarEditBar(
+                      label: bars.from == bars.to
+                          ? l10n.barPicked(bars.from + _firstBarNumber)
+                          : l10n.barsPicked(
+                              bars.from + _firstBarNumber,
+                              bars.to + _firstBarNumber,
+                            ),
+                      actions: [
+                        (
+                          l10n.barRangeCut,
+                          Icons.content_cut_rounded,
+                          () => _actOnBars(
+                            _BarRangeAction.cut,
+                            bars.from,
+                            bars.to,
+                          ),
+                        ),
+                        (
+                          l10n.barRangeCopy,
+                          Icons.copy_rounded,
+                          () => _actOnBars(
+                            _BarRangeAction.copy,
+                            bars.from,
+                            bars.to,
+                          ),
+                        ),
+                        // Over the picked bars, as a notation program
+                        // pastes.
+                        (
+                          l10n.barEditPaste,
+                          Icons.content_paste_rounded,
+                          _clip == null
+                              ? null
+                              : () => _overwriteBars(bars.from),
+                        ),
+                        // Between the bars, without taking any away.
+                        (
+                          l10n.barEditPasteInsert,
+                          Icons.playlist_add_rounded,
+                          _clip == null
+                              ? null
+                              : () => _pasteBars(after: bars.to),
+                        ),
+                        (
+                          l10n.barEditDuplicate,
+                          Icons.copy_all_rounded,
+                          () => _duplicateBars(bars.from, bars.to),
+                        ),
+                        (
+                          l10n.barRangeTranspose,
+                          Icons.swap_vert_rounded,
+                          () => unawaited(
+                            _askBarRange(from: bars.from, to: bars.to),
+                          ),
+                        ),
+                        (
+                          l10n.barRangeDelete,
+                          Icons.backspace_outlined,
+                          () => _actOnBars(
+                            _BarRangeAction.delete,
+                            bars.from,
+                            bars.to,
+                          ),
+                        ),
+                        (
+                          l10n.deleteMeasure,
+                          Icons.delete_outline_rounded,
+                          _measureCount > bars.to - bars.from + 1
+                              ? () => _actOnBars(
+                                  _BarRangeAction.remove,
+                                  bars.from,
+                                  bars.to,
+                                )
+                              : null,
+                        ),
+                      ],
+                      close: l10n.close,
+                      onClose: () => setState(_dropRange),
+                    ),
+                  if (_spanFrom case final span?)
+                    _SpanBanner(
+                      text: l10n.spanPickEnd(_spanLabel(l10n, span.kind)),
+                      toSelected: l10n.spanToSelected,
+                      onToSelected: _noteIndex == null
+                          ? null
+                          : () => _finishSpan(_noteIndex!),
+                      cancel: l10n.cancel,
+                      onCancel: () => setState(() => _spanFrom = null),
+                    ),
+                  if (_lengthOff case final off?)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.warning_amber_rounded,
+                            size: 16,
+                            color: AppColors.accent,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            off < 0
+                                ? l10n.barTooShort(_beats(-off))
+                                : l10n.barTooLong(_beats(off)),
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: AppColors.accent,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const Divider(height: 1, color: AppColors.border),
+                  // Under the score: the tools of one palette, or the keyboard.
+                  if (_panel == _Panel.palette)
+                    _PalettePanel(
+                      title: _paletteLabel(l10n, _palette),
+                      onTitle: () => unawaited(_choosePalette()),
+                      close: l10n.close,
+                      onClose: () => setState(() => _panel = _Panel.none),
+                      children: _paletteTools(l10n),
+                    ),
+                  if (_panel == _Panel.keys)
+                    PianoKeyboard(
+                      octave: _keyboardOctave,
+                      enabled: summary != null && !summary.isGrace,
+                      onKey: _enterKey,
+                      onOctave: (by) => setState(
+                        () => _keyboardOctave = (_keyboardOctave + by).clamp(
+                          1,
+                          7,
+                        ),
+                      ),
+                      lowerTooltip: l10n.keyboardLower,
+                      higherTooltip: l10n.keyboardHigher,
+                      keyWidth: _keyWidths[_keyWidth],
+                      buttons: [
+                        KeyboardButton(
+                          tooltip: l10n.keyRest,
+                          icon: Icons.remove_rounded,
+                          glyph: MusicGlyphs.restQuarter,
+                          onPressed: summary != null && !summary.isGrace
+                              ? _enterRest
+                              : null,
+                        ),
+                        KeyboardButton(
+                          tooltip: l10n.chordKeys,
+                          icon: Icons.layers_rounded,
+                          selected: _chordKeys,
+                          onPressed: () => setState(() {
+                            _chordKeys = !_chordKeys;
+                            _endChord();
+                          }),
+                        ),
+                        KeyboardButton(
+                          tooltip: l10n.chordRepeat,
+                          icon: Icons.replay_rounded,
+                          onPressed: _chordBefore.isEmpty ? null : _repeatChord,
+                        ),
+                        KeyboardButton(
+                          tooltip: l10n.keyWidthTool,
+                          icon: Icons.width_normal_rounded,
+                          onPressed: () => setState(
+                            () =>
+                                _keyWidth = (_keyWidth + 1) % _keyWidths.length,
                           ),
                         ),
                       ],
-                    );
-                  },
-                ),
+                    ),
+                  if (_panel != _Panel.none)
+                    const Divider(height: 1, color: AppColors.border),
+                  _transport(l10n),
+                ],
               ),
-              if (_spanFrom case final span?)
-                _SpanBanner(
-                  text: l10n.spanPickEnd(_spanLabel(l10n, span.kind)),
-                  toSelected: l10n.spanToSelected,
-                  onToSelected: _noteIndex == null
-                      ? null
-                      : () => _finishSpan(_noteIndex!),
-                  cancel: l10n.cancel,
-                  onCancel: () => setState(() => _spanFrom = null),
-                ),
-              if (_lengthOff case final off?)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.warning_amber_rounded,
-                        size: 16,
-                        color: AppColors.accent,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        off < 0
-                            ? l10n.barTooShort(_beats(-off))
-                            : l10n.barTooLong(_beats(off)),
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: AppColors.accent,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              const Divider(height: 1, color: AppColors.border),
-              // Under the score: the tools of one palette, or the keyboard.
-              if (_panel == _Panel.palette)
-                _PalettePanel(
-                  title: _paletteLabel(l10n, _palette),
-                  close: l10n.close,
-                  onClose: () => setState(() => _panel = _Panel.none),
-                  children: _paletteTools(l10n),
-                ),
-              if (_panel == _Panel.keys)
-                PianoKeyboard(
-                  octave: _keyboardOctave,
-                  enabled: summary != null && !summary.isGrace,
-                  onKey: _enterKey,
-                  onOctave: (by) => setState(
-                    () => _keyboardOctave = (_keyboardOctave + by).clamp(1, 7),
-                  ),
-                  lowerTooltip: l10n.keyboardLower,
-                  higherTooltip: l10n.keyboardHigher,
-                ),
-              if (_panel != _Panel.none)
-                const Divider(height: 1, color: AppColors.border),
-              _transport(l10n),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  /// What the keys of an attached keyboard do.
+  Map<ShortcutActivator, VoidCallback> get _shortcuts {
+    void move(XmlEditResult Function(String, XmlNoteRef) edit) {
+      _applyEach(edit, where: (note) => !note.isRest && !note.isGrace);
+      _soundPicked();
+    }
+
+    void value(String type) {
+      if (_writing) {
+        setState(() {
+          _entryType = type;
+          _entryDots = 0;
+        });
+      } else {
+        _setLength(type, 0);
+      }
+    }
+
+    return {
+      const SingleActivator(LogicalKeyboardKey.arrowLeft): () => _stepNote(-1),
+      const SingleActivator(LogicalKeyboardKey.arrowRight): () => _stepNote(1),
+      const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+          move((xml, ref) => _editor.moveDiatonic(xml, ref, 1)),
+      const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+          move((xml, ref) => _editor.moveDiatonic(xml, ref, -1)),
+      const SingleActivator(LogicalKeyboardKey.arrowUp, shift: true): () =>
+          move((xml, ref) => _editor.shiftOctave(xml, ref, 1)),
+      const SingleActivator(LogicalKeyboardKey.arrowDown, shift: true): () =>
+          move((xml, ref) => _editor.shiftOctave(xml, ref, -1)),
+      const SingleActivator(LogicalKeyboardKey.delete): _erase,
+      const SingleActivator(LogicalKeyboardKey.backspace): _erase,
+      const SingleActivator(LogicalKeyboardKey.escape): () =>
+          _setTool(_Tool.select),
+      const SingleActivator(LogicalKeyboardKey.keyN): () =>
+          _setTool(_Tool.note),
+      const SingleActivator(LogicalKeyboardKey.keyR): () =>
+          _setTool(_Tool.rest),
+      const SingleActivator(LogicalKeyboardKey.keyT): () =>
+          _apply(_editor.toggleTie),
+      const SingleActivator(LogicalKeyboardKey.period): _dot,
+      const SingleActivator(LogicalKeyboardKey.space): () =>
+          unawaited(_playBar()),
+      // The values as a notation program numbers them: 2 a whole note,
+      // 4 a quarter, 8 a sixty-fourth.
+      for (final (index, type) in noteDurationTypes.indexed)
+        SingleActivator(_digitKeys[index + 2]): () => value(type),
+      for (final control in const [true, false]) ...{
+        SingleActivator(
+          LogicalKeyboardKey.keyZ,
+          control: control,
+          meta: !control,
+        ): () {
+          if (_cursor > 0) _undo();
+        },
+        SingleActivator(
+          LogicalKeyboardKey.keyZ,
+          control: control,
+          meta: !control,
+          shift: true,
+        ): () {
+          if (_cursor < _history.length - 1) _redo();
+        },
+        SingleActivator(
+          LogicalKeyboardKey.keyY,
+          control: control,
+          meta: !control,
+        ): () {
+          if (_cursor < _history.length - 1) _redo();
+        },
+        SingleActivator(
+          LogicalKeyboardKey.keyC,
+          control: control,
+          meta: !control,
+        ): _copyNotes,
+        SingleActivator(
+          LogicalKeyboardKey.keyV,
+          control: control,
+          meta: !control,
+        ): () {
+          final clip = _noteClip;
+          if (clip != null) {
+            _apply((xml, ref) => _editor.pasteNotes(xml, ref, clip));
+          }
+        },
+        SingleActivator(
+          LogicalKeyboardKey.keyS,
+          control: control,
+          meta: !control,
+        ): () {
+          if (_dirty && !_saving) unawaited(_save());
+        },
+      },
+    };
+  }
+
+  static const _digitKeys = [
+    LogicalKeyboardKey.digit0,
+    LogicalKeyboardKey.digit1,
+    LogicalKeyboardKey.digit2,
+    LogicalKeyboardKey.digit3,
+    LogicalKeyboardKey.digit4,
+    LogicalKeyboardKey.digit5,
+    LogicalKeyboardKey.digit6,
+    LogicalKeyboardKey.digit7,
+    LogicalKeyboardKey.digit8,
+    LogicalKeyboardKey.digit9,
+  ];
 
   static String _paletteLabel(AppLocalizations l10n, _Palette palette) =>
       switch (palette) {
@@ -1639,12 +2777,39 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         _Palette.length => l10n.toolsLength,
         _Palette.pitch => l10n.toolsPitch,
         _Palette.marks => l10n.toolsMarks,
+        _Palette.looks => l10n.toolsLooks,
         _Palette.words => l10n.toolsWords,
         _Palette.bar => l10n.toolsBarSigns,
         _Palette.score => l10n.toolsScore,
       };
 
   /// Applies an edit of the bar as a whole; the picked note stays picked.
+  /// Joins the picked notes under a beam, bar by bar, or takes their beams
+  /// off.
+  void _beam({required bool join}) {
+    final bars = <int, List<int>>{};
+    for (final ref in _pickedRefs) {
+      bars.putIfAbsent(ref.measureIndex, () => []).add(ref.noteIndex);
+    }
+    _apply((xml, ref) {
+      var current = xml;
+      FormatException? refused;
+      var done = 0;
+      for (final MapEntry(key: bar, value: notes) in bars.entries) {
+        try {
+          current = _editor
+              .setBeam(current, widget.partIndex, bar, notes, join: join)
+              .xml;
+          done++;
+        } on FormatException catch (error) {
+          refused = error;
+        }
+      }
+      if (done == 0) throw refused ?? const FormatException('빔을 바꿀 수 없습니다.');
+      return XmlEditResult(current, ref);
+    }, keepRange: true);
+  }
+
   void _applyBar(XmlEditResult Function(String xml, int measureIndex) edit) {
     final keep = _noteIndex ?? 0;
     _apply((xml, ref) {
@@ -1667,7 +2832,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             selected: _ranging,
             onPressed: () => setState(() {
               _ranging = !_ranging;
-              _rangeTo = null;
+              _dropRange();
               // A run of notes is picked with the select tool.
               if (_ranging) _tool = _Tool.select;
             }),
@@ -1748,16 +2913,69 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
               ],
             ),
           ),
-          _ToolButton(
-            tooltip: l10n.graceNote,
-            onPressed: hasNote ? () => _apply(_editor.addGraceNote) : null,
-            child: Text(l10n.graceNote),
-          ),
+          // On a grace note the button is its slash: with it short
+          // before the beat, without it leaning on the note it leads to.
+          if (summary != null && summary.isGrace)
+            _ToolButton(
+              tooltip: l10n.graceSlash,
+              selected: summary.graceSlash,
+              onPressed: () => _apply(_editor.toggleGraceSlash),
+              child: Text(l10n.graceSlash),
+            )
+          else
+            _ToolButton(
+              tooltip: l10n.graceNote,
+              onPressed: hasNote ? () => _apply(_editor.addGraceNote) : null,
+              child: Text(l10n.graceNote),
+            ),
           _ToolButton(
             tooltip: l10n.tieTool,
             selected: summary?.tieStart ?? false,
             onPressed: hasNote ? () => _apply(_editor.toggleTie) : null,
             child: Text(l10n.tieTool),
+          ),
+          _MenuButton(
+            tooltip: l10n.beamMenu,
+            label: l10n.beamMenu,
+            items: [
+              for (final (label, join) in [
+                (l10n.beamJoin, true),
+                (l10n.beamBreak, false),
+              ])
+                _MenuItem(label, hasNote ? () => _beam(join: join) : null),
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.notesMenu,
+            label: l10n.notesMenu,
+            items: [
+              _MenuItem(
+                l10n.notesCopy,
+                hasEvent ? _copyNotes : null,
+                icon: Icons.copy_rounded,
+              ),
+              _MenuItem(
+                _noteClip == null
+                    ? l10n.notesPasteNone
+                    : l10n.notesPaste(_noteClip!.length),
+                _noteClip != null && hasEvent
+                    ? () => _apply(
+                        (xml, ref) => _editor.pasteNotes(xml, ref, _noteClip!),
+                      )
+                    : null,
+                icon: Icons.content_paste_rounded,
+              ),
+              _MenuItem(
+                l10n.notesDuplicate,
+                hasEvent
+                    ? () {
+                        final refs = _pickedRefs;
+                        _apply((xml, _) => _editor.duplicateNotes(xml, refs));
+                      }
+                    : null,
+                icon: Icons.copy_all_rounded,
+              ),
+            ],
           ),
           _MenuButton(
             tooltip: l10n.voiceMenu,
@@ -1771,6 +2989,196 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 l10n.voiceRemove,
                 summary != null ? () => _apply(_editor.removeVoice) : null,
               ),
+              _MenuItem(
+                l10n.voiceSwap,
+                summary != null ? () => _apply(_editor.swapVoices) : null,
+              ),
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.selectMenu,
+            label: l10n.selectMenu,
+            items: [
+              _MenuItem(l10n.selectAll, () => _pickBars(0, _measureCount - 1)),
+              _MenuItem(
+                l10n.selectBar,
+                () => _pickBars(_measureIndex, _measureIndex),
+              ),
+              for (final (label, only) in [
+                (l10n.onlyAll, _Only.all),
+                (l10n.onlyTop, _Only.top),
+                (l10n.onlyBottom, _Only.bottom),
+              ])
+                _MenuItem(
+                  label,
+                  _rangeEnd != null ? () => setState(() => _only = only) : null,
+                  checked: _rangeEnd != null && _only == only,
+                ),
+              _MenuItem(
+                l10n.clearLyrics,
+                hasEvent
+                    ? () => _applyEach(
+                        (xml, ref) =>
+                            _editor.setLyric(xml, ref, '', verse: _verse),
+                        where: (note) => note.lyrics.containsKey(_verse),
+                      )
+                    : null,
+              ),
+              _MenuItem(
+                l10n.clearChords,
+                hasEvent
+                    ? () => _applyEach(
+                        (xml, ref) => _editor.setHarmony(xml, ref, ''),
+                        where: (note) =>
+                            note.leadsChord && note.harmony != null,
+                      )
+                    : null,
+              ),
+            ],
+          ),
+        ];
+      case _Palette.looks:
+        bool sounding(XmlNoteSummary note) => !note.isRest && !note.isGrace;
+        bool heads(XmlNoteSummary note) => sounding(note) && note.leadsChord;
+        return [
+          _MenuButton(
+            tooltip: l10n.stemMenu,
+            label: l10n.stemMenu,
+            items: [
+              for (final (label, direction) in [
+                (l10n.stemUp, 'up'),
+                (l10n.stemDown, 'down'),
+                (l10n.stemHide, 'none'),
+                (l10n.automatic, null),
+              ])
+                _MenuItem(
+                  label,
+                  hasNote
+                      ? () => _applyEach(
+                          (xml, ref) => _editor.setStem(xml, ref, direction),
+                          where: heads,
+                        )
+                      : null,
+                  checked: hasNote && summary.stem == direction,
+                ),
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.noteheadMenu,
+            label: l10n.noteheadMenu,
+            items: [
+              for (final (label, head) in [
+                (l10n.noteheadNormal, null),
+                (l10n.noteheadSlash, 'slash'),
+                (l10n.noteheadGhost, 'parentheses'),
+              ])
+                _MenuItem(
+                  label,
+                  hasNote
+                      ? () => _applyEach(
+                          (xml, ref) => _editor.setNotehead(xml, ref, head),
+                          where: sounding,
+                        )
+                      : null,
+                  checked: hasNote && summary.notehead == head,
+                ),
+            ],
+          ),
+          _ToolButton(
+            tooltip: l10n.otherStaff,
+            onPressed: hasEvent
+                ? () => _applyEach(
+                    _editor.switchStaff,
+                    where: (note) => note.leadsChord && !note.isGrace,
+                  )
+                : null,
+            child: Text(l10n.otherStaff),
+          ),
+          const _ToolGap(),
+          _MenuButton(
+            tooltip: l10n.markSideMenu,
+            label: l10n.markSideMenu,
+            items: [
+              for (final (label, side) in [
+                (l10n.sideAbove, 'above'),
+                (l10n.sideBelow, 'below'),
+                (l10n.automatic, null),
+              ])
+                _MenuItem(
+                  label,
+                  hasEvent
+                      ? () => _applyEach(
+                          (xml, ref) =>
+                              _editor.setMarkPlacement(xml, ref, side),
+                          where: (note) =>
+                              note.leadsChord &&
+                              (note.fermata || note.articulations.isNotEmpty),
+                        )
+                      : null,
+                ),
+            ],
+          ),
+          _ToolButton(
+            tooltip: l10n.clearMarksTool,
+            onPressed: hasEvent
+                ? () => _applyEach(
+                    _editor.clearMarks,
+                    where: (note) =>
+                        note.leadsChord &&
+                        (note.fermata || note.articulations.isNotEmpty),
+                  )
+                : null,
+            child: Text(l10n.clearMarksTool),
+          ),
+          _ToolButton(
+            tooltip: l10n.clearAccidentalTool,
+            onPressed: hasNote
+                ? () => _applyEach(_editor.clearAccidental, where: sounding)
+                : null,
+            child: Text(l10n.clearAccidentalTool),
+          ),
+          const _ToolGap(),
+          _MenuButton(
+            tooltip: l10n.doubleMenu,
+            label: l10n.doubleMenu,
+            items: [
+              for (final (label, steps) in [
+                (l10n.doubleThirdUp, 2),
+                (l10n.doubleSixthUp, 5),
+                (l10n.doubleOctaveUp, 7),
+                (l10n.doubleThirdDown, -2),
+                (l10n.doubleOctaveDown, -7),
+              ])
+                _MenuItem(
+                  label,
+                  hasNote
+                      ? () => _applyEach(
+                          (xml, ref) => _editor.doubleAt(xml, ref, steps),
+                          where: sounding,
+                          // Each adds a note: the last first, so the
+                          // ones before keep their numbers.
+                          backwards: true,
+                        )
+                      : null,
+                ),
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.jazzMenu,
+            label: l10n.jazzMenu,
+            items: [
+              // Named as jazz players name them.
+              for (final (label, name) in const [
+                ('Scoop', 'scoop'),
+                ('Plop', 'plop'),
+                ('Doit', 'doit'),
+                ('Fall', 'falloff'),
+              ])
+                _MenuItem(
+                  label,
+                  hasNote ? () => _toggleMark(name, restsToo: false) : null,
+                  checked: summary?.articulations.contains(name) ?? false,
+                ),
             ],
           ),
         ];
@@ -1780,11 +3188,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             _ToolButton(
               tooltip: '${l10n.noteValue} ${_fractionOf[type]}',
               selected: summary?.type == type,
-              onPressed: canRetime
-                  ? () => _apply(
-                      (xml, ref) => _editor.setDuration(xml, ref, type, 0),
-                    )
-                  : null,
+              onPressed: canRetime ? () => _setLength(type, 0) : null,
               child: MusicGlyph(
                 MusicGlyphs.duration(type, rest: summary?.isRest ?? false),
               ),
@@ -1808,6 +3212,29 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                         )
                       : null,
                 ),
+              // Notes that are there already, read too long: three of
+              // them in the time of two.
+              _MenuItem(
+                l10n.tupletGroup,
+                _rangeEnd != null && _pickedRefs.length >= 3
+                    ? () {
+                        final picked = _pickedRefs;
+                        final bar = picked.first.measureIndex;
+                        if (picked.any((ref) => ref.measureIndex != bar)) {
+                          _showMessage(l10n.tupletOneBar);
+                          return;
+                        }
+                        _apply(
+                          (xml, ref) => _editor.groupTuplet(
+                            xml,
+                            widget.partIndex,
+                            bar,
+                            [for (final ref in picked) ref.noteIndex],
+                          ),
+                        );
+                      }
+                    : null,
+              ),
               _MenuItem(
                 l10n.tupletRemove,
                 summary != null && summary.inTuplet
@@ -1878,6 +3305,33 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                     )
                   : null,
               child: MusicGlyph(MusicGlyphs.accidental(alter)),
+            ),
+          // The same sound written the other way: F sharp, G flat.
+          _ToolButton(
+            tooltip: l10n.respell,
+            onPressed: hasNote
+                ? () =>
+                      _applyEach(_editor.respell, where: (note) => !note.isRest)
+                : null,
+            child: const Text('♯↔♭'),
+          ),
+          // A run of notes written all with flats, or all with sharps.
+          for (final (label, text, sharps) in [
+            (l10n.favourFlats, '→♭', false),
+            (l10n.favourSharps, '→♯', true),
+          ])
+            _ToolButton(
+              tooltip: label,
+              onPressed: hasNote
+                  ? () => _applyEach((xml, ref) {
+                      final alter = _editor.describe(xml, ref).pitch?.alter;
+                      if (alter == null || (sharps ? alter >= 0 : alter <= 0)) {
+                        throw const FormatException('이미 그렇게 적혀 있습니다.');
+                      }
+                      return _editor.respell(xml, ref);
+                    }, where: (note) => note.pitch != null)
+                  : null,
+              child: Text(text),
             ),
         ];
       case _Palette.marks:
@@ -1996,6 +3450,34 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 ),
             ],
           ),
+          _MenuButton(
+            tooltip: l10n.fingeringMenu,
+            label: summary?.fingering == null
+                ? l10n.fingeringMenu
+                : '${l10n.fingeringMenu} ${summary!.fingering}',
+            items: [
+              for (var finger = 1; finger <= 5; finger++)
+                _MenuItem(
+                  '$finger',
+                  hasNote
+                      ? () => _applyEach(
+                          (xml, ref) => _editor.setFingering(xml, ref, finger),
+                          where: (note) => !note.isRest && !note.isGrace,
+                        )
+                      : null,
+                  checked: summary?.fingering == '$finger',
+                ),
+              _MenuItem(
+                l10n.remove,
+                summary?.fingering != null
+                    ? () => _applyEach(
+                        (xml, ref) => _editor.setFingering(xml, ref, null),
+                        where: (note) => note.fingering != null,
+                      )
+                    : null,
+              ),
+            ],
+          ),
         ];
       case _Palette.words:
         return [
@@ -2038,6 +3520,20 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             : _previewMeasure.notes.elementAt(_noteIndex!).staff;
         final clef = attributes.clefs[staff];
         return [
+          // Shorter than its time on purpose: not counted, not warned of.
+          _ToolButton(
+            tooltip: l10n.pickupBar,
+            selected: signs.pickup,
+            onPressed: () => _applyBar(
+              (xml, measure) => _editor.setPickup(
+                xml,
+                widget.partIndex,
+                measure,
+                pickup: !signs.pickup,
+              ),
+            ),
+            child: Text(l10n.pickupBar),
+          ),
           _ToolButton(
             tooltip: l10n.keyAndTime,
             onPressed: () => unawaited(_editKeyAndTime()),
@@ -2196,6 +3692,38 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             onPressed: () => unawaited(_addText()),
             child: Text(l10n.addText),
           ),
+          // The words a player slows down and speeds up by, and goes back
+          // to the tempo by. They are played as they are written.
+          _MenuButton(
+            tooltip: l10n.tempoChange,
+            label: l10n.tempoChange,
+            items: [
+              for (final word in const ['rit.', 'accel.', 'a tempo'])
+                _MenuItem(
+                  word,
+                  () => _applyBar(
+                    (xml, measure) =>
+                        _editor.addWords(xml, widget.partIndex, measure, word),
+                  ),
+                ),
+            ],
+          ),
+          // Written as jazz charts write it; the player swings from the
+          // word on, and plays even again from "Straight".
+          _MenuButton(
+            tooltip: 'Swing',
+            label: 'Swing',
+            items: [
+              for (final word in const ['Swing', 'Straight'])
+                _MenuItem(
+                  word,
+                  () => _applyBar(
+                    (xml, measure) =>
+                        _editor.addWords(xml, widget.partIndex, measure, word),
+                  ),
+                ),
+            ],
+          ),
           const _ToolGap(),
           // Where the bar stands on the page: the first bar begins a line
           // and a page anyway.
@@ -2207,24 +3735,44 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
               tooltip: label,
               selected: on,
               onPressed: _measureIndex > 0
-                  ? () {
+                  ? () => _applyBar((xml, measure) {
                       // One written break makes the viewer keep to written
-                      // lines only: in a score that reflows, every other
-                      // bar would end up on one line.
-                      if (!_xml.contains('new-system="yes"') &&
-                          !_xml.contains('new-page="yes"')) {
-                        _showMessage(l10n.breaksReflow);
-                        return;
+                      // lines only. In a score that writes none, the lines
+                      // it is shown in are written first, so that every
+                      // other bar stays on the line it is on.
+                      var current = xml;
+                      if (writtenLineStarts(xml, widget.partIndex).isEmpty) {
+                        final shown = _lineStartsFor(xml);
+                        for (final start in shown.skip(1)) {
+                          current = _editor
+                              .toggleBreak(
+                                current,
+                                widget.partIndex,
+                                start,
+                                page: false,
+                              )
+                              .xml;
+                        }
+                        // The bar begins a line already: that line is
+                        // written now, which is what was asked for.
+                        if (!page && shown.contains(measure)) {
+                          return XmlEditResult(
+                            current,
+                            XmlNoteRef(
+                              partIndex: widget.partIndex,
+                              measureIndex: measure,
+                              noteIndex: 0,
+                            ),
+                          );
+                        }
                       }
-                      _applyBar(
-                        (xml, measure) => _editor.toggleBreak(
-                          xml,
-                          widget.partIndex,
-                          measure,
-                          page: page,
-                        ),
+                      return _editor.toggleBreak(
+                        current,
+                        widget.partIndex,
+                        measure,
+                        page: page,
                       );
-                    }
+                    })
                   : null,
               child: Text(label),
             ),
@@ -2252,6 +3800,44 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                     ),
                   ),
                   checked: instrument.program == choice.program,
+                ),
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.noteSizeMenu,
+            label: l10n.noteSizeMenu,
+            items: [
+              for (final (label, size) in [
+                (l10n.noteSizeSmall, _noteSizes[0]),
+                (l10n.noteheadNormal, _noteSizes[1]),
+                (l10n.noteSizeLarge, _noteSizes[2]),
+                (l10n.noteSizeLarger, _noteSizes[3]),
+              ])
+                _MenuItem(
+                  label,
+                  () => setState(() => _noteSize = size),
+                  checked: _noteSize == size,
+                ),
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.barsPerLine,
+            label: l10n.barsPerLine,
+            items: [
+              _MenuItem(
+                l10n.barsPerLineAuto,
+                () => _applyBar(
+                  (xml, _) =>
+                      _editor.setBarsPerLine(xml, widget.partIndex, null),
+                ),
+              ),
+              for (final count in const [2, 3, 4, 5, 6, 8])
+                _MenuItem(
+                  l10n.barsPerLineOf(count),
+                  () => _applyBar(
+                    (xml, _) =>
+                        _editor.setBarsPerLine(xml, widget.partIndex, count),
+                  ),
                 ),
             ],
           ),
@@ -2396,7 +3982,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 }
 
 /// The palettes of tools under the bar.
-enum _Palette { note, length, pitch, marks, words, bar, score }
+enum _Palette { note, length, pitch, marks, looks, words, bar, score }
+
+/// Which notes of a run of chords the tools work on.
+enum _Only { all, top, bottom }
 
 /// What a tap on the score does.
 enum _Tool { select, eraser, note, rest }
@@ -2480,12 +4069,17 @@ class _PaletteTile extends StatelessWidget {
 class _PalettePanel extends StatelessWidget {
   const _PalettePanel({
     required this.title,
+    required this.onTitle,
     required this.close,
     required this.onClose,
     required this.children,
   });
 
   final String title;
+
+  /// A tap on the palette's name: the other palettes, without going back
+  /// to the rail for them.
+  final VoidCallback onTitle;
   final String close;
   final VoidCallback onClose;
   final List<Widget> children;
@@ -2502,12 +4096,32 @@ class _PalettePanel extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.mutedInk,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: InkWell(
+                      onTap: onTitle,
+                      borderRadius: BorderRadius.circular(6),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              title,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.mutedInk,
+                              ),
+                            ),
+                            const Icon(
+                              Icons.arrow_drop_down_rounded,
+                              size: 18,
+                              color: AppColors.mutedInk,
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -2596,7 +4210,10 @@ class _MenuIconButton extends StatelessWidget {
   }
 }
 
-enum _BarRangeAction { copy, cut, delete, transpose }
+/// What is done to a run of bars. Cutting and deleting empty the bars and
+/// leave them standing, as in a notation program; removing takes the bars
+/// themselves out.
+enum _BarRangeAction { copy, cut, delete, remove, transpose }
 
 /// What the bar range dialog was asked to do: bars [from]..[to] as the
 /// score numbers them, and for a transposition by how many semitones.
@@ -2611,11 +4228,13 @@ typedef _BarRangeChoice = ({
 class _BarRangeDialog extends StatefulWidget {
   const _BarRangeDialog({
     required this.current,
+    required this.currentTo,
     required this.first,
     required this.last,
   });
 
   final int current;
+  final int currentTo;
   final int first;
   final int last;
 
@@ -2625,7 +4244,7 @@ class _BarRangeDialog extends StatefulWidget {
 
 class _BarRangeDialogState extends State<_BarRangeDialog> {
   late final _from = TextEditingController(text: '${widget.current}');
-  late final _to = TextEditingController(text: '${widget.current}');
+  late final _to = TextEditingController(text: '${widget.currentTo}');
   var _semitones = 2;
   var _invalid = false;
 
@@ -2704,6 +4323,10 @@ class _BarRangeDialogState extends State<_BarRangeDialog> {
                 OutlinedButton(
                   onPressed: () => _submit(_BarRangeAction.delete),
                   child: Text(l10n.barRangeDelete),
+                ),
+                OutlinedButton(
+                  onPressed: () => _submit(_BarRangeAction.remove),
+                  child: Text(l10n.deleteMeasure),
                 ),
               ],
             ),
@@ -2793,6 +4416,64 @@ class _SpanBanner extends StatelessWidget {
             TextButton(onPressed: onCancel, child: Text(cancel)),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// What is done to the picked bars, in a row under the score: it is there
+/// the moment the bars are picked, and scrolls where a phone is narrow.
+class _BarEditBar extends StatelessWidget {
+  const _BarEditBar({
+    required this.label,
+    required this.actions,
+    required this.close,
+    required this.onClose,
+  });
+
+  final String label;
+  final List<(String, IconData, VoidCallback?)> actions;
+  final String close;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: AppColors.surfaceSoft,
+      child: Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 16, right: 4),
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.accent,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final (name, icon, onPressed) in actions)
+                    TextButton.icon(
+                      onPressed: onPressed,
+                      icon: Icon(icon, size: 18),
+                      label: Text(name),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: close,
+            onPressed: onClose,
+            icon: const Icon(Icons.close_rounded, size: 20),
+          ),
+        ],
       ),
     );
   }
@@ -3452,10 +5133,13 @@ class _LyricDialogState extends State<_LyricDialog> {
       content: TextField(
         controller: _controller,
         autofocus: true,
-        maxLength: maxLyricLength,
+        // A hyphen or a held line may follow the syllable, and a line of
+        // words may be typed at once.
+        maxLength: 240,
         textInputAction: TextInputAction.next,
         decoration: InputDecoration(
-          helperText: l10n.lyricNextHint,
+          helperText: '${l10n.lyricNextHint}\n${l10n.lyricJoinHint}',
+          helperMaxLines: 5,
           counterText: '',
         ),
         onSubmitted: (_) => _submit(next: true),

@@ -66,6 +66,47 @@ void main() {
     });
   });
 
+  group('a finger carrying a note', () {
+    test('up and down by lines and spaces, at a pace a finger keeps', () {
+      // A score that fits a phone: lines 3 apart. A step is 7 pixels, not
+      // the pixel and a half it is on the page.
+      expect(fingerCarry(const Offset(0, -15), lineGap: 3, scale: 1), (
+        steps: 2,
+        alter: 0,
+      ));
+      expect(fingerCarry(const Offset(2, 22), lineGap: 3, scale: 1), (
+        steps: -3,
+        alter: 0,
+      ));
+      // Zoomed in, the note follows the staff under the finger.
+      expect(fingerCarry(const Offset(0, -30), lineGap: 10, scale: 3), (
+        steps: 2,
+        alter: 0,
+      ));
+      // A finger that has hardly moved carries nothing.
+      expect(fingerCarry(const Offset(1, -3), lineGap: 3, scale: 1), (
+        steps: 0,
+        alter: 0,
+      ));
+    });
+
+    test('to the side for an accidental, and only well to the side', () {
+      expect(fingerCarry(const Offset(30, 4), lineGap: 3, scale: 1), (
+        steps: 0,
+        alter: 1,
+      ));
+      expect(fingerCarry(const Offset(-40, -6), lineGap: 3, scale: 1), (
+        steps: 0,
+        alter: -1,
+      ));
+      // Not far enough: neither an accidental nor another line.
+      expect(fingerCarry(const Offset(20, 5), lineGap: 3, scale: 1), (
+        steps: 0,
+        alter: 0,
+      ));
+    });
+  });
+
   test('removes positioned Verovio text including numeric measure labels', () {
     const source = '''
 <svg viewBox="0 0 2100 2970">

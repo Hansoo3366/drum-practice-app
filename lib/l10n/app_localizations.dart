@@ -1343,7 +1343,7 @@ abstract class AppLocalizations {
   /// playBar
   ///
   /// In en, this message translates to:
-  /// **'Play this bar'**
+  /// **'Play from here'**
   String get playBar;
 
   /// barTooShort
@@ -4667,7 +4667,7 @@ abstract class AppLocalizations {
   /// penHint
   ///
   /// In en, this message translates to:
-  /// **'Tap a line or space to put the note there'**
+  /// **'Tap to place a note · hold to carry it to its line'**
   String get penHint;
 
   /// rangeTool
@@ -4781,7 +4781,7 @@ abstract class AppLocalizations {
   /// barRangeDelete
   ///
   /// In en, this message translates to:
-  /// **'Delete'**
+  /// **'Clear'**
   String get barRangeDelete;
 
   /// barRangeTranspose
@@ -4799,7 +4799,7 @@ abstract class AppLocalizations {
   /// pasteBars
   ///
   /// In en, this message translates to:
-  /// **'Paste {n} copied bars'**
+  /// **'Insert {n} copied bars'**
   String pasteBars(int n);
 
   /// barsCopied
@@ -4817,7 +4817,7 @@ abstract class AppLocalizations {
   /// pasteBarsNone
   ///
   /// In en, this message translates to:
-  /// **'Paste (no bars copied)'**
+  /// **'Insert (no bars copied)'**
   String get pasteBarsNone;
 
   /// breaksReflow
@@ -4873,6 +4873,456 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Tap the note to erase'**
   String get eraserHint;
+
+  /// barEditPaste
+  ///
+  /// In en, this message translates to:
+  /// **'Paste'**
+  String get barEditPaste;
+
+  /// barEditDuplicate
+  ///
+  /// In en, this message translates to:
+  /// **'Duplicate'**
+  String get barEditDuplicate;
+
+  /// barPicked
+  ///
+  /// In en, this message translates to:
+  /// **'Bar {n}'**
+  String barPicked(int n);
+
+  /// barsPicked
+  ///
+  /// In en, this message translates to:
+  /// **'Bars {from}–{to}'**
+  String barsPicked(int from, int to);
+
+  /// keysAppendHint
+  ///
+  /// In en, this message translates to:
+  /// **'The next key adds a new note after this one'**
+  String get keysAppendHint;
+
+  /// lyricJoinHint
+  ///
+  /// In en, this message translates to:
+  /// **'End with - to join the next syllable, with _ to hold it. Words with spaces go onto the notes that follow'**
+  String get lyricJoinHint;
+
+  /// respell
+  ///
+  /// In en, this message translates to:
+  /// **'Respell (enharmonic)'**
+  String get respell;
+
+  /// fingeringMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Fingering'**
+  String get fingeringMenu;
+
+  /// graceSlash
+  ///
+  /// In en, this message translates to:
+  /// **'Grace slash'**
+  String get graceSlash;
+
+  /// beamMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Beam'**
+  String get beamMenu;
+
+  /// beamJoin
+  ///
+  /// In en, this message translates to:
+  /// **'Join with a beam'**
+  String get beamJoin;
+
+  /// beamBreak
+  ///
+  /// In en, this message translates to:
+  /// **'Remove the beam'**
+  String get beamBreak;
+
+  /// notesMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Copy · paste notes'**
+  String get notesMenu;
+
+  /// notesCopy
+  ///
+  /// In en, this message translates to:
+  /// **'Copy the picked notes'**
+  String get notesCopy;
+
+  /// notesPaste
+  ///
+  /// In en, this message translates to:
+  /// **'Paste from here ({n})'**
+  String notesPaste(int n);
+
+  /// notesPasteNone
+  ///
+  /// In en, this message translates to:
+  /// **'Paste (nothing copied)'**
+  String get notesPasteNone;
+
+  /// notesDuplicate
+  ///
+  /// In en, this message translates to:
+  /// **'Duplicate right after'**
+  String get notesDuplicate;
+
+  /// notesCopied
+  ///
+  /// In en, this message translates to:
+  /// **'Copied {n}'**
+  String notesCopied(int n);
+
+  /// pickupBar
+  ///
+  /// In en, this message translates to:
+  /// **'Pickup bar'**
+  String get pickupBar;
+
+  /// barsPerLine
+  ///
+  /// In en, this message translates to:
+  /// **'Bars per line'**
+  String get barsPerLine;
+
+  /// barsPerLineAuto
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic (fit the page)'**
+  String get barsPerLineAuto;
+
+  /// barsPerLineOf
+  ///
+  /// In en, this message translates to:
+  /// **'{n} bars'**
+  String barsPerLineOf(int n);
+
+  /// chordKeys
+  ///
+  /// In en, this message translates to:
+  /// **'Build a chord'**
+  String get chordKeys;
+
+  /// chordRepeat
+  ///
+  /// In en, this message translates to:
+  /// **'Repeat the last chord'**
+  String get chordRepeat;
+
+  /// keyWidthTool
+  ///
+  /// In en, this message translates to:
+  /// **'Key width'**
+  String get keyWidthTool;
+
+  /// draftTitle
+  ///
+  /// In en, this message translates to:
+  /// **'There are unsaved corrections'**
+  String get draftTitle;
+
+  /// draftBody
+  ///
+  /// In en, this message translates to:
+  /// **'What you were correcting last time was kept. Go on with it?'**
+  String get draftBody;
+
+  /// draftResume
+  ///
+  /// In en, this message translates to:
+  /// **'Go on'**
+  String get draftResume;
+
+  /// soundNotes
+  ///
+  /// In en, this message translates to:
+  /// **'Sound a note when it is written'**
+  String get soundNotes;
+
+  /// toolsLooks
+  ///
+  /// In en, this message translates to:
+  /// **'Looks'**
+  String get toolsLooks;
+
+  /// stemMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Stem'**
+  String get stemMenu;
+
+  /// stemUp
+  ///
+  /// In en, this message translates to:
+  /// **'Up'**
+  String get stemUp;
+
+  /// stemDown
+  ///
+  /// In en, this message translates to:
+  /// **'Down'**
+  String get stemDown;
+
+  /// stemHide
+  ///
+  /// In en, this message translates to:
+  /// **'Hide'**
+  String get stemHide;
+
+  /// automatic
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic'**
+  String get automatic;
+
+  /// noteheadMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Notehead'**
+  String get noteheadMenu;
+
+  /// noteheadNormal
+  ///
+  /// In en, this message translates to:
+  /// **'Normal'**
+  String get noteheadNormal;
+
+  /// noteheadSlash
+  ///
+  /// In en, this message translates to:
+  /// **'Slash'**
+  String get noteheadSlash;
+
+  /// noteheadGhost
+  ///
+  /// In en, this message translates to:
+  /// **'Parentheses (ghost note)'**
+  String get noteheadGhost;
+
+  /// otherStaff
+  ///
+  /// In en, this message translates to:
+  /// **'To the other staff'**
+  String get otherStaff;
+
+  /// markSideMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Side of marks'**
+  String get markSideMenu;
+
+  /// sideAbove
+  ///
+  /// In en, this message translates to:
+  /// **'Above'**
+  String get sideAbove;
+
+  /// sideBelow
+  ///
+  /// In en, this message translates to:
+  /// **'Below'**
+  String get sideBelow;
+
+  /// clearMarksTool
+  ///
+  /// In en, this message translates to:
+  /// **'Remove all marks'**
+  String get clearMarksTool;
+
+  /// clearAccidentalTool
+  ///
+  /// In en, this message translates to:
+  /// **'Remove accidentals'**
+  String get clearAccidentalTool;
+
+  /// doubleMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Double at an interval'**
+  String get doubleMenu;
+
+  /// doubleThirdUp
+  ///
+  /// In en, this message translates to:
+  /// **'A third above'**
+  String get doubleThirdUp;
+
+  /// doubleSixthUp
+  ///
+  /// In en, this message translates to:
+  /// **'A sixth above'**
+  String get doubleSixthUp;
+
+  /// doubleOctaveUp
+  ///
+  /// In en, this message translates to:
+  /// **'An octave above'**
+  String get doubleOctaveUp;
+
+  /// doubleThirdDown
+  ///
+  /// In en, this message translates to:
+  /// **'A third below'**
+  String get doubleThirdDown;
+
+  /// doubleOctaveDown
+  ///
+  /// In en, this message translates to:
+  /// **'An octave below'**
+  String get doubleOctaveDown;
+
+  /// jazzMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Jazz articulations'**
+  String get jazzMenu;
+
+  /// selectMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Selection'**
+  String get selectMenu;
+
+  /// selectAll
+  ///
+  /// In en, this message translates to:
+  /// **'Select all'**
+  String get selectAll;
+
+  /// selectBar
+  ///
+  /// In en, this message translates to:
+  /// **'Select this bar'**
+  String get selectBar;
+
+  /// onlyAll
+  ///
+  /// In en, this message translates to:
+  /// **'All picked notes'**
+  String get onlyAll;
+
+  /// onlyTop
+  ///
+  /// In en, this message translates to:
+  /// **'Highest notes only'**
+  String get onlyTop;
+
+  /// onlyBottom
+  ///
+  /// In en, this message translates to:
+  /// **'Lowest notes only'**
+  String get onlyBottom;
+
+  /// clearLyrics
+  ///
+  /// In en, this message translates to:
+  /// **'Remove the lyrics of the picked notes'**
+  String get clearLyrics;
+
+  /// clearChords
+  ///
+  /// In en, this message translates to:
+  /// **'Remove the chord symbols of the picked notes'**
+  String get clearChords;
+
+  /// optRailRight
+  ///
+  /// In en, this message translates to:
+  /// **'Tools on the right'**
+  String get optRailRight;
+
+  /// optSmallTools
+  ///
+  /// In en, this message translates to:
+  /// **'Small buttons'**
+  String get optSmallTools;
+
+  /// optDarkScore
+  ///
+  /// In en, this message translates to:
+  /// **'Dark score'**
+  String get optDarkScore;
+
+  /// noteSizeMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Note size'**
+  String get noteSizeMenu;
+
+  /// noteSizeSmall
+  ///
+  /// In en, this message translates to:
+  /// **'Small'**
+  String get noteSizeSmall;
+
+  /// noteSizeLarge
+  ///
+  /// In en, this message translates to:
+  /// **'Large'**
+  String get noteSizeLarge;
+
+  /// noteSizeLarger
+  ///
+  /// In en, this message translates to:
+  /// **'Larger'**
+  String get noteSizeLarger;
+
+  /// voiceSwap
+  ///
+  /// In en, this message translates to:
+  /// **'Swap the two voices'**
+  String get voiceSwap;
+
+  /// barEditPasteInsert
+  ///
+  /// In en, this message translates to:
+  /// **'Insert'**
+  String get barEditPasteInsert;
+
+  /// tupletGroup
+  ///
+  /// In en, this message translates to:
+  /// **'Make the picked notes a tuplet'**
+  String get tupletGroup;
+
+  /// tupletOneBar
+  ///
+  /// In en, this message translates to:
+  /// **'Pick notes of one bar'**
+  String get tupletOneBar;
+
+  /// keyRest
+  ///
+  /// In en, this message translates to:
+  /// **'Write a rest and go on'**
+  String get keyRest;
+
+  /// favourFlats
+  ///
+  /// In en, this message translates to:
+  /// **'Spell with flats'**
+  String get favourFlats;
+
+  /// favourSharps
+  ///
+  /// In en, this message translates to:
+  /// **'Spell with sharps'**
+  String get favourSharps;
+
+  /// tempoChange
+  ///
+  /// In en, this message translates to:
+  /// **'Tempo change'**
+  String get tempoChange;
 }
 
 class _AppLocalizationsDelegate

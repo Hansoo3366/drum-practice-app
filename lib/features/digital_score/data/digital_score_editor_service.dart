@@ -368,6 +368,73 @@ int? _originalFifthsFrom(String? raw) {
   }
 }
 
+/// The file an unsaved proofreading pass is kept in, among the versions of
+/// its song but not one of them: no catalog lists it.
+const scoreDraftId = '_draft';
+
+/// An unsaved proofreading pass, kept while it is being made: the score as
+/// it was last edited, and which bar of the opened score each of its bars
+/// was ([bars], by number; a bar that was added has a number past them).
+typedef ScoreDraft = ({String xml, List<int> bars});
+
+extension ScoreDrafts on DigitalScoreEditorService {
+  /// Keeps [xml] as the unsaved pass over [base], the score it began from.
+  Future<void> saveDraft({
+    required String songId,
+    required String base,
+    required String xml,
+    required List<int> bars,
+  }) {
+    return _storage.saveScoreVersionBytes(
+      songId,
+      scoreDraftId,
+      utf8.encode(
+        jsonEncode({'base': _draftKey(base), 'bars': bars, 'xml': xml}),
+      ),
+    );
+  }
+
+  /// The unsaved pass over [base], if one was kept and [base] is still the
+  /// score it began from.
+  Future<ScoreDraft?> loadDraft({
+    required String songId,
+    required String base,
+  }) async {
+    try {
+      final bytes = await _storage.loadScoreVersionBytes(songId, scoreDraftId);
+      if (bytes == null) return null;
+      final json = jsonDecode(utf8.decode(bytes));
+      if (json is! Map || json['base'] != _draftKey(base)) return null;
+      final xml = json['xml'];
+      final bars = json['bars'];
+      if (xml is! String || bars is! List || xml == base) return null;
+      // A draft that no longer reads is no draft.
+      _codec.decodeXml(xml);
+      return (xml: xml, bars: [for (final bar in bars) bar as int]);
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<void> discardDraft(String songId) async {
+    try {
+      await _storage.deleteScoreVersion(songId, scoreDraftId);
+    } on Object {
+      // Nothing was kept.
+    }
+  }
+
+  /// Names a score by its length and its text, so that a draft is offered
+  /// only for the score it was made from.
+  static String _draftKey(String xml) {
+    var hash = 0x811c9dc5;
+    for (final unit in xml.codeUnits) {
+      hash = ((hash ^ unit) * 0x01000193) & 0xffffffff;
+    }
+    return '${xml.length}:$hash';
+  }
+}
+
 final digitalScoreEditorServiceProvider = Provider<DigitalScoreEditorService>((
   ref,
 ) {

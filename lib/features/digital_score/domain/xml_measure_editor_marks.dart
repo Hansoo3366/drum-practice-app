@@ -24,6 +24,10 @@ const articulationNames = [
   'strong-accent',
 ];
 
+/// The slides of a jazz player into and out of a note, as MusicXML names
+/// them: up into it, down into it, up out of it, down out of it.
+const jazzArticulationNames = ['scoop', 'plop', 'doit', 'falloff'];
+
 /// Dynamic marks, softest first.
 const dynamicMarks = [
   'ppp',
@@ -570,7 +574,8 @@ extension XmlMeasureMarks on XmlMeasureEditor {
   XmlEditResult toggleArticulation(String xml, XmlNoteRef ref, String name) {
     if (name != 'fermata' &&
         name != 'breath-mark' &&
-        !articulationNames.contains(name)) {
+        !articulationNames.contains(name) &&
+        !jazzArticulationNames.contains(name)) {
       throw const FormatException('지원하지 않는 기호입니다.');
     }
     final doc = _ScoreDoc(xml);
@@ -1109,6 +1114,7 @@ extension XmlMeasureMarks on XmlMeasureEditor {
       navigation: signs,
       rehearsal: rehearsal,
       tempoBpm: bpm,
+      pickup: measure.getAttribute('implicit') == 'yes',
       lineBreak: measure
           .findElements('print')
           .any((p) => p.getAttribute('new-system') == 'yes'),
@@ -1132,6 +1138,7 @@ class XmlBarSigns {
     required this.tempoBpm,
     this.lineBreak = false,
     this.pageBreak = false,
+    this.pickup = false,
   });
 
   final bool repeatStart;
@@ -1146,6 +1153,10 @@ class XmlBarSigns {
   /// Whether the bar begins a new line, or a new page.
   final bool lineBreak;
   final bool pageBreak;
+
+  /// Whether the bar is written as a pickup or a part of a bar: shorter
+  /// than its time on purpose, and not counted.
+  final bool pickup;
 }
 
 // --- Helpers ------------------------------------------------------------------

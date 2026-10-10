@@ -188,6 +188,7 @@ class NativeStaffPlace {
     required this.ghostCenter,
     required this.lineGap,
     this.beside = 0,
+    this.alter = 0,
   });
 
   final int measureIndex;
@@ -205,6 +206,22 @@ class NativeStaffPlace {
   /// or after (+1) it: more than a notehead's width to its side. There a
   /// new note is meant, where the bar has room for one.
   final int beside;
+
+  /// The accidental asked for with the note: a finger held down and moved
+  /// to the right sharpens it (+1), to the left flattens it (-1).
+  final int alter;
+
+  NativeStaffPlace withAlter(int alter) => NativeStaffPlace(
+    measureIndex: measureIndex,
+    eventIndex: eventIndex,
+    staff: staff,
+    step: step,
+    octave: octave,
+    ghostCenter: ghostCenter,
+    lineGap: lineGap,
+    beside: beside,
+    alter: alter,
+  );
 }
 
 class NativeScoreLayout {

@@ -79,23 +79,7 @@ typedef TiedContinuation = ({double quarters, int midi, int staffIndex});
 /// long as its time signature, or its notes when they run over, the lengths
 /// [midiReadyMusicXml] writes.
 List<TiedContinuation> tiedContinuations(MusicScore score) {
-  final lengths = <double>[];
-  for (var index = 0; index < score.measureCount; index++) {
-    var quarters = 0.0;
-    for (final part in score.parts) {
-      if (index >= part.measures.length) continue;
-      final bar = part.measures[index];
-      final time =
-          bar.attributes.time ??
-          const MusicTimeSignature(beats: 4, beatType: 4);
-      quarters = math.max(quarters, time.beats * 4 / time.beatType);
-      quarters = math.max(
-        quarters,
-        bar.durationDivisions / bar.attributes.divisions,
-      );
-    }
-    lengths.add(quarters);
-  }
+  final lengths = _barQuarters(score);
   final result = <TiedContinuation>[];
   var firstStaff = 0;
   for (final part in score.parts) {
@@ -486,4 +470,229 @@ List<XmlElement> _rests(int length, int divisions, {required XmlElement like}) {
     rests.add(tuplet);
   }
   return rests;
+}
+
+/// How long each bar of [score] lasts when played, in quarter notes: its
+/// time signature, or its notes where they run past it.
+List<double> _barQuarters(MusicScore score) {
+  final lengths = <double>[];
+  for (var index = 0; index < score.measureCount; index++) {
+    var quarters = 0.0;
+    for (final part in score.parts) {
+      if (index >= part.measures.length) continue;
+      final bar = part.measures[index];
+      final time =
+          bar.attributes.time ??
+          const MusicTimeSignature(beats: 4, beatType: 4);
+      quarters = math.max(quarters, time.beats * 4 / time.beatType);
+      quarters = math.max(
+        quarters,
+        bar.durationDivisions / bar.attributes.divisions,
+      );
+    }
+    lengths.add(quarters);
+  }
+  return lengths;
+}
+
+/// A crescendo or diminuendo hairpin as it is played: from [from] to [to]
+/// in quarter notes from the start, over the staves of its part
+/// ([firstStaff] and the [staves] - 1 after it, counted through the score).
+typedef PlayedHairpin = ({
+  double from,
+  double to,
+  bool louder,
+  int firstStaff,
+  int staves,
+});
+
+/// The hairpins of [xml] and where its dynamic marks stand, in playing
+/// time. [score] is the same score, read: it says how long the bars are.
+///
+/// A dynamic mark ends what a hairpin did: from there the notes are as
+/// loud as the mark says.
+({List<PlayedHairpin> hairpins, List<({double at, int firstStaff})> marks})
+playedHairpins(String xml, MusicScore score) {
+  final lengths = _barQuarters(score);
+  final hairpins = <PlayedHairpin>[];
+  final marks = <({double at, int firstStaff})>[];
+  var firstStaff = 0;
+  for (final part in XmlDocument.parse(xml).rootElement.findElements('part')) {
+    var staves = 1;
+    for (final element in part.findAllElements('staves')) {
+      staves = math.max(staves, int.tryParse(element.innerText.trim()) ?? 1);
+    }
+    var divisions = 1;
+    var start = 0.0;
+    // Hairpins that have begun, by their number.
+    final open = <String, ({double from, bool louder})>{};
+    var index = 0;
+    for (final measure in part.findElements('measure')) {
+      var position = 0;
+      for (final child in measure.childElements) {
+        int length() =>
+            int.tryParse(
+              child.getElement('duration')?.innerText.trim() ?? '',
+            ) ??
+            0;
+        switch (child.name.local) {
+          case 'attributes':
+            divisions = math.max(
+              1,
+              int.tryParse(
+                    child.getElement('divisions')?.innerText.trim() ?? '',
+                  ) ??
+                  divisions,
+            );
+          case 'note':
+            if (child.getElement('chord') == null &&
+                child.getElement('grace') == null) {
+              position += length();
+            }
+          case 'backup':
+            position -= length();
+          case 'forward':
+            position += length();
+          case 'direction':
+            final at = start + position / divisions;
+            for (final type in child.findElements('direction-type')) {
+              if (type.getElement('dynamics') != null) {
+                marks.add((at: at, firstStaff: firstStaff));
+              }
+              final wedge = type.getElement('wedge');
+              if (wedge == null) continue;
+              final number = wedge.getAttribute('number') ?? '1';
+              final kind = wedge.getAttribute('type');
+              if (kind == 'crescendo' || kind == 'diminuendo') {
+                open[number] = (from: at, louder: kind == 'crescendo');
+              } else if (kind == 'stop') {
+                final begun = open.remove(number);
+                if (begun != null && at > begun.from) {
+                  hairpins.add((
+                    from: begun.from,
+                    to: at,
+                    louder: begun.louder,
+                    firstStaff: firstStaff,
+                    staves: staves,
+                  ));
+                }
+              }
+            }
+        }
+      }
+      start += index < lengths.length ? lengths[index] : 0;
+      index++;
+    }
+    firstStaff += staves;
+  }
+  return (hairpins: hairpins, marks: marks);
+}
+
+/// What a word of the score says of the tempo, where it is written in
+/// playing time (quarter notes from the start).
+enum TempoWord { slower, faster, asBefore, swing, straight }
+
+/// What the tempo words, fermatas and bars of a score say of how fast it
+/// goes, in quarter notes from the start: [words] in order, the notes held
+/// under a fermata ([holds]), where each bar begins ([bars]) and how long
+/// the whole lasts ([end]).
+typedef PlayedTempo = ({
+  List<({double at, TempoWord word})> words,
+  List<({double from, double to})> holds,
+  List<double> bars,
+  double end,
+});
+
+/// Reads [PlayedTempo] from [xml]; [score] is the same score, read.
+PlayedTempo playedTempo(String xml, MusicScore score) {
+  final lengths = _barQuarters(score);
+  final bars = <double>[];
+  var at = 0.0;
+  for (final length in lengths) {
+    bars.add(at);
+    at += length;
+  }
+  final words = <({double at, TempoWord word})>[];
+  final holds = <({double from, double to})>[];
+  for (final part in XmlDocument.parse(xml).rootElement.findElements('part')) {
+    var divisions = 1;
+    var index = 0;
+    for (final measure in part.findElements('measure')) {
+      final start = index < bars.length ? bars[index] : at;
+      var position = 0;
+      var last = 0;
+      for (final child in measure.childElements) {
+        int length() =>
+            int.tryParse(
+              child.getElement('duration')?.innerText.trim() ?? '',
+            ) ??
+            0;
+        switch (child.name.local) {
+          case 'attributes':
+            divisions = math.max(
+              1,
+              int.tryParse(
+                    child.getElement('divisions')?.innerText.trim() ?? '',
+                  ) ??
+                  divisions,
+            );
+          case 'note':
+            if (child.getElement('grace') != null) break;
+            final chord = child.getElement('chord') != null;
+            final from = chord ? last : position;
+            if (child.getElement('notations')?.getElement('fermata') != null) {
+              final hold = (
+                from: start + from / divisions,
+                to: start + (from + length()) / divisions,
+              );
+              if (hold.to > hold.from &&
+                  !holds.any(
+                    (other) => (other.from - hold.from).abs() < 1e-6,
+                  )) {
+                holds.add(hold);
+              }
+            }
+            if (!chord) {
+              last = position;
+              position += length();
+            }
+          case 'backup':
+            position -= length();
+          case 'forward':
+            position += length();
+          case 'direction':
+            for (final text in child.findAllElements('words')) {
+              final word = _tempoWord(text.innerText);
+              if (word == null) continue;
+              final where = start + position / divisions;
+              if (!words.any(
+                (other) =>
+                    other.word == word && (other.at - where).abs() < 1e-6,
+              )) {
+                words.add((at: where, word: word));
+              }
+            }
+        }
+      }
+      index++;
+    }
+  }
+  words.sort((a, b) => a.at.compareTo(b.at));
+  holds.sort((a, b) => a.from.compareTo(b.from));
+  return (words: words, holds: holds, bars: bars, end: at);
+}
+
+TempoWord? _tempoWord(String text) {
+  final word = text.trim().toLowerCase();
+  if (word.isEmpty) return null;
+  if (RegExp(r'^(rit|rall|riten|slower|calando|allarg)').hasMatch(word)) {
+    return TempoWord.slower;
+  }
+  if (RegExp(r'^(accel|string|faster)').hasMatch(word)) return TempoWord.faster;
+  if (RegExp(r'^(a tempo|tempo i\b|tempo primo|tempo 1)').hasMatch(word)) {
+    return TempoWord.asBefore;
+  }
+  if (RegExp(r'^swing').hasMatch(word)) return TempoWord.swing;
+  if (RegExp(r'^(straight|even)').hasMatch(word)) return TempoWord.straight;
+  return null;
 }

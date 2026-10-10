@@ -577,32 +577,63 @@ class _CornerPainter extends CustomPainter {
 /// The tools beside the score, one under the other. Where the screen is
 /// not tall enough for all of them the rail scrolls.
 class EditorRail extends StatelessWidget {
-  const EditorRail({required this.children, super.key});
+  const EditorRail({
+    required this.children,
+    this.onRight = false,
+    this.compact = false,
+    super.key,
+  });
 
   final List<Widget> children;
 
+  /// Whether the rail stands at the right of the score: for the hand that
+  /// holds the phone, or the one that does not.
+  final bool onRight;
+
+  /// Smaller tools, for more of the score.
+  final bool compact;
+
   static const width = 56.0;
+  static const compactWidth = 46.0;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: width,
-      decoration: const BoxDecoration(
-        color: AppColors.canvas,
-        border: Border(right: BorderSide(color: AppColors.border)),
-      ),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Column(
-          children: [
-            for (final child in children)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 1),
-                child: child,
-              ),
-          ],
-        ),
-      ),
+    const line = BorderSide(color: AppColors.border);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Where the tools do not all fit at their size (a small phone
+        // with a palette open under the score), they are made smaller
+        // before any of them has to be scrolled to.
+        final small =
+            compact || constraints.maxHeight < children.length * 48.0 + 8;
+        return Container(
+          width: compact ? compactWidth : width,
+          decoration: BoxDecoration(
+            color: AppColors.canvas,
+            border: onRight
+                ? const Border(left: line)
+                : const Border(right: line),
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              children: [
+                for (final child in children)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 1),
+                    child: small
+                        ? SizedBox(
+                            width: 40,
+                            height: 38,
+                            child: FittedBox(child: child),
+                          )
+                        : child,
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -705,11 +736,19 @@ class PianoKeyboard extends StatelessWidget {
     required this.higherTooltip,
     this.enabled = true,
     this.height = 112,
+    this.keyWidth = 44,
+    this.buttons = const [],
     super.key,
   });
 
   final int octave;
   final ValueChanged<int> onKey;
+
+  /// How wide a white key is at least: as many as fit are shown.
+  final double keyWidth;
+
+  /// More buttons after the two for the octave ([KeyboardButton]).
+  final List<Widget> buttons;
 
   /// Asked to show the octave below (-1) or above (+1).
   final ValueChanged<int> onOctave;
@@ -726,13 +765,50 @@ class PianoKeyboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Over the keys, not on them: a button on a black key is a key
+        // that cannot be played.
+        ColoredBox(
+          color: AppColors.surfaceSoft,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            child: Row(
+              children: [
+                KeyboardButton(
+                  tooltip: lowerTooltip,
+                  icon: Icons.remove_rounded,
+                  onPressed: octave > 1 ? () => onOctave(-1) : null,
+                ),
+                const SizedBox(width: 6),
+                KeyboardButton(
+                  tooltip: higherTooltip,
+                  icon: Icons.add_rounded,
+                  onPressed: octave < 7 ? () => onOctave(1) : null,
+                ),
+                const Spacer(),
+                for (final button in buttons) ...[
+                  const SizedBox(width: 6),
+                  button,
+                ],
+              ],
+            ),
+          ),
+        ),
+        _keys(),
+      ],
+    );
+  }
+
+  Widget _keys() {
     return SizedBox(
       height: height,
       child: LayoutBuilder(
         builder: (context, constraints) {
           // As many white keys as have room to be hit, a whole octave at
           // least.
-          final count = (constraints.maxWidth / 44).floor().clamp(7, 22);
+          final count = (constraints.maxWidth / keyWidth).floor().clamp(7, 22);
           final width = constraints.maxWidth / count;
           Widget key({
             required String name,
@@ -810,25 +886,6 @@ class PianoKeyboard extends StatelessWidget {
                         black: true,
                       ),
                     ),
-              Positioned(
-                left: 6,
-                top: 6,
-                child: Row(
-                  children: [
-                    _OctaveKey(
-                      tooltip: lowerTooltip,
-                      icon: Icons.remove_rounded,
-                      onPressed: octave > 1 ? () => onOctave(-1) : null,
-                    ),
-                    const SizedBox(width: 6),
-                    _OctaveKey(
-                      tooltip: higherTooltip,
-                      icon: Icons.add_rounded,
-                      onPressed: octave < 7 ? () => onOctave(1) : null,
-                    ),
-                  ],
-                ),
-              ),
             ],
           );
         },
@@ -837,16 +894,27 @@ class PianoKeyboard extends StatelessWidget {
   }
 }
 
-class _OctaveKey extends StatelessWidget {
-  const _OctaveKey({
+/// A small button standing on the keyboard: the octave, and what the keys
+/// do (a chord, the chord before, how wide they are).
+class KeyboardButton extends StatelessWidget {
+  const KeyboardButton({
     required this.tooltip,
     required this.icon,
     required this.onPressed,
+    this.selected = false,
+    this.glyph,
+    super.key,
   });
 
   final String tooltip;
   final IconData icon;
+
+  /// A sign of the score drawn in place of [icon].
+  final MusicGlyphData? glyph;
   final VoidCallback? onPressed;
+
+  /// A mode that is on: drawn light on dark, the other way round.
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -859,15 +927,32 @@ class _OctaveKey extends StatelessWidget {
         label: tooltip,
         excludeSemantics: true,
         child: Material(
-          color: AppColors.accent.withValues(alpha: enabled ? 0.9 : 0.35),
-          borderRadius: BorderRadius.circular(6),
+          color: selected
+              ? Colors.white
+              : AppColors.accent.withValues(alpha: enabled ? 0.9 : 0.35),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(6),
+            side: selected
+                ? const BorderSide(color: AppColors.accent, width: 2)
+                : BorderSide.none,
+          ),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: onPressed,
             child: SizedBox(
               width: 40,
               height: 30,
-              child: Icon(icon, color: Colors.white, size: 20),
+              child: glyph != null
+                  ? MusicGlyph(
+                      glyph!,
+                      size: 20,
+                      color: selected ? AppColors.accent : Colors.white,
+                    )
+                  : Icon(
+                      icon,
+                      color: selected ? AppColors.accent : Colors.white,
+                      size: 20,
+                    ),
             ),
           ),
         ),
