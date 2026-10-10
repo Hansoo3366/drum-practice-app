@@ -2839,4 +2839,63 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get slashFill => 'Fill with slashes';
+
+  @override
+  String get fermataLength => 'Fermata length';
+
+  @override
+  String get fermataShort => 'Short';
+
+  @override
+  String get fermataLong => 'Long';
+
+  @override
+  String get repeatCount => 'Times played';
+
+  @override
+  String repeatCountOf(int n) {
+    return '$n times';
+  }
+
+  @override
+  String get revealHidden => 'Show what is hidden';
+
+  @override
+  String get chordDisplayMenu => 'Chord display';
+
+  @override
+  String get chordDisplayNashville => 'Nashville numbers';
+
+  @override
+  String get chordDisplayRoman => 'Roman numerals';
+
+  @override
+  String get wordSizeMenu => 'Text size';
+
+  @override
+  String get alignChordsOption => 'Chord symbols on one level';
+
+  @override
+  String get barNumbersMenu => 'Bar numbers';
+
+  @override
+  String get barNumbersLines => 'On every line';
+
+  @override
+  String get barNumbersEvery => 'On every bar';
+
+  @override
+  String get barNumbersNone => 'None';
+
+  @override
+  String get instrumentChange => 'Change instrument here';
+
+  @override
+  String get mixer => 'Mixer';
+
+  @override
+  String get mixerMute => 'Mute';
+
+  @override
+  String get mixerSolo => 'Solo';
 }

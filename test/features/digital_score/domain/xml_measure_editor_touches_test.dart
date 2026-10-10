@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
 import 'package:page_a_diddle/features/digital_score/domain/music_score.dart';
+import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
 import 'package:xml/xml.dart';
 
@@ -367,11 +368,15 @@ void main() {
         () => _editor.groupTuplet(xml, 0, 0, [0, 1, 3]),
         throwsA(isA<FormatException>()),
       );
-      // Two are no tuplet the editor knows.
+      // One note is no group.
       expect(
-        () => _editor.groupTuplet(xml, 0, 0, [0, 1]),
+        () => _editor.groupTuplet(xml, 0, 0, [0]),
         throwsA(isA<FormatException>()),
       );
+      // Two are a duplet: in the time of three.
+      final duplet = _editor.groupTuplet(xml, 0, 0, [0, 1]).xml;
+      expect(duplet, contains('<actual-notes>2</actual-notes>'));
+      expect(duplet, contains('<normal-notes>3</normal-notes>'));
     });
   });
 
@@ -458,6 +463,92 @@ void main() {
         expect(pasted.selection, _ref(0, measureIndex: 1));
       },
     );
+
+    test(
+      'pasted as a notation program pastes, lengths flow over the barline',
+      () {
+        // Bar 1: a half note and two quarters. Bar 2 and 3: four quarters.
+        final xml = _score([
+          '${_note('C', 4, duration: 4, type: 'half')}${_note('D', 4)}${_note('E', 4)}',
+          quarters,
+          quarters,
+        ]);
+
+        // The half note and a quarter, written from the last quarter of bar
+        // 2 on: the half note is cut at the barline and tied over.
+        final clip = _editor.copyNotes(xml, [_ref(0), _ref(1)]);
+        final pasted = _editor.pasteNotesFlowing(
+          xml,
+          _ref(3, measureIndex: 1),
+          clip,
+        );
+
+        expect(_read(pasted.xml, measureIndex: 1), ['c4', 'd4', 'e4', 'c4']);
+        // A quarter of C tied in, the copied D, and the bar goes on as it
+        // was: its third and fourth notes.
+        expect(_read(pasted.xml, measureIndex: 2), ['c4', 'd4', 'e4', 'f4']);
+        final bars = _codec.decodeXml(pasted.xml).parts.first.measures;
+        expect(bars[1].notes.last.tieStart, isTrue);
+        expect(bars[2].notes.first.tieStop, isTrue);
+        expect(bars[2].notes.map((n) => n.onset), [0, 2, 4, 6]);
+        for (final bar in bars) {
+          expect(bar.durationDivisions / bar.attributes.divisions, 4);
+        }
+        // The first bar is untouched, and the first pasted note is picked.
+        expect(_read(pasted.xml), _read(xml));
+        expect(pasted.selection, _ref(3, measureIndex: 1));
+      },
+    );
+
+    test('a note the copied ones cut into leaves a rest; what follows stays', () {
+      final xml = _score([
+        '${eighth('C')}${eighth('D')}${_note('E', 4)}'
+            '${_note('F', 4, duration: 4, type: 'half')}',
+        '${_note('G', 4, duration: 4, type: 'half')}${_note('A', 4)}${_note('B', 4)}',
+      ]);
+
+      // Three eighths' worth (C, D, and the quarter E) over the half note
+      // G: it covers a beat and a half... two eighths and a quarter.
+      final clip = _editor.copyNotes(xml, [_ref(0), _ref(1), _ref(2)]);
+      final pasted = _editor.pasteNotesFlowing(
+        xml,
+        _ref(0, measureIndex: 1),
+        clip,
+      );
+
+      // C D E take the half note's two beats exactly; A and B stay.
+      expect(_read(pasted.xml, measureIndex: 1), [
+        'c4',
+        'd4',
+        'e4',
+        'a4',
+        'b4',
+      ]);
+      final bar = _codec.decodeXml(pasted.xml).parts.first.measures[1];
+      expect(bar.notes.map((n) => n.onset), [0, 1, 2, 4, 6]);
+
+      // Two eighths over a quarter in the middle of a half note cut it:
+      // the rest of the half is a rest.
+      final two = _editor.copyNotes(xml, [_ref(0), _ref(1)]);
+      final cut = _editor.pasteNotesFlowing(xml, _ref(3), two);
+      expect(_read(cut.xml), ['c4', 'd4', 'e4', 'c4', 'd4', 'r']);
+    });
+
+    test('a chord, two staves or a tuplet is not for flowing', () {
+      final chord = _score([
+        '${_note('C', 4)}'
+            '<note><chord/><pitch><step>E</step><octave>4</octave></pitch>'
+            '<duration>2</duration><voice>1</voice><type>quarter</type></note>'
+            '${_note('D', 4)}${_note('E', 4)}${_note('F', 4)}',
+      ]);
+      final clip = _editor.copyNotes(chord, [_ref(0)]);
+      expect(
+        () => _editor.pasteNotesFlowing(chord, _ref(2), clip),
+        throwsA(isA<FormatException>()),
+      );
+      // The note-for-note paste takes it.
+      expect(_read(_editor.pasteNotes(chord, _ref(2), clip).xml)[1], 'c4+e4');
+    });
 
     test('more than there is room for stops at the end', () {
       final xml = _score([quarters]);
@@ -665,6 +756,55 @@ void main() {
       expect(_read(result.xml), ['c4', 'd4', 'e4', 'f4']);
       final decoded = _codec.decodeXml(result.xml).parts.first.measures[1];
       expect(decoded.notes.map((n) => n.onset), [0, 2, 4, 6]);
+    });
+
+    test('a fermata is short, usual or long by its shape', () {
+      final xml = _score([quarters]);
+
+      final long = _editor.setFermataShape(xml, _ref(3), 'square').xml;
+      expect(long, contains('<fermata>square</fermata>'));
+      expect(_editor.describe(long, _ref(3)).fermataShape, 'square');
+      expect(_editor.describe(long, _ref(3)).fermata, isTrue);
+      final usual = _editor.setFermataShape(long, _ref(3), 'normal').xml;
+      expect(usual, contains('<fermata/>'));
+      expect(_editor.describe(usual, _ref(3)).fermataShape, 'normal');
+      expect(_editor.describe(xml, _ref(3)).fermataShape, isNull);
+    });
+
+    test('a repeat is played as many times as its sign says', () {
+      final xml = _editor
+          .toggleRepeat(_score([quarters, quarters]), 0, 1, start: false)
+          .xml;
+
+      final three = _editor.setRepeatTimes(xml, 0, 1, 3).xml;
+      expect(three, contains('times="3"'));
+      expect(three, contains('<words>3x</words>'));
+      expect(writtenRepeatOrder(_codec.decodeXml(three)), [0, 1, 0, 1, 0, 1]);
+      // Four in place of three, then twice again: nothing is written.
+      final four = _editor.setRepeatTimes(three, 0, 1, 4).xml;
+      expect('<words>'.allMatches(four), hasLength(1));
+      expect(four, contains('<words>4x</words>'));
+      final twice = _editor.setRepeatTimes(four, 0, 1, 2).xml;
+      expect(twice, isNot(contains('times=')));
+      expect(twice, isNot(contains('<words>')));
+      expect(
+        () => _editor.setRepeatTimes(xml, 0, 0, 3),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('a double whole note is a value like the others', () {
+      final wide = _score([
+        '<attributes><time><beats>4</beats><beat-type>2</beat-type></time></attributes>'
+            '${_note('C', 4, duration: 8, type: 'whole')}'
+            '${_note('D', 4, duration: 8, type: 'whole')}',
+      ]);
+
+      final result = _editor.setDuration(wide, _ref(0), 'breve', 0).xml;
+
+      expect(_notes(result).first.getElement('type')?.innerText, 'breve');
+      final bar = _codec.decodeXml(result).parts.first.measures.first;
+      expect(bar.notes.first.duration, 16);
     });
 
     test('the two voices of a staff change places', () {

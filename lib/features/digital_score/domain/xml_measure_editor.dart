@@ -800,6 +800,7 @@ class XmlNoteSummary {
     this.staff = 1,
     this.hidden = false,
     this.tacet = false,
+    this.fermataShape,
   });
 
   final bool isRest;
@@ -870,12 +871,17 @@ class XmlNoteSummary {
   /// Whether the note is written but not played.
   final bool tacet;
 
+  /// The shape of the note's fermata when it has one: `normal`, `angled`
+  /// (a short hold) or `square` (a long one).
+  final String? fermataShape;
+
   /// The syllable of [verse] as it is typed: with its `-` or `_`.
   String lyricTyped(int verse) =>
       '${lyrics[verse] ?? ''}${lyrics[verse] == null ? '' : lyricJoins[verse] ?? ''}';
 }
 
 const noteDurationTypes = [
+  'breve',
   'whole',
   'half',
   'quarter',
@@ -982,6 +988,15 @@ class XmlMeasureEditor {
       staff: info.staff,
       hidden: info.element.getAttribute('print-object') == 'no',
       tacet: _isTacet(info.element),
+      fermataShape: switch (head.element
+          .getElement('notations')
+          ?.getElement('fermata')) {
+        null => null,
+        final fermata =>
+          const {'angled', 'square'}.contains(fermata.innerText.trim())
+              ? fermata.innerText.trim()
+              : 'normal',
+      },
     );
   }
 
@@ -3299,6 +3314,7 @@ class _MeasureView {
 // --- Helpers --------------------------------------------------------------
 
 const _typeQuarters = <String, double>{
+  'breve': 8,
   'whole': 4,
   'half': 2,
   'quarter': 1,

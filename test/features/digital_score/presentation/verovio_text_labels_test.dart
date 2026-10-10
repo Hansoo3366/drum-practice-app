@@ -268,4 +268,116 @@ void main() {
       expect(anchor(const MusicClef(sign: 'G', line: 2), 2), 120);
     });
   });
+
+  group('chord symbols as numbers', () {
+    test('the Nashville way: the degree of the key, and what follows it', () {
+      // F major, one flat.
+      expect(chordAsNumber('F', -1, roman: false), '1');
+      expect(chordAsNumber('Dm', -1, roman: false), '6m');
+      expect(chordAsNumber('Am/C', -1, roman: false), '3m/5');
+      expect(chordAsNumber('B♭', -1, roman: false), '4');
+      expect(chordAsNumber('C(sus4)', -1, roman: false), '5(sus4)');
+      expect(chordAsNumber('Gm7', -1, roman: false), '2m7');
+      // A chord from outside the key says by how much.
+      expect(chordAsNumber('E♭', -1, roman: false), '♭7');
+      expect(chordAsNumber('F♯dim', -1, roman: false), '♯1dim');
+    });
+
+    test('in another key the same chords are other numbers', () {
+      // G major and D major.
+      expect(chordAsNumber('D7/F#', 1, roman: false), '57/7');
+      expect(chordAsNumber('Em', 1, roman: false), '6m');
+      expect(chordAsNumber('G', 2, roman: false), '4');
+      expect(chordAsNumber('Bm7', 2, roman: false), '6m7');
+      expect(chordAsNumber('C', 0, roman: false), '1');
+    });
+
+    test('in Roman numerals a minor chord is written small', () {
+      expect(chordAsNumber('Dm', -1, roman: true), 'vi');
+      expect(chordAsNumber('Am7', -1, roman: true), 'iii7');
+      expect(chordAsNumber('B♭maj7', -1, roman: true), 'IVmaj7');
+      expect(chordAsNumber('F/A', -1, roman: true), 'I/III');
+      expect(chordAsNumber('E♭', -1, roman: true), '♭VII');
+    });
+
+    test('what is not a chord symbol is left as it is', () {
+      expect(chordAsNumber('N.C.', 0, roman: false), 'N.C.');
+      expect(chordAsNumber('', 0, roman: false), '');
+      expect(chordAsNumber('C/x', 0, roman: false), 'C/x');
+    });
+  });
+
+  group('the words of a page as the reader asks for them', () {
+    const labels = [
+      VerovioTextLabel(
+        text: '5',
+        x: 10,
+        baselineY: 90,
+        fontSize: 20,
+        kind: 'mNum',
+      ),
+      VerovioTextLabel(
+        text: 'F',
+        x: 40,
+        baselineY: 100,
+        fontSize: 40,
+        kind: 'harm',
+      ),
+      VerovioTextLabel(
+        text: 'Dm',
+        x: 200,
+        baselineY: 70,
+        fontSize: 40,
+        kind: 'harm',
+      ),
+      VerovioTextLabel(
+        text: '주',
+        x: 40,
+        baselineY: 300,
+        fontSize: 30,
+        kind: 'verse',
+      ),
+      // The next line of the score.
+      VerovioTextLabel(
+        text: 'C',
+        x: 40,
+        baselineY: 620,
+        fontSize: 40,
+        kind: 'harm',
+      ),
+    ];
+
+    test('nothing asked for, nothing changed', () {
+      expect(shownLabels(labels).map((l) => l.text), [
+        '5',
+        'F',
+        'Dm',
+        '주',
+        'C',
+      ]);
+    });
+
+    test('chord symbols as numbers, each in its own key', () {
+      final shown = shownLabels(
+        labels,
+        chords: ChordDisplay.nashville,
+        // The second line is in C, the first in F.
+        keyOf: (chord) => chord.baselineY > 400 ? 0 : -1,
+      );
+      expect(shown.map((l) => l.text), ['5', '1', '6m', '주', '1']);
+    });
+
+    test('larger words, chord symbols on one level, no bar numbers', () {
+      final shown = shownLabels(
+        labels,
+        wordScale: 1.2,
+        alignChords: true,
+        hideBarNumbers: true,
+      );
+      expect(shown.map((l) => l.text), ['F', 'Dm', '주', 'C']);
+      expect(shown.map((l) => l.fontSize), [48, 48, 36, 48]);
+      // F comes up to Dm; the chord of the next line stays on its own.
+      expect(shown.map((l) => l.baselineY), [70, 70, 300, 620]);
+    });
+  });
 }

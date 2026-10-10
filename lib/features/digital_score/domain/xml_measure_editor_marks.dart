@@ -1116,6 +1116,9 @@ extension XmlMeasureMarks on XmlMeasureEditor {
       rehearsal: rehearsal,
       tempoBpm: bpm,
       pickup: measure.getAttribute('implicit') == 'yes',
+      instrument: _instrumentChangeOf(
+        measure,
+      )?.findAllElements('words').firstOrNull?.innerText.trim(),
       lineBreak: measure
           .findElements('print')
           .any((p) => p.getAttribute('new-system') == 'yes'),
@@ -1140,6 +1143,7 @@ class XmlBarSigns {
     this.lineBreak = false,
     this.pageBreak = false,
     this.pickup = false,
+    this.instrument,
   });
 
   final bool repeatStart;
@@ -1158,6 +1162,10 @@ class XmlBarSigns {
   /// Whether the bar is written as a pickup or a part of a bar: shorter
   /// than its time on purpose, and not counted.
   final bool pickup;
+
+  /// The instrument the part changes to at this bar, by its name, if it
+  /// does.
+  final String? instrument;
 }
 
 // --- Helpers ------------------------------------------------------------------

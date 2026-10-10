@@ -51,7 +51,9 @@ import 'package:page_a_diddle/features/digital_score/presentation/score_proofrea
 import 'package:page_a_diddle/features/digital_score/presentation/score_structure_controller.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_transpose_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/verovio_text_labels.dart';
 import 'package:page_a_diddle/features/library/presentation/edit_song_sheet.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 part 'digital_score_screen_widgets.dart';
 
@@ -143,6 +145,146 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     // A score is read with the hands on the instrument: the screen stays
     // on while it is open, as every score reader keeps it.
     unawaited(ScreenAwake.hold(this));
+    unawaited(_readChordDisplay());
+  }
+
+  /// How chord symbols are shown: as written, or as the numbers a band
+  /// reads in any key. The choice is the reader's, kept between songs, and
+  /// the same as in the editor.
+  var _chordDisplay = ChordDisplay.symbols;
+
+  Future<void> _readChordDisplay() async {
+    try {
+      final stored = await SharedPreferences.getInstance();
+      final name = stored.getString('score.chordDisplay');
+      if (!mounted) return;
+      for (final display in ChordDisplay.values) {
+        if (display.name == name) setState(() => _chordDisplay = display);
+      }
+    } on Object {
+      // Nothing kept: chord symbols as they are written.
+    }
+  }
+
+  /// The listener's mixer: how loud each part of what plays is heard, which
+  /// are silent and which are heard alone. Nothing of the score changes.
+  final _mixLevels = <int, double>{};
+  final _mixMuted = <int>{};
+  final _mixSolo = <int>{};
+
+  /// The level of each of [parts] parts as the mixer stands, or null when
+  /// it stands as it comes.
+  List<double>? _partLevels(int parts) =>
+      _mixLevels.isEmpty && _mixMuted.isEmpty && _mixSolo.isEmpty
+      ? null
+      : mixedLevels(
+          parts,
+          levels: _mixLevels,
+          muted: _mixMuted,
+          solo: _mixSolo,
+        );
+
+  /// Opens the mixer for the parts of [played], the score as it is played.
+  Future<void> _showMixer(MusicScore played) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheet) => StatefulBuilder(
+        builder: (sheet, setSheet) {
+          final l10n = sheet.l10n;
+          void change(VoidCallback edit) {
+            setState(edit);
+            setSheet(() {});
+          }
+
+          return SafeArea(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(sheet).height * 0.7,
+              ),
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(16, 0, 8, 16),
+                children: [
+                  Text(
+                    l10n.mixer,
+                    style: Theme.of(sheet).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  for (final (index, part) in played.parts.indexed)
+                    Row(
+                      children: [
+                        SizedBox(
+                          width: 96,
+                          child: Text(
+                            part.name.isEmpty ? '${index + 1}' : part.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            value: (_mixLevels[index] ?? 1.0).clamp(0.0, 1.5),
+                            max: 1.5,
+                            divisions: 15,
+                            label:
+                                '${((_mixLevels[index] ?? 1.0) * 100).round()}%',
+                            onChanged: (value) => change(() {
+                              if ((value - 1.0).abs() < 0.01) {
+                                _mixLevels.remove(index);
+                              } else {
+                                _mixLevels[index] = value;
+                              }
+                            }),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: l10n.mixerMute,
+                          isSelected: _mixMuted.contains(index),
+                          onPressed: () => change(
+                            () => _mixMuted.contains(index)
+                                ? _mixMuted.remove(index)
+                                : _mixMuted.add(index),
+                          ),
+                          icon: const Icon(Icons.volume_up_outlined),
+                          selectedIcon: const Icon(Icons.volume_off_rounded),
+                        ),
+                        IconButton(
+                          tooltip: l10n.mixerSolo,
+                          isSelected: _mixSolo.contains(index),
+                          onPressed: () => change(
+                            () => _mixSolo.contains(index)
+                                ? _mixSolo.remove(index)
+                                : _mixSolo.add(index),
+                          ),
+                          icon: const Icon(Icons.headphones_outlined),
+                          selectedIcon: const Icon(Icons.headphones_rounded),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Goes on to the next way of showing chord symbols, and keeps it.
+  void _nextChordDisplay() {
+    final next = ChordDisplay
+        .values[(_chordDisplay.index + 1) % ChordDisplay.values.length];
+    setState(() => _chordDisplay = next);
+    unawaited(() async {
+      try {
+        final stored = await SharedPreferences.getInstance();
+        await stored.setString('score.chordDisplay', next.name);
+      } on Object {
+        // Kept for as long as the screen is open, then.
+      }
+    }());
   }
 
   @override
@@ -1417,6 +1559,12 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         _export(data, score, ScoreExportKind.pdf);
       case _ScoreMenuAction.exportProject:
         _export(data, score, ScoreExportKind.project);
+      case _ScoreMenuAction.chordDisplay:
+        _nextChordDisplay();
+      case _ScoreMenuAction.mixer:
+        unawaited(
+          _showMixer(_playbackEnabled ? _performanceScore(score) : score),
+        );
       case _ScoreMenuAction.guide:
         unawaited(
           showScoreGuideSheet(context, converted: data.omrJobId != null),
@@ -2260,6 +2408,30 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                           ),
                         ),
                         PopupMenuItem(
+                          value: _ScoreMenuAction.mixer,
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.tune_rounded),
+                            title: Text(context.l10n.mixer),
+                          ),
+                        ),
+                        // Chord symbols as they are written, or as numbers
+                        // in the key: each tap goes on to the next.
+                        PopupMenuItem(
+                          value: _ScoreMenuAction.chordDisplay,
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.tag_rounded),
+                            title: Text(
+                              '${context.l10n.chordDisplayMenu}: ${switch (_chordDisplay) {
+                                ChordDisplay.symbols => context.l10n.chordSymbol,
+                                ChordDisplay.nashville => context.l10n.chordDisplayNashville,
+                                ChordDisplay.roman => context.l10n.chordDisplayRoman,
+                              }}',
+                            ),
+                          ),
+                        ),
+                        PopupMenuItem(
                           value: _ScoreMenuAction.guide,
                           child: ListTile(
                             contentPadding: EdgeInsets.zero,
@@ -2293,6 +2465,12 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                           ? _sequence
                           : PlaybackSequence.empty,
                       tempoPercent: _tempoPercent,
+                      chordDisplay: _chordDisplay,
+                      partLevels: _partLevels(
+                        (_playbackEnabled ? _performanceScore(score) : score)
+                            .parts
+                            .length,
+                      ),
                       semanticsLabel: value.song.title,
                       playback: _playback,
                       playbackVisible: _playbackEnabled,

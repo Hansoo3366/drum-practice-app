@@ -1,5 +1,8 @@
 import 'package:flutter_notemus/flutter_notemus.dart' as nm;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:page_a_diddle/features/digital_score/data/music_xml_codec.dart';
+import 'package:page_a_diddle/features/digital_score/domain/arrangement_profile.dart';
+import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.dart';
 import 'package:page_a_diddle/features/digital_score/domain/xml_measure_editor.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/midi_duration.dart';
 
@@ -261,6 +264,16 @@ void main() {
 
       // The last beat of bar 2 lasts two: the bar is a beat longer.
       expect(msOfBar(xml, 1), closeTo(2500, 2));
+      // An angled fermata is a short hold, a square one a long hold.
+      final at = XmlNoteRef(partIndex: 0, measureIndex: 1, noteIndex: 3);
+      expect(
+        msOfBar(_editor.setFermataShape(xml, at, 'angled').xml, 1),
+        closeTo(2250, 2),
+      );
+      expect(
+        msOfBar(_editor.setFermataShape(xml, at, 'square').xml, 1),
+        closeTo(3000, 2),
+      );
       expect(msOfBar(xml, 0), closeTo(2000, 1));
       expect(msOfBar(xml, 2), closeTo(2000, 1));
     });
@@ -306,6 +319,95 @@ void main() {
         expect(notes[i].tick, plain[i].tick, reason: 'note $i');
       }
     });
+  });
+
+  test('a part goes on with another instrument from the bar that says so', () {
+    final two = _score.replaceFirst(
+      '</measure>',
+      '</measure><measure number="2">'
+          '${_note('C', 5)}${_note('D', 5)}${_note('E', 5)}${_note('F', 5)}'
+          '</measure>',
+    );
+    final xml = _editor.setInstrumentChange(two, 0, 1, (
+      name: 'Strings',
+      program: 48,
+    )).xml;
+    expect(_editor.barSigns(xml, 0, 1).instrument, 'Strings');
+    expect(_editor.barSigns(xml, 0, 0).instrument, isNull);
+
+    final midi = buildPlaybackMidi(
+      engravingXml: xml,
+      score: const MusicXmlCodec().decodeXml(xml),
+      sequence: PlaybackSequence.empty,
+      arrangement: ArrangementProfile.off,
+      bpm: 120,
+    );
+    final tpq = midi.sequence.ticksPerQuarter;
+    final notes = [
+      for (final track in midi.sequence.tracks)
+        for (final event in track.events)
+          if (event.type == nm.MidiEventType.noteOn &&
+              (event.velocity ?? 0) > 0)
+            event,
+    ]..sort((a, b) => a.tick.compareTo(b.tick));
+
+    expect(notes, hasLength(8));
+    final before = notes.first.channel;
+    final after = notes.last.channel;
+    // The first bar on the part's own channel, the second on another.
+    expect(notes.take(4).map((e) => e.channel).toSet(), {before});
+    expect(notes.skip(4).map((e) => e.channel).toSet(), {after});
+    expect(after, isNot(before));
+    expect(notes[4].tick, 4 * tpq);
+    expect(midi.programs[before], 0);
+    expect(midi.programs[after], 48);
+    // Every note ends on the channel it began on.
+    for (final track in midi.sequence.tracks) {
+      final open = <(int, int)>{};
+      for (final event in track.events) {
+        final note = event.note;
+        if (note == null) continue;
+        if (event.type == nm.MidiEventType.noteOn &&
+            (event.velocity ?? 0) > 0) {
+          open.add((event.channel, note));
+        } else {
+          expect(open.remove((event.channel, note)), isTrue);
+        }
+      }
+      expect(open, isEmpty);
+    }
+
+    // "Strings" over the bar is a name, not a word to play faster by.
+    final timing = MidiTiming(midi.sequence, fallbackBpm: 120);
+    expect(timing.msAt(8 * tpq) - timing.msAt(4 * tpq), closeTo(2000, 1));
+
+    // The change is taken away again.
+    final plain = _editor.setInstrumentChange(xml, 0, 1, null).xml;
+    expect(plain, isNot(contains('<midi-instrument')));
+  });
+
+  test('a mixer: levels, parts made silent, parts heard alone', () {
+    expect(mixedLevels(3), [1.0, 1.0, 1.0]);
+    expect(mixedLevels(3, levels: {1: 0.5}, muted: {2}), [1.0, 0.5, 0.0]);
+    // A part heard alone silences the others, whatever their levels.
+    expect(mixedLevels(3, levels: {0: 0.8, 1: 0.5}, solo: {1}), [
+      0.0,
+      0.5,
+      0.0,
+    ]);
+    // Silent wins over alone.
+    expect(mixedLevels(2, muted: {0}, solo: {0}), [0.0, 0.0]);
+
+    // Every channel of the sequence belongs to the part that plays it.
+    final score = const MusicXmlCodec().decodeXml(_score);
+    final sequence = playbackMidi(
+      _score,
+      options: const nm.MidiGenerationOptions(
+        defaultBpm: 120,
+        includeMetronome: false,
+      ),
+    );
+    expect(channelParts(sequence, score).values.toSet(), {0});
   });
 
   test('a tacet note is written and not played', () {

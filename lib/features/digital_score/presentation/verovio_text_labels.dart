@@ -31,6 +31,19 @@ class VerovioTextLabel {
   /// (a section box); null for anything else (bar and ending numbers,
   /// tuplet numbers).
   final String? kind;
+
+  VerovioTextLabel copyWith({
+    String? text,
+    double? baselineY,
+    double? fontSize,
+  }) => VerovioTextLabel(
+    text: text ?? this.text,
+    x: x,
+    baselineY: baselineY ?? this.baselineY,
+    fontSize: fontSize ?? this.fontSize,
+    anchor: anchor,
+    kind: kind,
+  );
 }
 
 // Verovio writes chord accidentals as Leipzig private-use glyphs.
@@ -67,8 +80,150 @@ const _leipzigChordGlyphs = <int, String>{
 /// the first system ("Voice", "Piano") only takes room on a phone.
 const _hiddenTextGroups = {'label', 'labelAbbr'};
 
+/// How chord symbols are shown: as written, or as the numbers a band
+/// reads in any key.
+enum ChordDisplay { symbols, nashville, roman }
+
+/// The chord symbol [text] ("Am7", "B♭/D", "C(sus4)") as a number in the
+/// major key of [fifths] sharps (flats when negative): the Nashville way
+/// ("3m7", "4/6", "5(sus4)") or in Roman numerals ("iii7", "IV/VI"). A
+/// text that is not a chord symbol ("N.C.") comes back as it is.
+String chordAsNumber(String text, int fifths, {required bool roman}) {
+  final parts = text.split('/');
+  if (parts.length > 2) return text;
+  final chord = _chordRoot(parts.first);
+  if (chord == null) return text;
+  final bass = parts.length == 2 ? _chordRoot(parts[1]) : null;
+  if (parts.length == 2 && (bass == null || bass.rest.isNotEmpty)) return text;
+  // The key's first note: every fifth up is four letters on, seven
+  // semitones up.
+  final tonicLetter = ((fifths * 4) % 7 + 7) % 7;
+  final tonicPitch = ((fifths * 7) % 12 + 12) % 12;
+  const major = [0, 2, 4, 5, 7, 9, 11];
+  ({int degree, String sign}) place(({int letter, int pitch, String rest}) of) {
+    final degree = ((of.letter - tonicLetter) % 7 + 7) % 7;
+    final off = ((of.pitch - tonicPitch - major[degree]) % 12 + 12) % 12;
+    return (
+      degree: degree,
+      sign: switch (off) {
+        1 => '♯',
+        11 => '♭',
+        2 => '♯♯',
+        10 => '♭♭',
+        _ => '',
+      },
+    );
+  }
+
+  const numerals = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+  final at = place(chord);
+  final minor =
+      chord.rest.startsWith('m') &&
+      !chord.rest.startsWith('maj') &&
+      !chord.rest.startsWith('M');
+  final String root;
+  if (roman) {
+    final numeral = numerals[at.degree];
+    // A minor chord is its numeral in small letters, without the "m".
+    root = minor
+        ? '${at.sign}${numeral.toLowerCase()}${chord.rest.substring(1)}'
+        : '${at.sign}$numeral${chord.rest}';
+  } else {
+    root = '${at.sign}${at.degree + 1}${chord.rest}';
+  }
+  if (bass == null) return root;
+  final under = place(bass);
+  return roman
+      ? '$root/${under.sign}${numerals[under.degree]}'
+      : '$root/${under.sign}${under.degree + 1}';
+}
+
+/// The root of a chord symbol: its letter (C is 0), its pitch (C is 0) and
+/// what follows it; null when [text] does not begin with a note name.
+({int letter, int pitch, String rest})? _chordRoot(String text) {
+  final match = RegExp(r'^([A-G])(♯|#|♭|b)?(.*)$').firstMatch(text.trim());
+  if (match == null) return null;
+  final letter = 'CDEFGAB'.indexOf(match.group(1)!);
+  final alter = switch (match.group(2)) {
+    '♯' || '#' => 1,
+    '♭' || 'b' => -1,
+    _ => 0,
+  };
+  return (
+    letter: letter,
+    pitch: (const [0, 2, 4, 5, 7, 9, 11][letter] + alter + 12) % 12,
+    rest: match.group(3)!,
+  );
+}
+
 /// The groups a text is told apart by ([VerovioTextLabel.kind]).
-const _kindGroups = ['harm', 'verse', 'tempo', 'dir', 'reh'];
+const _kindGroups = ['harm', 'verse', 'tempo', 'dir', 'reh', 'mNum'];
+
+/// Where bar numbers are written: at the start of every line, on every
+/// bar, or nowhere.
+enum BarNumbers { lines, every, none }
+
+/// [labels] as they are drawn with the reader's choices: chord symbols as
+/// numbers ([keyOf] gives the key a chord symbol stands in), chord symbols
+/// and lyrics [wordScale] times their size, the chord symbols of a line on
+/// one level ([alignChords]), and no bar numbers ([hideBarNumbers]).
+List<VerovioTextLabel> shownLabels(
+  List<VerovioTextLabel> labels, {
+  ChordDisplay chords = ChordDisplay.symbols,
+  int Function(VerovioTextLabel chord)? keyOf,
+  double wordScale = 1,
+  bool alignChords = false,
+  bool hideBarNumbers = false,
+}) {
+  var shown = [
+    for (final label in labels)
+      if (!(hideBarNumbers && label.kind == 'mNum'))
+        switch (label.kind) {
+          'harm' => label.copyWith(
+            text: chords == ChordDisplay.symbols
+                ? null
+                : chordAsNumber(
+                    label.text,
+                    keyOf?.call(label) ?? 0,
+                    roman: chords == ChordDisplay.roman,
+                  ),
+            fontSize: label.fontSize * wordScale,
+          ),
+          'verse' => label.copyWith(fontSize: label.fontSize * wordScale),
+          _ => label,
+        },
+  ];
+  if (alignChords) {
+    // The chord symbols of one line of the score: those whose baselines
+    // are within a couple of text heights of one another. They are put on
+    // the highest of them.
+    final harm = [
+      for (final label in shown)
+        if (label.kind == 'harm') label,
+    ]..sort((a, b) => a.baselineY.compareTo(b.baselineY));
+    final level = Map<VerovioTextLabel, double>.identity();
+    var start = 0;
+    for (var i = 1; i <= harm.length; i++) {
+      if (i < harm.length &&
+          harm[i].baselineY - harm[i - 1].baselineY <
+              harm[start].fontSize * 2.5) {
+        continue;
+      }
+      for (var j = start; j < i; j++) {
+        level[harm[j]] = harm[start].baselineY;
+      }
+      start = i;
+    }
+    shown = [
+      for (final label in shown)
+        if (level[label] case final y? when y != label.baselineY)
+          label.copyWith(baselineY: y)
+        else
+          label,
+    ];
+  }
+  return shown;
+}
 
 /// Groups whose texts are single words: a space inside a chord symbol or a
 /// lyric syllable is the converter's ("B ♭", "예 수"), not written.

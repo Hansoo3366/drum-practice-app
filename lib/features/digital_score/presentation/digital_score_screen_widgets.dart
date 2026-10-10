@@ -324,6 +324,8 @@ enum _ScoreMenuAction {
   exportMidi,
   exportPdf,
   exportProject,
+  chordDisplay,
+  mixer,
   guide,
 }
 

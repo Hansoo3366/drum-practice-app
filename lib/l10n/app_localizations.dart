@@ -5401,6 +5401,120 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Fill with slashes'**
   String get slashFill;
+
+  /// fermataLength
+  ///
+  /// In en, this message translates to:
+  /// **'Fermata length'**
+  String get fermataLength;
+
+  /// fermataShort
+  ///
+  /// In en, this message translates to:
+  /// **'Short'**
+  String get fermataShort;
+
+  /// fermataLong
+  ///
+  /// In en, this message translates to:
+  /// **'Long'**
+  String get fermataLong;
+
+  /// repeatCount
+  ///
+  /// In en, this message translates to:
+  /// **'Times played'**
+  String get repeatCount;
+
+  /// repeatCountOf
+  ///
+  /// In en, this message translates to:
+  /// **'{n} times'**
+  String repeatCountOf(int n);
+
+  /// revealHidden
+  ///
+  /// In en, this message translates to:
+  /// **'Show what is hidden'**
+  String get revealHidden;
+
+  /// chordDisplayMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Chord display'**
+  String get chordDisplayMenu;
+
+  /// chordDisplayNashville
+  ///
+  /// In en, this message translates to:
+  /// **'Nashville numbers'**
+  String get chordDisplayNashville;
+
+  /// chordDisplayRoman
+  ///
+  /// In en, this message translates to:
+  /// **'Roman numerals'**
+  String get chordDisplayRoman;
+
+  /// wordSizeMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Text size'**
+  String get wordSizeMenu;
+
+  /// alignChordsOption
+  ///
+  /// In en, this message translates to:
+  /// **'Chord symbols on one level'**
+  String get alignChordsOption;
+
+  /// barNumbersMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Bar numbers'**
+  String get barNumbersMenu;
+
+  /// barNumbersLines
+  ///
+  /// In en, this message translates to:
+  /// **'On every line'**
+  String get barNumbersLines;
+
+  /// barNumbersEvery
+  ///
+  /// In en, this message translates to:
+  /// **'On every bar'**
+  String get barNumbersEvery;
+
+  /// barNumbersNone
+  ///
+  /// In en, this message translates to:
+  /// **'None'**
+  String get barNumbersNone;
+
+  /// instrumentChange
+  ///
+  /// In en, this message translates to:
+  /// **'Change instrument here'**
+  String get instrumentChange;
+
+  /// mixer
+  ///
+  /// In en, this message translates to:
+  /// **'Mixer'**
+  String get mixer;
+
+  /// mixerMute
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get mixerMute;
+
+  /// mixerSolo
+  ///
+  /// In en, this message translates to:
+  /// **'Solo'**
+  String get mixerSolo;
 }
 
 class _AppLocalizationsDelegate

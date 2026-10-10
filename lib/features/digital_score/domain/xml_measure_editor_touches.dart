@@ -260,8 +260,9 @@ extension XmlMeasureTouches on XmlMeasureEditor {
     String xml,
     int partIndex,
     int measureIndex,
-    List<int> notes,
-  ) {
+    List<int> notes, {
+    int? inTimeOf,
+  }) {
     final doc = _ScoreDoc(xml);
     var measure = doc.measureAt(partIndex, measureIndex);
     // The picked notes by their place among the notes of the bar: scaling
@@ -276,10 +277,22 @@ extension XmlMeasureTouches on XmlMeasureEditor {
           ..sort((a, b) => a.onset.compareTo(b.onset));
     var heads = headsOf(measure);
     final actual = heads.length;
-    if (!tupletChoices.any((c) => c.actual == actual)) {
-      throw const FormatException('음 셋, 다섯, 여섯 또는 일곱을 골라야 잇단음표가 됩니다.');
+    // In the time of how many: two play in the time of three, three in
+    // the time of two, four in three, five to seven in four, nine and
+    // more in eight; or what [inTimeOf] says.
+    final normal =
+        inTimeOf ??
+        switch (actual) {
+          2 => 3,
+          3 => 2,
+          4 => 3,
+          >= 5 && <= 7 => 4,
+          >= 9 && <= 15 => 8,
+          _ => 0,
+        };
+    if (actual < 2 || normal < 1 || normal == actual || normal > 16) {
+      throw const FormatException('이 수의 음은 잇단음표로 묶을 수 없습니다.');
     }
-    final normal = tupletChoices.firstWhere((c) => c.actual == actual).normal;
     final first = heads.first;
     final type = first.type;
     if (type == null || first.dots != 0) {
@@ -561,6 +574,237 @@ extension XmlMeasureTouches on XmlMeasureEditor {
     return XmlEditResult(current, last);
   }
 
+  /// Writes [clip] from the selected note on as a notation program pastes:
+  /// each copied note keeps its length, wherever in the bar it comes to
+  /// stand. A note that runs over a barline is cut there and tied over,
+  /// and what the copied notes cover gives way to them. After the last of
+  /// them the bar goes on as it was (a note cut into leaves a rest).
+  ///
+  /// For a melody: a part of one staff and one voice, without tuplets,
+  /// and a run of single notes and rests. Anything else throws, and
+  /// [pasteNotes] writes note for note instead.
+  XmlEditResult pasteNotesFlowing(String xml, XmlNoteRef ref, NoteClip clip) {
+    // Lengths in 96ths of a quarter: a thirty-second is 12, and every
+    // dotted value down to it is a whole number.
+    const quarter = 96;
+    int ticksOf(String type, int dots) {
+      final quarters = _typeQuarters[type];
+      if (quarters == null) throw const FormatException('지원하지 않는 음가입니다.');
+      final ticks = quarters * (2 - 1 / math.pow(2, dots)) * quarter;
+      if (ticks != ticks.roundToDouble()) {
+        throw const FormatException('이 음가는 흘려 붙일 수 없습니다.');
+      }
+      return ticks.round();
+    }
+
+    final copied = <({MusicPitch? pitch, int ticks})>[
+      for (final event in clip._events)
+        if (event.pitches.length > 1)
+          throw const FormatException('화음은 흘려 붙일 수 없습니다.')
+        else
+          (
+            pitch: event.pitches.firstOrNull,
+            ticks: ticksOf(event.type, event.dots),
+          ),
+    ];
+    if (copied.isEmpty) throw const FormatException('복사한 음이 없습니다.');
+    final doc = _ScoreDoc(xml);
+    final count = doc.measureCount(ref.partIndex);
+    final start = doc.measure(ref);
+    final first = start.groupOf(start.note(ref.noteIndex)).first;
+
+    // The notes and rests of a bar as (onset, length, pitch, tied on), in
+    // ticks; throws where the bar is not a plain melody.
+    ({
+      int capacity,
+      List<({int onset, int ticks, MusicPitch? pitch, bool tied})> events,
+    })
+    read(int bar) {
+      final measure = doc.measureAt(ref.partIndex, bar);
+      if (measure.context.staves > 1) {
+        throw const FormatException('보표가 둘인 파트에는 흘려 붙일 수 없습니다.');
+      }
+      final divisions = measure.divisions;
+      int ticks(int value) {
+        if (value * quarter % divisions != 0) {
+          throw const FormatException('이 마디의 음가는 흘려 붙일 수 없습니다.');
+        }
+        return value * quarter ~/ divisions;
+      }
+
+      final voices = {for (final note in measure.notes) note.voice};
+      if (voices.length > 1) {
+        throw const FormatException('성부가 둘 이상인 마디에는 흘려 붙일 수 없습니다.');
+      }
+      final events = <({int onset, int ticks, MusicPitch? pitch, bool tied})>[];
+      for (final note in measure.notes) {
+        if (note.isGrace || note.isCue) {
+          throw const FormatException('꾸밈음이 있는 마디에는 흘려 붙일 수 없습니다.');
+        }
+        if (note.element.getElement('time-modification') != null) {
+          throw const FormatException('잇단음표가 있는 마디에는 흘려 붙일 수 없습니다.');
+        }
+        if (measure.groupOf(note).length > 1) {
+          throw const FormatException('화음이 있는 마디에는 흘려 붙일 수 없습니다.');
+        }
+        events.add((
+          onset: ticks(note.onset),
+          ticks: ticks(note.duration),
+          pitch: note.pitch,
+          tied: note.tieStart,
+        ));
+      }
+      return (capacity: ticks(measure.capacity), events: events);
+    }
+
+    // What each bar holds afterwards.
+    final written = <int, List<({int ticks, MusicPitch? pitch, bool tied})>>{};
+    var next = 0;
+    var left = copied.first.ticks;
+    var firstPasted = -1;
+    for (
+      var bar = ref.measureIndex;
+      bar < count && next < copied.length;
+      bar++
+    ) {
+      final was = read(bar);
+      final content = <({int ticks, MusicPitch? pitch, bool tied})>[];
+      var cursor = 0;
+      if (bar == ref.measureIndex) {
+        // What stands before the place in its bar stays.
+        final at = _ticksOf(first.onset, start.divisions, quarter);
+        for (final event in was.events) {
+          if (event.onset >= at) break;
+          if (event.onset > cursor) {
+            content.add((
+              ticks: event.onset - cursor,
+              pitch: null,
+              tied: false,
+            ));
+          }
+          content.add((
+            ticks: event.ticks,
+            pitch: event.pitch,
+            tied: event.tied,
+          ));
+          cursor = event.onset + event.ticks;
+        }
+        if (cursor < at) {
+          content.add((ticks: at - cursor, pitch: null, tied: false));
+        }
+        cursor = at;
+        firstPasted = content.length;
+      }
+      while (cursor < was.capacity && next < copied.length) {
+        final take = math.min(left, was.capacity - cursor);
+        final event = copied[next];
+        content.add((
+          ticks: take,
+          pitch: event.pitch,
+          // Cut at the barline: tied over to what is left of it.
+          tied: event.pitch != null && left > take,
+        ));
+        cursor += take;
+        left -= take;
+        if (left == 0) {
+          next++;
+          if (next < copied.length) left = copied[next].ticks;
+        }
+      }
+      // After the last copied note the bar goes on as it was.
+      for (final event in was.events) {
+        final end = event.onset + event.ticks;
+        if (end <= cursor) continue;
+        if (event.onset >= cursor) {
+          if (event.onset > cursor) {
+            content.add((
+              ticks: event.onset - cursor,
+              pitch: null,
+              tied: false,
+            ));
+          }
+          content.add((
+            ticks: event.ticks,
+            pitch: event.pitch,
+            tied: event.tied,
+          ));
+        } else {
+          content.add((ticks: end - cursor, pitch: null, tied: false));
+        }
+        cursor = end;
+      }
+      if (cursor < was.capacity) {
+        content.add((ticks: was.capacity - cursor, pitch: null, tied: false));
+      } else if (cursor > was.capacity) {
+        throw const FormatException('박자보다 긴 마디에는 흘려 붙일 수 없습니다.');
+      }
+      written[bar] = content;
+    }
+    doc.keep(xml);
+
+    // Each length as note values, the largest first; more than one for a
+    // length no single value has, tied together.
+    const values = [
+      ('w', 384),
+      ('h.', 288),
+      ('h', 192),
+      ('q.', 144),
+      ('q', 96),
+      ('8.', 72),
+      ('8', 48),
+      ('16.', 36),
+      ('16', 24),
+      ('32.', 18),
+      ('32', 12),
+    ];
+    String name(MusicPitch pitch) =>
+        '${pitch.step.name.toUpperCase()}${switch (pitch.alter) {
+          2 => 'x',
+          1 => '#',
+          -1 => 'b',
+          -2 => 'bb',
+          _ => '',
+        }}${pitch.octave}';
+    var current = xml;
+    final ties = <XmlNoteRef>[];
+    XmlNoteRef? selection;
+    for (final MapEntry(key: bar, value: content) in written.entries) {
+      final tokens = <String>[];
+      for (final (index, piece) in content.indexed) {
+        var rest = piece.ticks;
+        if (bar == ref.measureIndex && index == firstPasted) {
+          selection = ref.inBar(bar, tokens.length);
+        }
+        while (rest > 0) {
+          final value = values.where((v) => v.$2 <= rest).firstOrNull;
+          if (value == null) {
+            throw const FormatException('이 길이는 음표로 적을 수 없습니다.');
+          }
+          rest -= value.$2;
+          final pitch = piece.pitch;
+          if (pitch != null && (rest > 0 || piece.tied)) {
+            ties.add(ref.inBar(bar, tokens.length));
+          }
+          tokens.add('${pitch == null ? 'rest' : name(pitch)} ${value.$1}');
+        }
+      }
+      current = replaceMelody(
+        current,
+        ref.partIndex,
+        bar,
+        tokens.join(', '),
+      ).xml;
+    }
+    for (final tie in ties) {
+      try {
+        current = toggleTie(current, tie).xml;
+      } on FormatException {
+        // What it was tied to is no longer the same note.
+      }
+    }
+    return XmlEditResult(current, selection ?? ref);
+  }
+
   /// Writes the notes at [refs] once more, over what follows the last of
   /// them.
   XmlEditResult duplicateNotes(String xml, List<XmlNoteRef> refs) {
@@ -608,4 +852,12 @@ extension XmlMeasureTouches on XmlMeasureEditor {
       doc.keep(xml);
     }
   }
+}
+
+/// [value] divisions as ticks of [quarter] to the quarter note.
+int _ticksOf(int value, int divisions, int quarter) {
+  if (value * quarter % divisions != 0) {
+    throw const FormatException('이 마디의 음가는 흘려 붙일 수 없습니다.');
+  }
+  return value * quarter ~/ divisions;
 }

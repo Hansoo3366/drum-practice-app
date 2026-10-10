@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:page_a_diddle/app/theme/app_theme.dart';
 
 // The parts the score editor's screen is made of, after the entry palette
@@ -34,6 +36,14 @@ class MusicGlyphData {
 
 /// The signs the editor's tools show.
 abstract final class MusicGlyphs {
+  static const noteDoubleWhole = MusicGlyphData(
+    0xE1D0,
+    0.0,
+    -0.62,
+    2.396,
+    0.62,
+  );
+  static const restDoubleWhole = MusicGlyphData(0xE4E2, 0.0, 0.0, 0.5, 1.0);
   static const noteWhole = MusicGlyphData(0xE1D2, 0.0, -0.548, 1.836, 0.544);
   static const noteHalfUp = MusicGlyphData(0xE1D3, 0.0, -0.58, 1.364, 3.5);
   static const noteQuarterUp = MusicGlyphData(0xE1D5, 0.0, -0.564, 1.328, 3.5);
@@ -257,6 +267,7 @@ abstract final class MusicGlyphs {
   /// A note of [type] ("quarter", "16th"), or its rest.
   static MusicGlyphData duration(String type, {bool rest = false}) =>
       switch (type) {
+        'breve' => rest ? restDoubleWhole : noteDoubleWhole,
         'whole' => rest ? restWhole : noteWhole,
         'half' => rest ? restHalf : noteHalfUp,
         'eighth' => rest ? rest8th : note8thUp,
@@ -722,6 +733,173 @@ class _FlyoutLayout extends SingleChildLayoutDelegate {
   @override
   bool shouldRelayout(_FlyoutLayout oldDelegate) =>
       oldDelegate.anchor != anchor;
+}
+
+/// Lets a tool be pressed and swept open in one move: a finger held on
+/// [child] opens the [choices] in a row beside it, slides onto one of them
+/// without leaving the screen, and where it is lifted is the one that is
+/// taken. Lifted on none, [onHeld] is told (to offer them another way).
+/// A tap on [child] is the child's own.
+///
+/// The row opens on a hold and not on the sweep itself: a sweep that
+/// begins at the edge of the screen is the system's "back" on a phone
+/// without buttons, and a held finger is not.
+class SwipeChoices<T> extends StatefulWidget {
+  const SwipeChoices({
+    required this.choices,
+    required this.onChosen,
+    required this.child,
+    this.onHeld,
+    this.toLeft = false,
+    super.key,
+  });
+
+  final List<({T value, Widget child})> choices;
+  final ValueChanged<T> onChosen;
+  final VoidCallback? onHeld;
+  final Widget child;
+
+  /// Whether the row opens to the left of the tool (a rail at the right).
+  final bool toLeft;
+
+  @override
+  State<SwipeChoices<T>> createState() => _SwipeChoicesState<T>();
+}
+
+class _SwipeChoicesState<T> extends State<SwipeChoices<T>> {
+  static const _cell = 42.0;
+  static const _holdTime = Duration(milliseconds: 350);
+  Offset? _down;
+  Timer? _hold;
+  OverlayEntry? _entry;
+  Rect _row = Rect.zero;
+  final _hover = ValueNotifier<int?>(null);
+
+  @override
+  void dispose() {
+    _hold?.cancel();
+    _entry?.remove();
+    _hover.dispose();
+    super.dispose();
+  }
+
+  void _open(Offset pointer) {
+    final overlay = Overlay.of(context);
+    final area = overlay.context.findRenderObject()! as RenderBox;
+    final box = context.findRenderObject()! as RenderBox;
+    final tool = box.localToGlobal(Offset.zero, ancestor: area) & box.size;
+    final width = _cell * widget.choices.length;
+    final left = widget.toLeft
+        ? math.max(4.0, tool.left - 6 - width)
+        : math.min(tool.right + 6, area.size.width - width - 4);
+    _row = Rect.fromLTWH(left, tool.center.dy - 24, width, 48);
+    _entry = OverlayEntry(
+      builder: (context) => Positioned.fromRect(
+        rect: _row,
+        child: IgnorePointer(
+          child: Material(
+            elevation: 6,
+            color: AppColors.canvas,
+            borderRadius: BorderRadius.circular(10),
+            child: ValueListenableBuilder<int?>(
+              valueListenable: _hover,
+              builder: (context, hover, _) => Row(
+                children: [
+                  for (final (index, choice) in widget.choices.indexed)
+                    Container(
+                      width: _cell,
+                      height: 48,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: index == hover
+                            ? AppColors.accent.withValues(alpha: 0.16)
+                            : null,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: IconTheme(
+                        data: IconThemeData(
+                          color: index == hover
+                              ? AppColors.accent
+                              : AppColors.ink,
+                        ),
+                        child: choice.child,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(_entry!);
+    _track(pointer);
+  }
+
+  void _track(Offset pointer) {
+    final area = Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final at = area.globalToLocal(pointer);
+    // Over the row, or above or below it within reach: the finger need
+    // not keep to a line.
+    final inside =
+        at.dx >= _row.left &&
+        at.dx < _row.right &&
+        (at.dy - _row.center.dy).abs() < 72;
+    _hover.value = inside
+        ? ((at.dx - _row.left) / _cell).floor().clamp(
+            0,
+            widget.choices.length - 1,
+          )
+        : null;
+  }
+
+  void _close({required bool take}) {
+    final hover = _hover.value;
+    final opened = _entry != null;
+    _hold?.cancel();
+    _hold = null;
+    _entry?.remove();
+    _entry = null;
+    _down = null;
+    _hover.value = null;
+    if (!take || !opened) return;
+    if (hover != null) {
+      widget.onChosen(widget.choices[hover].value);
+    } else {
+      widget.onHeld?.call();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (event) {
+        _down = event.position;
+        _hold?.cancel();
+        _hold = Timer(_holdTime, () {
+          final down = _down;
+          if (!mounted || down == null || _entry != null) return;
+          unawaited(HapticFeedback.selectionClick());
+          _open(down);
+        });
+      },
+      onPointerMove: (event) {
+        final down = _down;
+        if (down == null) return;
+        if (_entry != null) {
+          _track(event.position);
+        } else if ((event.position - down).distance > 18) {
+          // Moved before it was held: a scroll of the rail, or a sweep
+          // the system takes.
+          _hold?.cancel();
+          _hold = null;
+        }
+      },
+      onPointerUp: (_) => _close(take: true),
+      onPointerCancel: (_) => _close(take: false),
+      child: widget.child,
+    );
+  }
 }
 
 /// A piano keyboard as wide as the screen, from the C of [octave] up. A key

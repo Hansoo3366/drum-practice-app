@@ -2825,4 +2825,63 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get slashFill => '슬래시로 채우기';
+
+  @override
+  String get fermataLength => '늘임표 길이';
+
+  @override
+  String get fermataShort => '짧게';
+
+  @override
+  String get fermataLong => '길게';
+
+  @override
+  String get repeatCount => '되풀이 횟수';
+
+  @override
+  String repeatCountOf(int n) {
+    return '$n번';
+  }
+
+  @override
+  String get revealHidden => '숨긴 것 보이기';
+
+  @override
+  String get chordDisplayMenu => '코드 표시';
+
+  @override
+  String get chordDisplayNashville => 'Nashville 숫자';
+
+  @override
+  String get chordDisplayRoman => '로마 숫자';
+
+  @override
+  String get wordSizeMenu => '글자 크기';
+
+  @override
+  String get alignChordsOption => '코드를 한 줄에 맞추기';
+
+  @override
+  String get barNumbersMenu => '마디 번호';
+
+  @override
+  String get barNumbersLines => '줄마다';
+
+  @override
+  String get barNumbersEvery => '마디마다';
+
+  @override
+  String get barNumbersNone => '없음';
+
+  @override
+  String get instrumentChange => '여기서 악기 바꾸기';
+
+  @override
+  String get mixer => '믹서';
+
+  @override
+  String get mixerMute => '끄기';
+
+  @override
+  String get mixerSolo => '혼자 듣기';
 }

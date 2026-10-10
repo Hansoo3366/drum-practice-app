@@ -216,6 +216,154 @@ extension XmlMeasureLooks on XmlMeasureEditor {
     return XmlEditResult(current, _barRef(partIndex, from));
   }
 
+  /// Has the part go on with another instrument from a bar on (a player
+  /// who takes up another, a keyboard that changes its sound): its name is
+  /// written over the bar and the player plays it from there. Null takes
+  /// the change away.
+  XmlEditResult setInstrumentChange(
+    String xml,
+    int partIndex,
+    int measureIndex,
+    ({String name, int program})? instrument,
+  ) {
+    final doc = _ScoreDoc(xml);
+    final measure = _bar(doc, partIndex, measureIndex);
+    final written = _instrumentChangeOf(measure);
+    if (instrument == null) {
+      if (written == null) {
+        throw const FormatException('이 마디에는 악기 바꿈이 없습니다.');
+      }
+      _remove(written);
+      return XmlEditResult(doc.toXml(), _barRef(partIndex, measureIndex));
+    }
+    if (instrument.program < 0 || instrument.program > 127) {
+      throw const FormatException('지원하지 않는 악기입니다.');
+    }
+    if (written != null) _remove(written);
+    final id =
+        _scorePart(
+          doc,
+          partIndex,
+        ).getElement('score-instrument')?.getAttribute('id') ??
+        'P${partIndex + 1}-I1';
+    final direction = XmlElement(
+      XmlName('direction'),
+      [XmlAttribute(XmlName('placement'), 'above')],
+      [
+        XmlElement(XmlName('direction-type'), [], [
+          XmlElement(XmlName('words'), [], [XmlText(instrument.name)]),
+        ]),
+        XmlElement(XmlName('sound'), [], [
+          XmlElement(
+            XmlName('midi-instrument'),
+            [XmlAttribute(XmlName('id'), id)],
+            [
+              // Written from 1, as MusicXML counts programs.
+              XmlElement(XmlName('midi-program'), [], [
+                XmlText('${instrument.program + 1}'),
+              ]),
+            ],
+          ),
+        ]),
+      ],
+    );
+    // Before the first note, after what the bar opens with.
+    var at = 0;
+    for (final child in measure.children) {
+      if (child is XmlElement &&
+          !const {'print', 'attributes'}.contains(child.name.local) &&
+          !(child.name.local == 'barline' &&
+              child.getAttribute('location') == 'left')) {
+        break;
+      }
+      at++;
+    }
+    measure.children.insert(at, direction);
+    return XmlEditResult(doc.toXml(), _barRef(partIndex, measureIndex));
+  }
+
+  /// Gives the fermata of the selected note its shape, which says how long
+  /// it is held: `angled` a short hold, `normal` the usual one, `square` a
+  /// long one. The note gets a fermata if it has none.
+  XmlEditResult setFermataShape(String xml, XmlNoteRef ref, String shape) {
+    if (!const {'normal', 'angled', 'square'}.contains(shape)) {
+      throw const FormatException('지원하지 않는 늘임표입니다.');
+    }
+    final doc = _ScoreDoc(xml);
+    final measure = doc.measure(ref);
+    final info = measure.note(ref.noteIndex);
+    if (info.isGrace || info.isCue) {
+      throw const FormatException('꾸밈음에는 기호를 붙일 수 없습니다.');
+    }
+    final notations = _notationsOf(measure.groupOf(info).first.element);
+    var fermata = notations.getElement('fermata');
+    if (fermata == null) {
+      fermata = XmlElement(XmlName('fermata'));
+      notations.children.add(fermata);
+    }
+    fermata.children.clear();
+    if (shape != 'normal') fermata.children.add(XmlText(shape));
+    return XmlEditResult(doc.toXml(), ref);
+  }
+
+  /// Writes how many times the repeat that ends at a bar is played: twice
+  /// is what a repeat sign means and is not written; more is written on
+  /// the sign and above the bar ("3x").
+  XmlEditResult setRepeatTimes(
+    String xml,
+    int partIndex,
+    int measureIndex,
+    int times,
+  ) {
+    if (times < 2 || times > 9) {
+      throw const FormatException('2번에서 9번까지 되풀이할 수 있습니다.');
+    }
+    final doc = _ScoreDoc(xml);
+    doc.measureAt(partIndex, measureIndex);
+    final counted = RegExp(r'^\d+\s*x$', caseSensitive: false);
+    var found = false;
+    for (final (index, _) in doc.parts.indexed) {
+      final measures = doc._measures(index);
+      if (measureIndex >= measures.length) continue;
+      final measure = measures[measureIndex];
+      final repeat = _barlineOf(
+        measure,
+        'right',
+        create: false,
+      )?.getElement('repeat');
+      if (repeat == null) continue;
+      found = true;
+      if (times == 2) {
+        repeat.removeAttribute('times');
+      } else {
+        repeat.setAttribute('times', '$times');
+      }
+      for (final direction in measure.findElements('direction').toList()) {
+        if (direction
+            .findAllElements('words')
+            .any((words) => counted.hasMatch(words.innerText.trim()))) {
+          _remove(direction);
+        }
+      }
+      if (times > 2 && index == partIndex) {
+        _insertAtEnd(
+          measure,
+          XmlElement(
+            XmlName('direction'),
+            [XmlAttribute(XmlName('placement'), 'above')],
+            [
+              XmlElement(XmlName('direction-type'), [], [
+                XmlElement(XmlName('words'), [], [XmlText('${times}x')]),
+              ]),
+            ],
+          ),
+        );
+      }
+    }
+    if (!found) throw const FormatException('이 마디에는 도돌이 끝이 없습니다.');
+    return XmlEditResult(doc.toXml(), _barRef(partIndex, measureIndex));
+  }
+
   /// Makes the selected note or chord tacet, or lets it sound again: it is
   /// printed as before and the player passes over it. For a cue, or a line
   /// that is there to be read and not heard.
@@ -430,6 +578,18 @@ extension XmlMeasureLooks on XmlMeasureEditor {
     // The picked note stays the picked one.
     return XmlEditResult(addChordNote(xml, ref, at: pitch).xml, ref);
   }
+}
+
+/// The direction of a bar that has the part change its instrument.
+XmlElement? _instrumentChangeOf(XmlElement measure) {
+  for (final direction in measure.findElements('direction')) {
+    if (direction
+        .findElements('sound')
+        .any((sound) => sound.getElement('midi-instrument') != null)) {
+      return direction;
+    }
+  }
+  return null;
 }
 
 /// Whether a note is written to be passed over by the player.

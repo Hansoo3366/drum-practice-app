@@ -60,6 +60,11 @@ class VerovioScoreView extends StatefulWidget {
     this.onMeasureDoubleTapped,
     this.onTextTapped,
     this.metronome = false,
+    this.partLevels,
+    this.chordDisplay = ChordDisplay.symbols,
+    this.wordScale = 1,
+    this.alignChords = false,
+    this.barNumbers = BarNumbers.lines,
     this.soundingRange,
     this.onBlankTapped,
     this.onLongPressed,
@@ -147,6 +152,25 @@ class VerovioScoreView extends StatefulWidget {
   /// A click on every beat while the score plays, higher on the first of
   /// a bar.
   final bool metronome;
+
+  /// How loud each part plays, by part in score order, next to what the
+  /// score gives it (1.0); 0 is silent. Null plays every part as written.
+  /// A listener's mixer: nothing of the score changes.
+  final List<double>? partLevels;
+
+  /// How chord symbols are shown: as written, or as numbers in the key of
+  /// their bar. Display only: the score is not changed.
+  final ChordDisplay chordDisplay;
+
+  /// How large chord symbols and lyrics are drawn, next to their size as
+  /// engraved.
+  final double wordScale;
+
+  /// Whether the chord symbols of a line stand on one level.
+  final bool alignChords;
+
+  /// Where bar numbers are written.
+  final BarNumbers barNumbers;
 
   /// The lowest and highest pitch the instrument (or a voice) reaches:
   /// notes outside it are marked in red. Null marks none.
@@ -358,6 +382,22 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   @override
   void didUpdateWidget(covariant VerovioScoreView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if ((oldWidget.chordDisplay != widget.chordDisplay ||
+            oldWidget.wordScale != widget.wordScale ||
+            oldWidget.alignChords != widget.alignChords ||
+            (oldWidget.barNumbers == BarNumbers.none) !=
+                (widget.barNumbers == BarNumbers.none)) &&
+        _lastViewportWidth != null) {
+      // The same pages, their chord symbols drawn another way.
+      _rebuildRenderedLayout(_lastViewportWidth!);
+    }
+    if (!listEquals(oldWidget.partLevels, widget.partLevels)) {
+      // The mixer was moved: what plays now is heard so at once.
+      final midi = _midi;
+      if (midi != null) {
+        unawaited(midi.then(_setInstruments, onError: (Object _) {}));
+      }
+    }
     if (oldWidget.inputMode != widget.inputMode ||
         oldWidget.inputDurationType != widget.inputDurationType ||
         oldWidget.inputAlter != widget.inputAlter) {
@@ -369,6 +409,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         !listEquals(oldWidget.engravingChunks, widget.engravingChunks) ||
         !_sameMarks(oldWidget.rehearsalMarks, widget.rehearsalMarks) ||
         oldWidget.engravingPageSize != widget.engravingPageSize ||
+        (oldWidget.barNumbers == BarNumbers.every) !=
+            (widget.barNumbers == BarNumbers.every) ||
         !identical(oldWidget.score, widget.score) ||
         oldWidget.score.noteCount != widget.score.noteCount ||
         oldWidget.score.measureCount != widget.score.measureCount ||
@@ -635,6 +677,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   /// The pages of each chunk already engraved ([VerovioScoreView
   /// .engravingChunks]), by the chunk's text, for [_chunkPageSize].
   Map<String, List<_VerovioPage>> _chunkPages = {};
+  var _chunkEveryBar = false;
   Size? _chunkPageSize;
 
   /// Engraves [chunks] one under the other. A chunk engraved before is
@@ -649,9 +692,12 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       final timeout = _verovioOperationTimeout;
       final service = await _getService().timeout(timeout);
       _lineStarts = const [];
-      if (_chunkPageSize != widget.engravingPageSize) {
+      final everyBar = widget.barNumbers == BarNumbers.every;
+      if (_chunkPageSize != widget.engravingPageSize ||
+          _chunkEveryBar != everyBar) {
         _chunkPages = {};
         _chunkPageSize = widget.engravingPageSize;
+        _chunkEveryBar = everyBar;
       }
       var optionsSet = false;
       final kept = <String, List<_VerovioPage>>{};
@@ -665,6 +711,10 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
                 .setOptionsJson(
                   jsonEncode({
                     ..._verovioOptions,
+                    // A number on every bar, or on the first of a line.
+                    'mnumInterval': widget.barNumbers == BarNumbers.every
+                        ? 1
+                        : 0,
                     // Every chunk is one line of the score, whatever its
                     // bars hold: no break is written in it, so its bars are
                     // set on one line of the full width.
@@ -755,6 +805,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
           .setOptionsJson(
             jsonEncode({
               ..._verovioOptions,
+              // A number on every bar, or on the first of a line.
+              'mnumInterval': widget.barNumbers == BarNumbers.every ? 1 : 0,
               // Lines as on the page (converted scores record them); pages
               // still break automatically. Scores without line breaks reflow.
               if (_lineStarts.isNotEmpty) 'breaks': 'line',
@@ -860,6 +912,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
           .setOptionsJson(
             jsonEncode({
               ..._verovioOptions,
+              // A number on every bar, or on the first of a line.
+              'mnumInterval': widget.barNumbers == BarNumbers.every ? 1 : 0,
               if (_writtenLineStarts(xml).isNotEmpty) 'breaks': 'line',
             }),
           )
@@ -1203,7 +1257,28 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
           }
         }
       }
-      for (final chord in page.chords) {
+      // The words of the page as the reader asked for them: chord symbols
+      // as numbers (each in the key of the bar it stands over), larger or
+      // smaller, on one level, without bar numbers.
+      final plain =
+          widget.chordDisplay == ChordDisplay.symbols &&
+          widget.wordScale == 1 &&
+          !widget.alignChords &&
+          widget.barNumbers != BarNumbers.none;
+      page.shownChords = plain
+          ? null
+          : shownLabels(
+              page.chords,
+              chords: widget.chordDisplay,
+              keyOf: (chord) => _keyAt(
+                Offset(chord.x * scale, pageTop + chord.baselineY * scale),
+                measures,
+              ),
+              wordScale: widget.wordScale,
+              alignChords: widget.alignChords,
+              hideBarNumbers: widget.barNumbers == BarNumbers.none,
+            );
+      for (final chord in page.shownChords ?? page.chords) {
         final size = chord.fontSize * scale;
         final width = chord.text.length * size * 0.62;
         final left = switch (chord.anchor) {
@@ -1472,16 +1547,47 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     ]);
   }
 
+  /// The key signature (in sharps, flats negative) of the bar a text at
+  /// [point] stands over: the nearest of the bars at its place across the
+  /// page.
+  int _keyAt(Offset point, List<NativeMeasureBox> boxes) {
+    if (widget.score.parts.isEmpty) return 0;
+    final bars = widget.score.parts.first.measures;
+    NativeMeasureBox? best;
+    var nearest = double.infinity;
+    for (final box in boxes) {
+      final bar = box.rect;
+      if (point.dx < bar.left - 2 || point.dx > bar.right) continue;
+      final away = point.dy < bar.top
+          ? bar.top - point.dy
+          : (point.dy > bar.bottom ? point.dy - bar.bottom : 0.0);
+      if (away < nearest) {
+        nearest = away;
+        best = box;
+      }
+    }
+    if (best == null || best.measureIndex >= bars.length) return 0;
+    return bars[best.measureIndex].attributes.keyFifths;
+  }
+
   /// Tells the synthesizer which instrument plays each channel (the piano
   /// unless the score names another, as a generated strings or brass part
   /// does) and how loud, so the accompaniment stays behind the melody.
   Future<void> _setInstruments(PlaybackMidi midi) async {
     try {
+      final mix = widget.partLevels;
+      final parts = mix == null
+          ? const <int, int>{}
+          : channelParts(midi.sequence, widget.playbackScore ?? widget.score);
       for (var channel = 0; channel < 16; channel++) {
+        final part = parts[channel];
+        final heard = mix == null || part == null || part >= mix.length
+            ? 1.0
+            : mix[part];
         await _audio.setChannelProgram(
           channel: channel,
           program: midi.programs[channel] ?? 0,
-          volume: midi.levels[channel] ?? 1.0,
+          volume: ((midi.levels[channel] ?? 1.0) * heard).clamp(0.0, 1.5),
         );
       }
     } on Object {

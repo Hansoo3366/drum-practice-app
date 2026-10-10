@@ -524,7 +524,8 @@ List<nm.MidiEvent> _inTickOrder(List<nm.MidiEvent> events) {
 /// [sequence] with what the score says of its tempo in words and signs
 /// played: it slows down under "rit." and speeds up under "accel." (by
 /// about a quarter, beat by beat, until "a tempo", the next tempo mark, or
-/// two bars on), and a note under a fermata is held twice as long.
+/// two bars on), and a note under a fermata is held twice as long (half as
+/// long again under an angled one, three times under a square one).
 nm.MidiSequence shapeTempo(
   nm.MidiSequence sequence,
   PlayedTempo tempo, {
@@ -607,7 +608,7 @@ nm.MidiSequence shapeTempo(
     }
 
     final after = nowAt(to);
-    played[from] = math.max(10, (nowAt(from) / 2).round());
+    played[from] = math.max(10, (nowAt(from) / hold.times).round());
     // Changes inside the held note would end the hold early.
     played.removeWhere((tick, _) => tick > from && tick < to);
     played[to] = written[to] ?? after;
@@ -874,6 +875,39 @@ List<double> _staffLevels(XmlElement root) {
 Map<int, int> channelPrograms(nm.MidiSequence sequence, String musicXml) =>
     _byChannel(sequence, staffPrograms(musicXml));
 
+/// The part (counted through the score) each channel of [sequence] plays:
+/// the mapper writes one track per staff, in score order, and a part has
+/// as many staves as its bars say at most.
+Map<int, int> channelParts(nm.MidiSequence sequence, MusicScore score) =>
+    _byChannel(sequence, [
+      for (final (index, part) in score.parts.indexed)
+        for (
+          var staff = 0;
+          staff <
+              part.measures.fold<int>(
+                1,
+                (most, bar) => math.max(most, bar.attributes.staves),
+              );
+          staff++
+        )
+          index,
+    ]);
+
+/// How loud each part is to be heard, as a listener sets a mixer: [levels]
+/// by part (1.0 as written), with the parts in [muted] silent and, when
+/// any part is in [solo], only those heard.
+List<double> mixedLevels(
+  int parts, {
+  Map<int, double> levels = const {},
+  Set<int> muted = const {},
+  Set<int> solo = const {},
+}) => [
+  for (var part = 0; part < parts; part++)
+    muted.contains(part) || (solo.isNotEmpty && !solo.contains(part))
+        ? 0.0
+        : (levels[part] ?? 1.0).clamp(0.0, 1.5),
+];
+
 /// The level of each channel of [sequence]; see [staffLevels].
 Map<int, double> channelLevels(nm.MidiSequence sequence, String musicXml) =>
     _byChannel(sequence, staffLevels(musicXml));
@@ -964,10 +998,135 @@ PlaybackMidi buildPlaybackMidi({
   );
   // Instruments and levels from one reading of the score.
   final root = XmlDocument.parse(playing).rootElement;
-  return PlaybackMidi(
+  final built = PlaybackMidi(
     midi,
     _byChannel(midi, _staffPrograms(root)),
     _byChannel(midi, _staffLevels(root)),
+  );
+  // A part that changes its instrument on the way is read once more for
+  // where it does; most scores have no such change.
+  if (!playing.contains('<midi-instrument') ||
+      !root
+          .findAllElements('measure')
+          .any((m) => m.findAllElements('midi-instrument').isNotEmpty)) {
+    return built;
+  }
+  return withInstrumentChanges(
+    built,
+    instrumentChanges(playing, codec.decodeXml(playing)),
+  );
+}
+
+/// [midi] with the parts going on with other instruments where the score
+/// says so. The player gives each channel one instrument for the whole
+/// piece, so what a part plays after a change is moved to a channel of
+/// its own, set to the new instrument and as loud as the part was.
+PlaybackMidi withInstrumentChanges(
+  PlaybackMidi midi,
+  List<({double at, int firstStaff, int staves, int program})> changes,
+) {
+  if (changes.isEmpty) return midi;
+  final sequence = midi.sequence;
+  final tpq = sequence.ticksPerQuarter;
+  bool isOn(nm.MidiEvent e) =>
+      e.type == nm.MidiEventType.noteOn && (e.velocity ?? 0) > 0;
+  bool isOff(nm.MidiEvent e) =>
+      e.note != null &&
+      (e.type == nm.MidiEventType.noteOff ||
+          (e.type == nm.MidiEventType.noteOn && (e.velocity ?? 0) == 0));
+  final staffTracks = [
+    for (final track in sequence.tracks)
+      if (track.name != 'Conductor' && track.name != 'Metronome') track,
+  ];
+  final programs = {...midi.programs};
+  final levels = {...midi.levels};
+  // Channel 10 is the drums of every synthesizer; the last is the click.
+  final taken = <int>{9, metronomeChannel, ...programs.keys};
+  for (final track in sequence.tracks) {
+    for (final event in track.events) {
+      if (event.note != null) taken.add(event.channel);
+    }
+  }
+  final sorted = [...changes]..sort((a, b) => a.at.compareTo(b.at));
+  // Per staff track: from which tick on which channel.
+  final moves = <nm.MidiTrack, List<({int from, int channel})>>{};
+  for (final change in sorted) {
+    for (var staff = 0; staff < change.staves; staff++) {
+      final index = change.firstStaff + staff;
+      if (index >= staffTracks.length) continue;
+      final track = staffTracks[index];
+      final first = track.events.where(isOn).firstOrNull;
+      if (first == null) continue;
+      final spare = [
+        for (var channel = 0; channel < 16; channel++)
+          if (!taken.contains(channel)) channel,
+      ].firstOrNull;
+      // Every channel is in use: the part keeps its instrument.
+      if (spare == null) continue;
+      taken.add(spare);
+      // A sung part is played on the piano, as in [staffPrograms].
+      programs[spare] = change.program >= 52 && change.program <= 54
+          ? 0
+          : change.program;
+      levels[spare] = levels[first.channel] ?? 1.0;
+      moves.putIfAbsent(track, () => []).add((
+        from: (change.at * tpq).round(),
+        channel: spare,
+      ));
+    }
+  }
+  if (moves.isEmpty) return midi;
+  return PlaybackMidi(
+    nm.MidiSequence(
+      ticksPerQuarter: tpq,
+      tracks: [
+        for (final track in sequence.tracks)
+          if (moves[track] case final steps?)
+            nm.MidiTrack(
+              name: track.name,
+              channel: track.channel,
+              events: () {
+                // A note ends on the channel it began on.
+                final open = <int, List<int>>{};
+                return [
+                  for (final event in track.events)
+                    if (isOn(event))
+                      () {
+                        final channel =
+                            steps
+                                .where((step) => event.tick >= step.from - 2)
+                                .lastOrNull
+                                ?.channel ??
+                            event.channel;
+                        open.putIfAbsent(event.note!, () => []).add(channel);
+                        return nm.MidiEvent.noteOn(
+                          tick: event.tick,
+                          channel: channel,
+                          note: event.note!,
+                          velocity: event.velocity!,
+                        );
+                      }()
+                    else if (isOff(event))
+                      nm.MidiEvent.noteOff(
+                        tick: event.tick,
+                        channel: switch (open[event.note!]) {
+                          final channels? when channels.isNotEmpty =>
+                            channels.removeAt(0),
+                          _ => event.channel,
+                        },
+                        note: event.note!,
+                      )
+                    else
+                      event,
+                ];
+              }(),
+            )
+          else
+            track,
+      ],
+    ),
+    programs,
+    levels,
   );
 }
 

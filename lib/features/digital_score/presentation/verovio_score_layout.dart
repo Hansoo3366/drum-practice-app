@@ -17,6 +17,9 @@ class _VerovioPage {
   final PageHitMap hitMap;
   final List<VerovioTextLabel> chords;
 
+  /// [chords] as they are drawn, when chord symbols are shown as numbers.
+  List<VerovioTextLabel>? shownChords;
+
   /// The staff lines of every bar of the page, as they were drawn.
   final List<VerovioStaffLines> staves;
 
@@ -274,7 +277,7 @@ class _VerovioPages extends StatelessWidget {
               child: RepaintBoundary(
                 child: CustomPaint(
                   painter: VerovioTextLabelPainter(
-                    labels: page.chords,
+                    labels: page.shownChords ?? page.chords,
                     scale: width / viewBox.width,
                     color: AppColors.ink,
                   ),

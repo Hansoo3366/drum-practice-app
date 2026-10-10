@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-10T16:48:00+09:00"
+last_updated: "2026-10-10T21:11:00+09:00"
 current_phase:
   id: "RELEASE-4"
   name: "OMR 정확도 최소 95% 개선·검증"
@@ -516,6 +516,14 @@ setup_required:
       - "사용자 이름과 비밀번호"
 
 decisions:
+  - id: "D-229"
+    date: "2026-10-10"
+    status: "active"
+    decision: "교정 에디터에 실시간 녹음 입력은 넣지 않는다(사용자 결정). 보표 묶음도 범위 밖: 편집 화면은 파트를 하나씩 연다."
+  - id: "D-228"
+    date: "2026-10-10"
+    status: "active"
+    decision: "교정 에디터에 MIDI 건반 입력은 넣지 않는다(사용자 결정). 대조표에서 범위 밖으로 둔다."
   - id: "D-227"
     date: "2026-10-09"
     status: "active"
@@ -1414,6 +1422,15 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-10-06T13:58:32+09:00"
   checks:
+    - name: "editor_rest_20261010"
+      result: "passed_with_known_gaps"
+      detail: "흘려 붙여넣기·악기 바꿈·믹서·본 화면 코드 숫자: analyze 0건, 전체 테스트 897 통과, release 4100 에뮬레이터에서 본 화면 Nashville 숫자·믹서·악기 바꿈 표기 확인, 앱 예외 0. 대조표 94.6/100. 공백: 소리, 실기기 감도."
+    - name: "editor_display_options_20261010"
+      result: "passed_with_known_gaps"
+      detail: "코드 숫자 보기·글자 크기·코드 줄 맞추기·마디 번호: analyze 0건, 전체 테스트 892 통과, release 4099 에뮬레이터에서 Nashville 숫자·마디마다 번호·빔 묶기/풀기 확인, 앱 예외 0. 공백: 소리, 실기기 감도."
+    - name: "editor_gaps_2_20261010"
+      result: "passed_with_known_gaps"
+      detail: "겹온음표·늘임표 길이·도돌이 횟수·숨긴 것 보이기·꾹 눌러 길이 고르기: analyze 0건, 전체 테스트 885 통과, release 4098 에뮬레이터에서 길이 줄·네모 늘임표·3x 확인, 앱 예외 0. 대조표 91.8/100. 공백: 소리, 실기기 감도."
     - name: "editor_gaps_20261010"
       result: "passed_with_known_gaps"
       detail: "교정 에디터 이슈·빠진 기능: analyze 0건, 전체 테스트 880 통과, release 4095 에뮬레이터에서 숨기기·Caesura·슬래시 채우기·옵션 유지·메트로놈 재생 시작 확인, 앱 예외 0. 대조표 90.4/100(must 42/42, 없는 것 14줄). 공백: 소리, 음역 밖 표시의 화면 확인."

@@ -21,6 +21,7 @@ import 'package:page_a_diddle/features/digital_score/presentation/omr_original_c
 import 'package:page_a_diddle/features/digital_score/presentation/score_editor_chrome.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_proofread_screen.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/verovio_text_labels.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xml/xml.dart';
 
@@ -2231,6 +2232,27 @@ void main() {
         // The bar is still the picked one.
         expect(view(tester).highlightedMeasureRange, (start: 2, end: 2));
 
+        // Chord symbols are shown as numbers when asked for; the score
+        // keeps what it says.
+        expect(view(tester).chordDisplay, ChordDisplay.symbols);
+        await _openPalette(tester, '악보');
+        await menu(tester, '코드 표시', 'Nashville 숫자');
+        expect(view(tester).chordDisplay, ChordDisplay.nashville);
+        expect(
+          (await SharedPreferences.getInstance()).getString(
+            'score.chordDisplay',
+          ),
+          'nashville',
+        );
+        await menu(tester, '코드 표시', '코드');
+        // The words larger, bar numbers on every bar.
+        await menu(tester, '글자 크기', '크게');
+        expect(view(tester).wordScale, 1.2);
+        await menu(tester, '마디 번호', '마디마다');
+        expect(view(tester).barNumbers, BarNumbers.every);
+        await menu(tester, '글자 크기', '보통');
+        await menu(tester, '마디 번호', '줄마다');
+
         // Notes a voice does not reach are marked when asked for.
         expect(view(tester).soundingRange, isNull);
         await tester.tap(find.byTooltip('마디 편집'));
@@ -2244,6 +2266,85 @@ void main() {
         await _settle(tester);
         await leave(tester);
       });
+
+      testWidgets('a value is swept out of the note tool in one move', (
+        tester,
+      ) async {
+        await _open(tester, _MemoryStorage(), musicXml: fine);
+        final tool = tester.getCenter(find.byTooltip('음표 넣기'));
+
+        // Down on the tool, held, then to the side and up over the fifth
+        // value (double whole, whole, half, quarter, eighth…).
+        final gesture = await tester.startGesture(tool);
+        // Held for a moment, the values open beside the tool.
+        await tester.pump(const Duration(milliseconds: 400));
+        await gesture.moveBy(const Offset(24, 0));
+        await tester.pump();
+        final row = tester.getRect(
+          find
+              .descendant(
+                of: find.byType(Overlay),
+                matching: find.byWidgetPredicate(
+                  (w) => w is Material && w.elevation == 6,
+                ),
+              )
+              .last,
+        );
+        await gesture.moveTo(Offset(row.left + 42 * 4 + 21, row.center.dy));
+        await tester.pump();
+        await gesture.up();
+        await _settle(tester);
+
+        // The note tool is in hand with that value.
+        expect(view(tester).inputMode, 'place');
+        view(tester).onNotePlaced!(place(tester, 2, 0, PitchStep.f, 4));
+        await _settle(tester);
+        expect(
+          view(tester).score.parts.first.measures[2].notes.first.type,
+          'eighth',
+        );
+        await leave(tester);
+      });
+
+      testWidgets(
+        'a long fermata, a repeat three times, what is hidden shown',
+        (tester) async {
+          await _open(tester, _MemoryStorage(), musicXml: fine);
+          view(tester).onEventTapped!(note(tester, 2, 3));
+          await _settle(tester);
+          await _openPalette(tester, '기호');
+          await menu(tester, '늘임표 길이', '길게');
+          expect(xmlNow(tester), contains('<fermata>square</fermata>'));
+
+          await _openPalette(tester, '마디 기호');
+          expect(find.byTooltip('되풀이 횟수'), findsNothing);
+          await tester.tap(find.byTooltip('반복 끝'));
+          await _settle(tester);
+          await menu(tester, '되풀이 횟수', '3번');
+          expect(xmlNow(tester), contains('times="3"'));
+          expect(xmlNow(tester), contains('<words>3x</words>'));
+
+          // A hidden note is not engraved, until hidden things are shown.
+          await _openPalette(tester, '모양');
+          await tester.tap(find.byTooltip('숨기기'));
+          await _settle(tester);
+          expect(
+            view(tester).engravingChunks!.join(),
+            contains('<note print-object="no"'),
+          );
+          await tester.tap(find.byTooltip('마디 편집'));
+          await _settle(tester);
+          await tester.tap(find.text('숨긴 것 보이기'));
+          await _settle(tester);
+          expect(
+            view(tester).engravingChunks!.join(),
+            isNot(contains('print-object="no"')),
+          );
+          // The score itself still says it is hidden.
+          expect(xmlNow(tester), contains('<note print-object="no"'));
+          await leave(tester);
+        },
+      );
 
       testWidgets('beams are joined and taken off', (tester) async {
         await _open(tester, _MemoryStorage(), musicXml: fine);

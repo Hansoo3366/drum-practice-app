@@ -598,7 +598,7 @@ enum TempoWord { slower, faster, asBefore, swing, straight }
 /// the whole lasts ([end]).
 typedef PlayedTempo = ({
   List<({double at, TempoWord word})> words,
-  List<({double from, double to})> holds,
+  List<({double from, double to, double times})> holds,
   List<double> bars,
   double end,
 });
@@ -613,7 +613,7 @@ PlayedTempo playedTempo(String xml, MusicScore score) {
     at += length;
   }
   final words = <({double at, TempoWord word})>[];
-  final holds = <({double from, double to})>[];
+  final holds = <({double from, double to, double times})>[];
   for (final part in XmlDocument.parse(xml).rootElement.findElements('part')) {
     var divisions = 1;
     var index = 0;
@@ -640,10 +640,19 @@ PlayedTempo playedTempo(String xml, MusicScore score) {
             if (child.getElement('grace') != null) break;
             final chord = child.getElement('chord') != null;
             final from = chord ? last : position;
-            if (child.getElement('notations')?.getElement('fermata') != null) {
+            final fermata = child
+                .getElement('notations')
+                ?.getElement('fermata');
+            if (fermata != null) {
               final hold = (
                 from: start + from / divisions,
                 to: start + (from + length()) / divisions,
+                // The shape says how long: angled short, square long.
+                times: switch (fermata.innerText.trim()) {
+                  'angled' => 1.5,
+                  'square' => 3.0,
+                  _ => 2.0,
+                },
               );
               if (hold.to > hold.from &&
                   !holds.any(
@@ -688,7 +697,10 @@ TempoWord? _tempoWord(String text) {
   if (RegExp(r'^(rit|rall|riten|slower|calando|allarg)').hasMatch(word)) {
     return TempoWord.slower;
   }
-  if (RegExp(r'^(accel|string|faster)').hasMatch(word)) return TempoWord.faster;
+  // "string." is stringendo; "Strings" is an instrument.
+  if (RegExp(r'^(accel|stringendo|string\.|faster)').hasMatch(word)) {
+    return TempoWord.faster;
+  }
   if (RegExp(r'^(a tempo|tempo i\b|tempo primo|tempo 1)').hasMatch(word)) {
     return TempoWord.asBefore;
   }
@@ -781,6 +793,52 @@ List<({double quarters, int midi, int staffIndex})> tacetNotes(
             position -= length();
           case 'forward':
             position += length();
+        }
+      }
+      start += index < lengths.length ? lengths[index] : 0;
+      index++;
+    }
+    firstStaff += staves;
+  }
+  return result;
+}
+
+/// Where the parts of [xml] change their instrument: in quarter notes from
+/// the start, the staves of the part (counted through the score) and the
+/// General MIDI program it goes on with (from 0). [score] is the same
+/// score, read.
+List<({double at, int firstStaff, int staves, int program})> instrumentChanges(
+  String xml,
+  MusicScore score,
+) {
+  final lengths = _barQuarters(score);
+  final result = <({double at, int firstStaff, int staves, int program})>[];
+  var firstStaff = 0;
+  for (final part in XmlDocument.parse(xml).rootElement.findElements('part')) {
+    var staves = 1;
+    for (final element in part.findAllElements('staves')) {
+      staves = math.max(staves, int.tryParse(element.innerText.trim()) ?? 1);
+    }
+    var start = 0.0;
+    var index = 0;
+    for (final measure in part.findElements('measure')) {
+      for (final direction in measure.findElements('direction')) {
+        for (final sound in direction.findElements('sound')) {
+          final program = int.tryParse(
+            sound
+                    .getElement('midi-instrument')
+                    ?.getElement('midi-program')
+                    ?.innerText
+                    .trim() ??
+                '',
+          );
+          if (program == null) continue;
+          result.add((
+            at: start,
+            firstStaff: firstStaff,
+            staves: staves,
+            program: (program - 1).clamp(0, 127),
+          ));
         }
       }
       start += index < lengths.length ? lengths[index] : 0;

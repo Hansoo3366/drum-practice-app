@@ -1,9 +1,9 @@
 feature,area,priority,original,clone,notes
 음표 도구를 고르고 오선을 눌러 음표 놓기,입력,must,yes,yes,
 음표 도구를 다시 눌러 길이 고르기,입력,must,yes,yes,
-음표 도구를 누른 채 밀어서 한 번에 길이 고르기,입력,could,yes,no,
+음표 도구를 누른 채 밀어서 한 번에 길이 고르기,입력,could,yes,yes,"음표 도구를 꾹 누르면 길이가 펼쳐지고, 밀어서 뗀 곳의 길이가 잡힘(화면 가장자리에서 바로 쓸면 시스템의 뒤로 가기라 잠깐 눌러야 함)"
 길이: 온음표~64분음표,입력,must,yes,yes,
-길이: 겹온음표(double whole),입력,could,yes,no,
+길이: 겹온음표(double whole),입력,could,yes,yes,
 점음표·겹점음표,입력,must,yes,yes,
 오선을 길게 누르면 십자선이 뜨고 위아래로 끌어 높이를 맞춘 뒤 놓기,입력,must,yes,yes,꾹 누르면 음표를 잡고 위아래로 끌어 줄을 맞춤. 음이름이 손가락 위에 뜸. 그냥 누르면 그 자리에 놓임
 길게 누른 채 좌우로 끌어 임시표 붙이기,입력,should,yes,yes,
@@ -17,8 +17,8 @@ feature,area,priority,original,clone,notes
 입력 중 붙임줄(다음 음과 잇기),입력,should,yes,yes,레일의 붙임줄 단추
 재생 줄의 좌우 화살표로 커서 이동,입력,must,yes,yes,
 성부 도구(한 보표 네 성부),입력,should,yes,yes,한 보표에 네 성부까지 추가. 쓸 성부의 쉼표를 골라 입력
-MIDI 건반으로 입력,입력,could,yes,no,
-메트로놈에 맞춰 실시간 녹음 입력,입력,could,yes,no,
+MIDI 건반으로 입력,입력,could,yes,skip,사용자 결정(2026-10-10): 필요 없음
+메트로놈에 맞춰 실시간 녹음 입력,입력,could,yes,skip,사용자 결정(2026-10-10): 필요 없음
 손글씨 인식 입력,입력,could,yes,skip,MyScript 엔진(유료 라이선스)이 하는 일. D-222에서 범위 밖으로 결정
 기타 지판·드럼 패드 입력,입력,could,yes,skip,피아노 앱 범위 밖(D-222)
 선택 도구로 음표·쉼표를 눌러 고르기,선택,must,yes,yes,
@@ -43,7 +43,7 @@ MIDI 건반으로 입력,입력,could,yes,no,
 마디 자르기·복사·붙여넣기,편집,must,yes,yes,"자르기·비우기는 마디를 남기고 내용만 비움, 붙여넣기는 덮어쓰기, 끼워 넣기는 따로(재검토에서 설명서대로 고침)"
 음표 단위 복사·붙여넣기(마디 중간의 몇 음),편집,should,yes,yes,고른 자리부터 하나씩 덮어씀
 복제(duplicate),편집,should,yes,yes,마디와 음 모두
-붙여넣을 때 박 위치가 달라도 마디를 넘겨 다시 흘리기(paste reflow),편집,could,yes,no,
+붙여넣을 때 박 위치가 달라도 마디를 넘겨 다시 흘리기(paste reflow),편집,could,yes,partial,한 보표·한 성부의 멜로디에서는 길이를 지킨 채 마디를 넘겨 흘려 붙임(붙임줄로 이음). 화음·두 보표·잇단음표가 있으면 음마다 덮어씀
 다른 성부로 붙여넣기·성부로 보내기·성부 맞바꾸기,편집,could,yes,partial,두 성부 맞바꾸기만
 마디 삭제,편집,must,yes,yes,마디 삭제는 비우기와 따로
 마디 넣기,편집,must,yes,yes,
@@ -51,7 +51,7 @@ MIDI 건반으로 입력,입력,could,yes,no,
 선택 구간을 쉼표로 채우기,편집,could,yes,yes,범위 선택 뒤 쉼표로
 리듬 슬래시로 채우기·보이기,편집,could,yes,yes,"모양 팔레트: 슬래시로 채우기(박마다, 코드 기호는 그대로)·음표 머리 슬래시"
 잇단음표 만들기·풀기,편집,must,yes,yes,고른 음들을 잇단음표로(재검토에서 추가) + 한 음을 셋·다섯…으로 나누기
-잇단음표 비율 직접 지정·숫자/괄호 표시 방식,편집,could,yes,partial,3·5·6·7만. 표시 방식 선택 없음
+잇단음표 비율 직접 지정·숫자/괄호 표시 방식,편집,could,yes,partial,"둘에서 열다섯 음까지 묶음(둘은 셋의 시간, 셋은 둘, 다섯~일곱은 넷…). 비율 직접 지정·숫자/괄호 표시 방식은 없음"
 음정을 지정해 겹쳐 쌓기(double at interval),편집,could,yes,yes,"3도·6도·옥타브 위, 3도·옥타브 아래"
 두 보표 사이로 음 옮기기(switch staff)·보표 넘는 빔(cross staff),편집,could,yes,partial,다른 보표로 보내기(성부는 그대로). 손 바꾸기와 보표 넘는 빔을 따로 고르지는 못함
 기둥 방향·숨기기,편집,could,yes,yes,
@@ -64,8 +64,8 @@ MIDI 건반으로 입력,입력,could,yes,no,
 줄바꿈·쪽나눔 강제,마디,should,yes,yes,
 다음 마디와 한 줄에 묶기,마디,could,yes,partial,줄은 적힌 줄바꿈으로만 나뉘므로 다음 마디의 줄바꿈을 끄면 같은 결과
 못갖춘마디(pickup)·나눈 마디(partial) 지정,마디,should,yes,yes,마디 기호 팔레트. 나눈 마디도 같은 표시를 씀
-마디 번호 표시·다시 매기기,마디,could,yes,no,
-보표 묶음(brace·bracket·barline),마디,could,yes,no,
+마디 번호 표시·다시 매기기,마디,could,yes,partial,줄마다·마디마다·없음. 번호 다시 매기기는 없음
+보표 묶음(brace·bracket·barline),마디,could,yes,skip,파트를 하나씩 여는 편집 화면에는 해당 없음. 큰보표의 묶음괄호는 자동으로 그려짐
 붙임줄 도구,기호,must,yes,yes,
 악센트·테누토·스타카토,기호,must,yes,yes,마르카토·스타카티시모도 있음
 이음줄,기호,must,yes,yes,"두 음을 차례로 고르거나, 범위를 고른 뒤 도구를 누르면 바로"
@@ -81,7 +81,7 @@ accel.·rit.,기호,should,yes,yes,rit.·rall.·accel.·a tempo 글자를 재생
 스윙,기호,could,yes,partial,마디 기호 팔레트의 Swing·Straight. 8분음표를 셋잇단 느낌으로. 세기·16분 스윙 조절은 없음
 세로줄 종류,기호,must,yes,yes,
 도돌이표·1·2번 괄호,기호,must,yes,yes,
-도돌이 횟수 지정,기호,could,yes,partial,악보 화면의 재생 순서에서 구간 반복 횟수를 정함. 도돌이표에 숫자를 적지는 않음
+도돌이 횟수 지정,기호,could,yes,yes,"마디 기호 팔레트의 되풀이 횟수(2~6번). 3번부터는 ""3x""가 적힘"
 글자 상자,기호,should,yes,yes,
 가사(여러 절·하이픈·멜리스마),기호,must,yes,yes,끝에 - 또는 _ 를 붙여 씀. 1~4절
 리허설 마크,기호,should,yes,yes,
@@ -94,7 +94,7 @@ accel.·rit.,기호,should,yes,yes,rit.·rall.·accel.·a tempo 글자를 재생
 진행 기호(D.C.·D.S.·Coda·Fine),기호,must,yes,yes,
 손가락 번호,기호,should,yes,yes,
 늘임표·숨표,기호,should,yes,yes,
-늘임표의 재생 길이 조절,기호,could,yes,partial,늘임표 음을 두 배로 늘여 재생. 길이를 고르지는 못함
+늘임표의 재생 길이 조절,기호,could,yes,yes,"늘임표 길이: 짧게(각진 모양)·보통·길게(네모 모양), 재생도 1.5배·2배·3배"
 페달,기호,should,yes,yes,
 악기별 주법(기타·하프 등),기호,could,yes,skip,피아노 앱 범위 밖
 악기 추가·삭제·순서 바꾸기,악보 설정,could,yes,partial,아래 보표 추가·삭제와 악기 바꾸기만
@@ -109,7 +109,7 @@ TAB·드럼 보표,악보 설정,could,yes,skip,피아노 앱 범위 밖
 처음으로 돌아가기,재생,must,yes,yes,
 음을 놓거나 옮길 때 소리로 들려주기,재생,should,yes,yes,놓을 때·끌 때·건반·화살표. 메뉴에서 끌 수 있음
 선택한 부분만 재생,재생,could,yes,yes,고른 마디만 재생
-믹서(악기별 음량·좌우·솔로),재생,could,yes,no,
+믹서(악기별 음량·좌우·솔로),재생,could,yes,partial,본 악보 화면 도구 메뉴의 믹서: 파트별 음량·끄기·혼자 듣기. 좌우(pan)와 잔향은 없음
 전용 음원 라이브러리,재생,could,yes,skip,원본이 소유한 녹음. 복제 대상 아님
 작업 중 자동 저장,저장,should,yes,yes,고칠 때마다 초안을 남기고 다음에 열 때 이어서 할지 물음. 새 버전은 저장 단추로
 다른 이름(새 버전)으로 저장,저장,must,yes,yes,원본은 건드리지 않고 새 버전
@@ -123,13 +123,13 @@ TAB·드럼 보표,악보 설정,could,yes,skip,피아노 앱 범위 밖
 가사 한 줄을 붙여 음마다 나눠 넣기,기호,should,yes,yes,띄어 쓴 가사가 다음 음들에 차례로 들어감. 재검토에서 추가
 accel.·rit. 도구,기호,could,yes,yes,마디 기호 팔레트의 빠르기 변화(rit.·accel.·a tempo)
 마디 여러 개를 한 번에 넣기,편집,could,yes,yes,마디 여러 개 추가…
-쉼표·기호 숨기기와 다시 보이기,편집,could,yes,partial,음표·쉼표 숨기기(모양 팔레트). 숨긴 것은 화살표로 가서 다시 눌러 보이게 함. 숨긴 것 한꺼번에 보기는 없음
-코드 기호·손가락 번호 줄 맞추기,편집,could,yes,no,
-코드 표시 방식(로마 숫자·Nashville 숫자·코드 모양),기호,could,yes,no,
-글자 모양 바꾸기(글꼴·크기),기호,could,yes,no,
+쉼표·기호 숨기기와 다시 보이기,편집,could,yes,yes,"음표·쉼표 숨기기, 마디 편집 메뉴의 ""숨긴 것 보이기"""
+코드 기호·손가락 번호 줄 맞추기,편집,could,yes,partial,코드를 한 줄에 맞추기(보기 옵션). 손가락 번호는 없음
+코드 표시 방식(로마 숫자·Nashville 숫자·코드 모양),기호,could,yes,partial,"코드·Nashville 숫자·로마 숫자(마디의 조에 맞춤, 보기만 바뀜). 교정 화면과 본 악보 화면 모두. 코드 글씨 모양 선택은 없음"
+글자 모양 바꾸기(글꼴·크기),기호,could,yes,partial,코드·가사 글자 크기 3단계. 글꼴은 못 바꿈
 조표·박자표 숨기기와 줄 끝 예고 표시 끄기,기호,could,yes,partial,그 마디에 적힌 박자표·조표 숨기기. 줄 끝 예고 표시 끄기는 없음
 caesura,기호,could,yes,yes,기호 팔레트
-악보 중간에서 악기 바꾸기,악보 설정,could,yes,no,파트 전체의 악기만 바꿈
+악보 중간에서 악기 바꾸기,악보 설정,could,yes,yes,"악보 팔레트의 ""여기서 악기 바꾸기"". 이름이 마디 위에 적히고 재생이 따름"
 재생 중 메트로놈,재생,could,yes,yes,"마디 편집 메뉴의 ""재생할 때 메트로놈"". 박마다 딸깍, 첫 박은 높게"
 "되감기: 한 번은 재생을 시작한 곳, 두 번은 맨 처음",재생,could,yes,yes,"처음으로 단추: 먼저 재생을 시작한 마디로, 다시 누르면 맨 처음"
 원본 악보 사진을 마디별로 나란히 보기,교정,must,no,yes,우리 앱에만 있음

@@ -23,6 +23,7 @@ import 'package:page_a_diddle/features/digital_score/presentation/piano_score_vi
 import 'package:page_a_diddle/features/digital_score/presentation/score_editor_chrome.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_editor_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
+import 'package:page_a_diddle/features/digital_score/presentation/verovio_text_labels.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// One-bar proofreading editor for converted scores.
@@ -328,6 +329,35 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// A click on every beat while the score plays.
   static var _metronome = false;
 
+  /// Whether what was hidden is drawn all the same, to be found again.
+  var _revealsHidden = false;
+  ({List<String> of, List<String> shown})? _revealed;
+
+  /// The lines as they are engraved: with what was hidden drawn, when
+  /// that is asked for.
+  List<String> get _engraved {
+    if (!_revealsHidden) return _chunks;
+    final cached = _revealed;
+    if (cached != null && identical(cached.of, _chunks)) return cached.shown;
+    final shown = [
+      for (final chunk in _chunks)
+        chunk.replaceAll('<note print-object="no"', '<note'),
+    ];
+    _revealed = (of: _chunks, shown: shown);
+    return shown;
+  }
+
+  /// How chord symbols are shown: as written, or as numbers a band reads
+  /// in any key.
+  static var _chordDisplay = ChordDisplay.symbols;
+
+  /// How the words of the score are drawn: their size, the chord symbols
+  /// of a line on one level, and where bar numbers stand.
+  static var _wordScale = 1.0;
+  static const _wordScales = [0.85, 1.0, 1.2];
+  static var _alignChords = false;
+  static var _barNumbers = BarNumbers.lines;
+
   /// Whether notes the instrument or the voice cannot reach are marked.
   static var _marksRange = false;
 
@@ -370,6 +400,17 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         _darkScore = stored.getBool('editor.darkScore') ?? _darkScore;
         _metronome = stored.getBool('editor.metronome') ?? _metronome;
         _marksRange = stored.getBool('editor.marksRange') ?? _marksRange;
+        final words = stored.getDouble('editor.wordScale');
+        if (words != null && _wordScales.contains(words)) _wordScale = words;
+        _alignChords = stored.getBool('editor.alignChords') ?? _alignChords;
+        final numbers = stored.getString('editor.barNumbers');
+        for (final choice in BarNumbers.values) {
+          if (choice.name == numbers) _barNumbers = choice;
+        }
+        final chords = stored.getString('score.chordDisplay');
+        for (final display in ChordDisplay.values) {
+          if (display.name == chords) _chordDisplay = display;
+        }
         final size = stored.getDouble('editor.noteSize');
         if (size != null && _noteSizes.contains(size)) _noteSize = size;
       });
@@ -389,6 +430,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         await stored.setBool('editor.darkScore', _darkScore);
         await stored.setBool('editor.metronome', _metronome);
         await stored.setBool('editor.marksRange', _marksRange);
+        await stored.setString('score.chordDisplay', _chordDisplay.name);
+        await stored.setDouble('editor.wordScale', _wordScale);
+        await stored.setBool('editor.alignChords', _alignChords);
+        await stored.setString('editor.barNumbers', _barNumbers.name);
         await stored.setDouble('editor.noteSize', _noteSize);
       } on Object {
         // Kept for as long as the app runs, then.
@@ -1694,6 +1739,21 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     _chordBefore = chord;
   }
 
+  /// Writes the copied notes from the picked one on: each with its own
+  /// length, over the barlines, where the part is a melody; note for note
+  /// where it is not (chords, two staves, tuplets).
+  void _pasteNotes() {
+    final clip = _noteClip;
+    if (clip == null) return;
+    _apply((xml, ref) {
+      try {
+        return _editor.pasteNotesFlowing(xml, ref, clip);
+      } on FormatException {
+        return _editor.pasteNotes(xml, ref, clip);
+      }
+    }, bars: (bars, _) => bars);
+  }
+
   /// Takes the picked notes to be written elsewhere.
   void _copyNotes() {
     try {
@@ -2168,7 +2228,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         key: _scoreKey,
         score: _previewScore,
         // Line by line: an edit engraves the line it is in, not the score.
-        engravingChunks: _chunks,
+        engravingChunks: _engraved,
         // A narrower page for the same lines: larger notes.
         engravingPageSize: _noteSize == 1.0
             ? null
@@ -2200,6 +2260,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             ? _onBarDoubleTapped
             : null,
         metronome: _metronome,
+        chordDisplay: _chordDisplay,
+        wordScale: _wordScale,
+        alignChords: _alignChords,
+        barNumbers: _barNumbers,
         soundingRange: _marksRange ? _reach : null,
         onTextTapped: _tool == _Tool.select && _spanFrom == null && !_ranging
             ? _onTextTapped
@@ -2282,16 +2346,36 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       ),
       // The note tool shows the value it writes; in use, a tap on it
       // opens the values.
-      Builder(
-        builder: (context) => EditorToolButton(
-          tooltip: l10n.toolNote,
-          selected: _tool == _Tool.note,
-          hasMore: true,
-          onPressed: () => _tool == _Tool.note
-              ? unawaited(_pickEntryValue(context))
-              : _setTool(_Tool.note),
-          onLongPress: () => unawaited(_pickEntryValue(context)),
-          child: MusicGlyph(MusicGlyphs.duration(_entryType)),
+      // Pressed and swept to the side, the values open and the one the
+      // finger is lifted on is taken, in one move.
+      SwipeChoices<String>(
+        toLeft: _railRight,
+        choices: [
+          for (final type in noteDurationTypes)
+            (value: type, child: MusicGlyph(MusicGlyphs.duration(type))),
+        ],
+        onChosen: (type) {
+          setState(() {
+            _entryType = type;
+            _entryDots = 0;
+          });
+          if (_tool != _Tool.note) _setTool(_Tool.note);
+        },
+        // Held and lifted on the tool itself: the note tool, with its
+        // values to tap.
+        onHeld: () {
+          if (_tool != _Tool.note) _setTool(_Tool.note);
+        },
+        child: Builder(
+          builder: (context) => EditorToolButton(
+            tooltip: l10n.toolNote,
+            selected: _tool == _Tool.note,
+            hasMore: true,
+            onPressed: () => _tool == _Tool.note
+                ? unawaited(_pickEntryValue(context))
+                : _setTool(_Tool.note),
+            child: MusicGlyph(MusicGlyphs.duration(_entryType)),
+          ),
         ),
       ),
       EditorToolButton(
@@ -2562,6 +2646,12 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                   () => _setOption(() => _darkScore = !_darkScore),
                   icon: Icons.dark_mode_outlined,
                   checked: _darkScore,
+                ),
+                _MenuItem(
+                  l10n.revealHidden,
+                  () => setState(() => _revealsHidden = !_revealsHidden),
+                  icon: Icons.visibility_outlined,
+                  checked: _revealsHidden,
                 ),
                 _MenuItem(
                   l10n.rangeOption,
@@ -2921,10 +3011,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       const SingleActivator(LogicalKeyboardKey.period): _dot,
       const SingleActivator(LogicalKeyboardKey.space): () =>
           unawaited(_playBar()),
-      // The values as a notation program numbers them: 2 a whole note,
-      // 4 a quarter, 8 a sixty-fourth.
+      // The values as a notation program numbers them: 1 a double whole
+      // note, 2 a whole note, 4 a quarter, 8 a sixty-fourth.
       for (final (index, type) in noteDurationTypes.indexed)
-        SingleActivator(_digitKeys[index + 2]): () => value(type),
+        SingleActivator(_digitKeys[index + 1]): () => value(type),
       for (final control in const [true, false]) ...{
         SingleActivator(
           LogicalKeyboardKey.keyZ,
@@ -2957,12 +3047,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
           LogicalKeyboardKey.keyV,
           control: control,
           meta: !control,
-        ): () {
-          final clip = _noteClip;
-          if (clip != null) {
-            _apply((xml, ref) => _editor.pasteNotes(xml, ref, clip));
-          }
-        },
+        ): _pasteNotes,
         SingleActivator(
           LogicalKeyboardKey.keyS,
           control: control,
@@ -3174,11 +3259,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 _noteClip == null
                     ? l10n.notesPasteNone
                     : l10n.notesPaste(_noteClip!.length),
-                _noteClip != null && hasEvent
-                    ? () => _apply(
-                        (xml, ref) => _editor.pasteNotes(xml, ref, _noteClip!),
-                      )
-                    : null,
+                _noteClip != null && hasEvent ? _pasteNotes : null,
                 icon: Icons.content_paste_rounded,
               ),
               _MenuItem(
@@ -3494,7 +3575,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
               // them in the time of two.
               _MenuItem(
                 l10n.tupletGroup,
-                _rangeEnd != null && _pickedRefs.length >= 3
+                _pickedRefs.length >= 2
                     ? () {
                         final picked = _pickedRefs;
                         final bar = picked.first.measureIndex;
@@ -3640,6 +3721,30 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 ? () => _toggleMark('fermata', restsToo: true)
                 : null,
             child: const MusicGlyph(MusicGlyphs.fermataAbove),
+          ),
+          // How long it is held: a short hold is written angled, a long
+          // one square, and they are played so.
+          _MenuButton(
+            tooltip: l10n.fermataLength,
+            label: l10n.fermataLength,
+            items: [
+              for (final (label, shape) in [
+                (l10n.fermataShort, 'angled'),
+                (l10n.noteheadNormal, 'normal'),
+                (l10n.fermataLong, 'square'),
+              ])
+                _MenuItem(
+                  label,
+                  hasEvent
+                      ? () => _applyEach(
+                          (xml, ref) =>
+                              _editor.setFermataShape(xml, ref, shape),
+                          where: (note) => note.leadsChord && !note.isGrace,
+                        )
+                      : null,
+                  checked: summary?.fermataShape == shape,
+                ),
+            ],
           ),
           _ToolButton(
             tooltip: l10n.breathMark,
@@ -3880,6 +3985,25 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             ),
             child: const MusicGlyph(MusicGlyphs.repeatRight),
           ),
+          if (signs.repeatEnd)
+            _MenuButton(
+              tooltip: l10n.repeatCount,
+              label: l10n.repeatCount,
+              items: [
+                for (final times in const [2, 3, 4, 5, 6])
+                  _MenuItem(
+                    l10n.repeatCountOf(times),
+                    () => _applyBar(
+                      (xml, measure) => _editor.setRepeatTimes(
+                        xml,
+                        widget.partIndex,
+                        measure,
+                        times,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           _MenuButton(
             tooltip: l10n.barlineTool,
             label: l10n.barlineTool,
@@ -4108,6 +4232,96 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                     ),
                   ),
                   checked: instrument.program == choice.program,
+                ),
+            ],
+          ),
+          // From this bar on the part is another instrument: its name is
+          // written over the bar and the player plays it.
+          _MenuButton(
+            tooltip: l10n.instrumentChange,
+            label: _signs.instrument == null
+                ? l10n.instrumentChange
+                : '${l10n.instrumentChange}: ${_signs.instrument}',
+            items: [
+              for (final choice in partInstruments)
+                _MenuItem(
+                  choice.name,
+                  () => _applyBar(
+                    (xml, measure) => _editor.setInstrumentChange(
+                      xml,
+                      widget.partIndex,
+                      measure,
+                      choice,
+                    ),
+                  ),
+                  checked: _signs.instrument == choice.name,
+                ),
+              _MenuItem(
+                l10n.remove,
+                _signs.instrument == null
+                    ? null
+                    : () => _applyBar(
+                        (xml, measure) => _editor.setInstrumentChange(
+                          xml,
+                          widget.partIndex,
+                          measure,
+                          null,
+                        ),
+                      ),
+              ),
+            ],
+          ),
+          // Shown, not written: the score keeps its chord symbols.
+          _MenuButton(
+            tooltip: l10n.chordDisplayMenu,
+            label: l10n.chordDisplayMenu,
+            items: [
+              for (final (label, display) in [
+                (l10n.chordSymbol, ChordDisplay.symbols),
+                (l10n.chordDisplayNashville, ChordDisplay.nashville),
+                (l10n.chordDisplayRoman, ChordDisplay.roman),
+              ])
+                _MenuItem(
+                  label,
+                  () => _setOption(() => _chordDisplay = display),
+                  checked: _chordDisplay == display,
+                ),
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.wordSizeMenu,
+            label: l10n.wordSizeMenu,
+            items: [
+              for (final (label, scale) in [
+                (l10n.noteSizeSmall, _wordScales[0]),
+                (l10n.noteheadNormal, _wordScales[1]),
+                (l10n.noteSizeLarge, _wordScales[2]),
+              ])
+                _MenuItem(
+                  label,
+                  () => _setOption(() => _wordScale = scale),
+                  checked: _wordScale == scale,
+                ),
+              _MenuItem(
+                l10n.alignChordsOption,
+                () => _setOption(() => _alignChords = !_alignChords),
+                checked: _alignChords,
+              ),
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.barNumbersMenu,
+            label: l10n.barNumbersMenu,
+            items: [
+              for (final (label, choice) in [
+                (l10n.barNumbersLines, BarNumbers.lines),
+                (l10n.barNumbersEvery, BarNumbers.every),
+                (l10n.barNumbersNone, BarNumbers.none),
+              ])
+                _MenuItem(
+                  label,
+                  () => _setOption(() => _barNumbers = choice),
+                  checked: _barNumbers == choice,
                 ),
             ],
           ),
@@ -4945,6 +5159,7 @@ class _TempoDialogState extends State<_TempoDialog> {
 enum _LeaveChoice { discard, save }
 
 const _fractionOf = {
+  'breve': '2',
   'whole': '1',
   'half': '1/2',
   'quarter': '1/4',
