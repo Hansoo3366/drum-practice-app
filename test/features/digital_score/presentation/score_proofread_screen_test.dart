@@ -21,6 +21,7 @@ import 'package:page_a_diddle/features/digital_score/presentation/omr_original_c
 import 'package:page_a_diddle/features/digital_score/presentation/score_editor_chrome.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_proofread_screen.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xml/xml.dart';
 
 const _xml = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -1582,7 +1583,7 @@ void main() {
       expect(view(tester).onTextTapped, isNotNull);
 
       // A chord symbol, above the second note.
-      view(tester).onTextTapped!(note(tester, 0, 1), true);
+      view(tester).onTextTapped!(note(tester, 0, 1), 'harm');
       await _settle(tester);
       expect(view(tester).selectedNoteAddress, note(tester, 0, 1));
       expect(find.byType(TextField), findsOneWidget);
@@ -1592,7 +1593,7 @@ void main() {
       expect(view(tester).playbackXml!(), contains('<harmony'));
 
       // A syllable, under the third.
-      view(tester).onTextTapped!(note(tester, 0, 2), false);
+      view(tester).onTextTapped!(note(tester, 0, 2), 'verse');
       await _settle(tester);
       expect(view(tester).selectedNoteAddress, note(tester, 0, 2));
       await tester.enterText(find.byType(TextField), '주_');
@@ -2078,6 +2079,169 @@ void main() {
         await _openPalette(tester, '마디 기호');
         await menu(tester, '빠르기 변화', 'rit.');
         expect(xmlNow(tester), contains('<words>rit.</words>'));
+        await leave(tester);
+      });
+
+      testWidgets('notes are picked one by one, wherever they are', (
+        tester,
+      ) async {
+        await _open(tester, _MemoryStorage(), musicXml: fine);
+        view(tester).onEventTapped!(note(tester, 2, 0));
+        await _settle(tester);
+        await _openPalette(tester, '음표');
+        await menu(tester, '선택 범위', '하나씩 골라 담기');
+        expect(find.text('음을 눌러 담거나 빼기'), findsOneWidget);
+
+        // The first and third notes of bar 3 and the second of bar 4.
+        view(tester).onEventTapped!(note(tester, 2, 2));
+        view(tester).onEventTapped!(note(tester, 3, 1));
+        await _settle(tester);
+        expect(view(tester).selectedNoteAddress, note(tester, 3, 1));
+        expect(view(tester).alsoSelectedNotes, [
+          note(tester, 2, 0),
+          note(tester, 2, 2),
+        ]);
+        // No handles: these are not a run.
+        expect(view(tester).rangeHandles, isFalse);
+
+        // A step up moves those three and no others.
+        await _openPalette(tester, '높이');
+        await tester.tap(find.byTooltip('한 칸 위'));
+        await _settle(tester);
+        expect(names(tester, 2), ['g', 'g', 'b', 'b']);
+        expect(names(tester, 3), ['c', 'd', 'c', 'c']);
+
+        // A tap on a picked note lets it go.
+        view(tester).onEventTapped!(note(tester, 2, 2));
+        await _settle(tester);
+        expect(view(tester).alsoSelectedNotes, [note(tester, 2, 0)]);
+        await leave(tester);
+      });
+
+      testWidgets('hidden rests, hidden signatures, bars added by the number', (
+        tester,
+      ) async {
+        await _open(tester, _MemoryStorage(), musicXml: fine);
+        view(tester).onEventTapped!(note(tester, 2, 0));
+        await _settle(tester);
+
+        await _openPalette(tester, '모양');
+        await tester.tap(find.byTooltip('숨기기'));
+        await _settle(tester);
+        expect(xmlNow(tester), contains('print-object="no"'));
+        await tester.tap(find.byTooltip('숨기기'));
+        await _settle(tester);
+        expect(xmlNow(tester), isNot(contains('print-object')));
+
+        // Bar 3 writes no time signature of its own; bar 1 does.
+        await _openPalette(tester, '마디 기호');
+        await menu(tester, '표 숨기기', '박자표');
+        expect(find.textContaining('적힌 박자표가 없습니다'), findsOneWidget);
+        await tester.pump(const Duration(seconds: 5));
+        view(tester).onEventTapped!(note(tester, 0, 0));
+        await _settle(tester);
+        await menu(tester, '표 숨기기', '박자표');
+        expect(xmlNow(tester), contains('<time print-object="no">'));
+
+        // Three empty bars after the first.
+        await tester.tap(find.byTooltip('마디 편집'));
+        await _settle(tester);
+        await tester.tap(find.text('마디 여러 개 추가…'));
+        await _settle(tester);
+        await tester.enterText(find.byType(TextField), '3');
+        await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+        await _settle(tester);
+        expect(view(tester).score.parts.first.measures, hasLength(7));
+        expect(names(tester, 1), ['r']);
+        expect(names(tester, 4), ['c', 'd', 'e']);
+        await leave(tester);
+      });
+
+      testWidgets('rewind goes to where play began, then to the start', (
+        tester,
+      ) async {
+        await _open(tester, _MemoryStorage(), musicXml: fine);
+        view(tester).playback.attach(
+          playPause: () async => true,
+          stop: () async => true,
+          seek: (_) async => true,
+          playFromMeasure: (_) async => true,
+        );
+        await _tapTool(tester, '다음 마디');
+        await _tapTool(tester, '다음 마디');
+        await tester.tap(find.byTooltip('여기부터 듣기'));
+        await _settle(tester);
+        await _tapTool(tester, '다음 마디');
+        expect(find.text('4 / 4마디'), findsOneWidget);
+
+        await tester.tap(find.byTooltip('처음으로'));
+        await _settle(tester);
+        expect(find.text('3 / 4마디'), findsOneWidget);
+        await tester.tap(find.byTooltip('처음으로'));
+        await _settle(tester);
+        expect(find.text('1 / 4마디'), findsOneWidget);
+        await _close(tester);
+      });
+
+      testWidgets(
+        'a tempo mark is tapped to be changed; the metronome clicks',
+        (tester) async {
+          SharedPreferences.setMockInitialValues({'editor.metronome': true});
+          await _open(tester, _MemoryStorage(), musicXml: fine);
+          // The choice made last time is read when the editor opens.
+          expect(view(tester).metronome, isTrue);
+          await tester.tap(find.byTooltip('마디 편집'));
+          await _settle(tester);
+          await tester.tap(find.text('재생할 때 메트로놈'));
+          await _settle(tester);
+          expect(view(tester).metronome, isFalse);
+          expect(
+            (await SharedPreferences.getInstance()).getBool('editor.metronome'),
+            isFalse,
+          );
+
+          // A tap on a tempo mark opens what changes it.
+          view(tester).onTextTapped!(note(tester, 0, 0), 'tempo');
+          await _settle(tester);
+          expect(find.byType(TextField), findsWidgets);
+          await tester.tap(find.text('취소'));
+          await _settle(tester);
+          await _close(tester);
+        },
+      );
+
+      testWidgets('slashes on every beat, and notes out of reach marked', (
+        tester,
+      ) async {
+        SharedPreferences.setMockInitialValues({});
+        await _open(tester, _MemoryStorage(), musicXml: fine);
+        view(tester).onMeasureDoubleTapped!(2);
+        await _settle(tester);
+        await _openPalette(tester, '모양');
+        await tester.tap(find.byTooltip('슬래시로 채우기'));
+        await _settle(tester);
+        final bar = XmlDocument.parse(
+          xmlNow(tester),
+        ).findAllElements('measure').elementAt(2);
+        expect(bar.findElements('note'), hasLength(4));
+        expect(
+          '<notehead>slash</notehead>'.allMatches(bar.toXmlString()),
+          hasLength(4),
+        );
+        // The bar is still the picked one.
+        expect(view(tester).highlightedMeasureRange, (start: 2, end: 2));
+
+        // Notes a voice does not reach are marked when asked for.
+        expect(view(tester).soundingRange, isNull);
+        await tester.tap(find.byTooltip('마디 편집'));
+        await _settle(tester);
+        await tester.tap(find.text('음역 밖 음 표시'));
+        await _settle(tester);
+        expect(view(tester).soundingRange, (low: 55, high: 79));
+        await tester.tap(find.byTooltip('마디 편집'));
+        await _settle(tester);
+        await tester.tap(find.text('음역 밖 음 표시'));
+        await _settle(tester);
         await leave(tester);
       });
 

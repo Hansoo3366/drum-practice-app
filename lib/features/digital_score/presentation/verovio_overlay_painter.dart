@@ -19,6 +19,7 @@ class _VerovioOverlayPainter extends CustomPainter {
     required this.ghostAlter,
     required this.ghostDots,
     this.ghostLabel,
+    this.soundingRange,
     this.viewScale = 1,
     this.handles,
     this.handleRadius = 9,
@@ -47,6 +48,10 @@ class _VerovioOverlayPainter extends CustomPainter {
 
   /// The pitch of the ghost note, written above the finger over it.
   final String? ghostLabel;
+
+  /// Notes lower or higher than this are marked in red: out of the reach
+  /// of the instrument or the voice.
+  final ({int low, int high})? soundingRange;
 
   /// How much the page is magnified, so that what is drawn for a finger
   /// (label, handles) has the same size on screen at any zoom.
@@ -153,6 +158,7 @@ class _VerovioOverlayPainter extends CustomPainter {
         caretPaint,
       );
     }
+    _paintOutOfRange(canvas);
     _paintHandles(canvas);
     final ghost = ghostCenter;
     if (ghost == null) return;
@@ -161,6 +167,26 @@ class _VerovioOverlayPainter extends CustomPainter {
     } else {
       _drawGhostNote(canvas, ghost);
       _paintGhostGuide(canvas, ghost);
+    }
+  }
+
+  /// A red wash over every note the instrument or voice cannot reach.
+  void _paintOutOfRange(Canvas canvas) {
+    final range = soundingRange;
+    if (range == null) return;
+    final wash = Paint()..color = const Color(0x66E53935);
+    for (final note in layout.notes) {
+      final midi = note.midi;
+      if (note.isRest || midi == null) continue;
+      if (midi >= range.low && midi <= range.high) continue;
+      final bounds = note.bounds;
+      final rect = bounds != null
+          ? bounds.inflate(1.5)
+          : Rect.fromCenter(center: note.center, width: 10, height: 8);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(3)),
+        wash,
+      );
     }
   }
 
@@ -416,6 +442,7 @@ class _VerovioOverlayPainter extends CustomPainter {
         oldDelegate.ghostAlter != ghostAlter ||
         oldDelegate.ghostDots != ghostDots ||
         oldDelegate.ghostLabel != ghostLabel ||
+        oldDelegate.soundingRange != soundingRange ||
         oldDelegate.viewScale != viewScale ||
         oldDelegate.handles != handles ||
         oldDelegate.handleRadius != handleRadius ||

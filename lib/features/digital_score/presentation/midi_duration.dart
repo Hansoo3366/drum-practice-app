@@ -309,10 +309,21 @@ nm.MidiSequence playbackMidi(
   }
   final shapes = playedHairpins(copies.ready, played);
   final tempo = playedTempo(copies.ready, played);
+  final silent = tacetNotes(copies.ready, played);
   return shapeTempo(
     shapeSwing(
       shapeHairpins(
-        mergeTiedNotes(sequence, staves),
+        withoutNotes(mergeTiedNotes(sequence, staves), [
+          for (var staff = 0; staff < staves.length; staff++)
+            [
+              for (final note in silent)
+                if (note.staffIndex == staff)
+                  (
+                    (note.quarters * sequence.ticksPerQuarter).round(),
+                    note.midi,
+                  ),
+            ],
+        ]),
         shapes.hairpins,
         shapes.marks,
       ),
@@ -380,6 +391,119 @@ nm.MidiSequence shapeSwing(nm.MidiSequence sequence, PlayedTempo tempo) {
                 event,
           ]),
         ),
+    ],
+  );
+}
+
+/// [sequence] without the notes at [silent]: per staff track in score
+/// order, the tick each begins at and its pitch. Notes written but not
+/// played (tacet).
+nm.MidiSequence withoutNotes(
+  nm.MidiSequence sequence,
+  List<List<(int tick, int midi)>> silent,
+) {
+  if (silent.every((notes) => notes.isEmpty)) return sequence;
+  bool isOn(nm.MidiEvent e) =>
+      e.type == nm.MidiEventType.noteOn && (e.velocity ?? 0) > 0;
+  bool isOff(nm.MidiEvent e) =>
+      e.type == nm.MidiEventType.noteOff ||
+      (e.type == nm.MidiEventType.noteOn && (e.velocity ?? 0) == 0);
+  final staffTracks = [
+    for (final track in sequence.tracks)
+      if (track.name != 'Conductor') track,
+  ];
+  if (staffTracks.length != silent.length) return sequence;
+  return nm.MidiSequence(
+    ticksPerQuarter: sequence.ticksPerQuarter,
+    tracks: [
+      for (final track in sequence.tracks)
+        if (staffTracks.indexOf(track) case final index
+            when index >= 0 && silent[index].isNotEmpty)
+          nm.MidiTrack(
+            name: track.name,
+            channel: track.channel,
+            events: () {
+              final events = track.events.toList();
+              for (final (tick, midi) in silent[index]) {
+                final on = events.indexWhere(
+                  (e) =>
+                      isOn(e) && e.note == midi && (e.tick - tick).abs() <= 2,
+                );
+                if (on < 0) continue;
+                final channel = events[on].channel;
+                final start = events[on].tick;
+                events.removeAt(on);
+                // Its end is the first end of that pitch after it began.
+                final off = events.indexWhere(
+                  (e) =>
+                      isOff(e) &&
+                      e.note == midi &&
+                      e.channel == channel &&
+                      e.tick >= start,
+                );
+                if (off >= 0) events.removeAt(off);
+              }
+              return events;
+            }(),
+          )
+        else
+          track,
+    ],
+  );
+}
+
+/// The channel the metronome clicks on, and the instrument it clicks with
+/// (a woodblock, counted from 0 as the player counts).
+const metronomeChannel = 15;
+const metronomeProgram = 115;
+
+/// [sequence] with a click on every beat: [bars] are the bars as they are
+/// played, each with its length and the length of its beat in quarter
+/// notes. The first click of a bar is higher and louder. The bars are
+/// spread over the sequence as the play head spreads them.
+nm.MidiSequence withMetronomeClicks(
+  nm.MidiSequence sequence,
+  List<({double quarters, double beat})> bars,
+) {
+  final total = bars.fold<double>(0, (sum, bar) => sum + bar.quarters);
+  final ticks = sequence.totalTicks;
+  if (total <= 0 || ticks <= 0) return sequence;
+  final clicks = <nm.MidiEvent>[];
+  final length = math.max(1, sequence.ticksPerQuarter ~/ 8);
+  var start = 0.0;
+  for (final bar in bars) {
+    final beat = bar.beat <= 0 ? 1.0 : bar.beat;
+    for (var at = 0.0; at < bar.quarters - 1e-6; at += beat) {
+      final tick = ((start + at) / total * ticks).round();
+      final first = at == 0;
+      clicks
+        ..add(
+          nm.MidiEvent.noteOn(
+            tick: tick,
+            channel: metronomeChannel,
+            note: first ? 88 : 81,
+            velocity: first ? 112 : 84,
+          ),
+        )
+        ..add(
+          nm.MidiEvent.noteOff(
+            tick: tick + length,
+            channel: metronomeChannel,
+            note: first ? 88 : 81,
+          ),
+        );
+    }
+    start += bar.quarters;
+  }
+  return nm.MidiSequence(
+    ticksPerQuarter: sequence.ticksPerQuarter,
+    tracks: [
+      ...sequence.tracks,
+      nm.MidiTrack(
+        name: 'Metronome',
+        channel: metronomeChannel,
+        events: _inTickOrder(clicks),
+      ),
     ],
   );
 }

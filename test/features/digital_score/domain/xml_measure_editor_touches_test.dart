@@ -572,6 +572,101 @@ void main() {
       );
     });
 
+    test('a rest is hidden and shown again; it still counts', () {
+      final xml = _score([
+        '${_note('C', 4)}${_rest()}${_note('E', 4)}${_note('F', 4)}',
+      ]);
+
+      final hidden = _editor.toggleHidden(xml, _ref(1)).xml;
+      expect(_editor.describe(hidden, _ref(1)).hidden, isTrue);
+      expect(_notes(hidden)[1].getAttribute('print-object'), 'no');
+      final bar = _codec.decodeXml(hidden).parts.first.measures.first;
+      expect(bar.notes.map((n) => n.onset), [0, 2, 4, 6]);
+      final shown = _editor.toggleHidden(hidden, _ref(1)).xml;
+      expect(shown, isNot(contains('print-object')));
+    });
+
+    test(
+      'a written time or key signature is hidden; an unwritten one is not',
+      () {
+        final xml = _score([quarters, quarters]);
+
+        final hidden = _editor.toggleSignatureHidden(xml, 0, 0).xml;
+        expect(hidden, contains('<time print-object="no">'));
+        expect(hidden, isNot(contains('<key print-object')));
+        expect(
+          _editor.toggleSignatureHidden(hidden, 0, 0).xml,
+          isNot(contains('print-object')),
+        );
+        expect(
+          _editor.toggleSignatureHidden(xml, 0, 0, key: true).xml,
+          contains('<key print-object="no">'),
+        );
+        // Bar 2 states none of its own.
+        expect(
+          () => _editor.toggleSignatureHidden(xml, 0, 1),
+          throwsA(isA<FormatException>()),
+        );
+        expect(_codec.decodeXml(hidden).measureCount, 2);
+      },
+    );
+
+    test('several empty bars go in at once', () {
+      final xml = _score([quarters, eighths]);
+
+      final result = _editor.insertMeasures(xml, 0, 0, 3);
+
+      final bars = _codec.decodeXml(result.xml).parts.first.measures;
+      expect(bars, hasLength(5));
+      expect(_read(result.xml), ['c4', 'd4', 'e4', 'f4']);
+      for (final index in [1, 2, 3]) {
+        expect(_read(result.xml, measureIndex: index), ['r']);
+      }
+      expect(bars[4].notes, hasLength(8));
+      expect(result.selection, _ref(0, measureIndex: 1));
+    });
+
+    test('a caesura is written like a breath mark', () {
+      final xml = _editor
+          .toggleArticulation(_score([quarters]), _ref(3), 'caesura')
+          .xml;
+      expect(xml, contains('<articulations><caesura/></articulations>'));
+      expect(_editor.describe(xml, _ref(3)).articulations, {'caesura'});
+    });
+
+    test('a bar is filled with rhythm slashes under its chord symbols', () {
+      const chord =
+          '<harmony><root><root-step>G</root-step></root><kind>major</kind></harmony>';
+      final xml = _score([
+        quarters,
+        '${_note('C', 4)}${_note('D', 4)}$chord${_note('E', 4)}${_note('F', 4)}',
+      ]);
+
+      final result = _editor.fillWithSlashes(xml, 0, 1, 1);
+
+      final bar = _notes(result.xml, measureIndex: 1);
+      expect(bar, hasLength(4));
+      for (final note in bar) {
+        expect(note.getElement('notehead')?.innerText, 'slash');
+        expect(note.getElement('stem')?.innerText, 'none');
+        expect(note.getElement('type')?.innerText, 'quarter');
+      }
+      // The chord symbol is where it was: on the third beat.
+      final measure = XmlDocument.parse(
+        result.xml,
+      ).findAllElements('measure').elementAt(1);
+      final order = [
+        for (final child in measure.childElements)
+          if (child.name.local == 'note' || child.name.local == 'harmony')
+            child.name.local,
+      ];
+      expect(order, ['note', 'note', 'harmony', 'note', 'note']);
+      // The bar before is untouched and the file still reads.
+      expect(_read(result.xml), ['c4', 'd4', 'e4', 'f4']);
+      final decoded = _codec.decodeXml(result.xml).parts.first.measures[1];
+      expect(decoded.notes.map((n) => n.onset), [0, 2, 4, 6]);
+    });
+
     test('the two voices of a staff change places', () {
       String voiced(String step, int octave, String voice) =>
           '<note><pitch><step>$step</step><octave>$octave</octave></pitch>'

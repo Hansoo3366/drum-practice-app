@@ -107,6 +107,199 @@ extension XmlMeasureLooks on XmlMeasureEditor {
     return XmlEditResult(doc.toXml(), ref);
   }
 
+  /// Hides the selected note, chord or rest, or shows it again: it keeps
+  /// its time and is played, and is not drawn. For the rests of a voice
+  /// that only says where the other one is silent.
+  XmlEditResult toggleHidden(String xml, XmlNoteRef ref) {
+    final doc = _ScoreDoc(xml);
+    final measure = doc.measure(ref);
+    final group = measure.groupOf(measure.note(ref.noteIndex));
+    final hidden = group.first.element.getAttribute('print-object') == 'no';
+    for (final member in group) {
+      if (hidden) {
+        member.element.removeAttribute('print-object');
+      } else {
+        member.element.setAttribute('print-object', 'no');
+      }
+    }
+    return XmlEditResult(doc.toXml(), ref);
+  }
+
+  /// Fills the bars [from]..[to] of a part with rhythm slashes: a slash
+  /// without a stem on every beat of the first staff, in place of what was
+  /// written there. The chord symbols stay: they are what is played from.
+  XmlEditResult fillWithSlashes(String xml, int partIndex, int from, int to) {
+    final before = _ScoreDoc(xml);
+    final count = before.measureCount(partIndex);
+    _checkRange(from, to, count);
+    // The chord symbols of each bar, to be put back where they were.
+    final harmonies = <int, List<(int, XmlElement)>>{};
+    for (var bar = from; bar <= to; bar++) {
+      final measure = before.measureAt(partIndex, bar);
+      var position = 0;
+      for (final child in measure.element.childElements) {
+        switch (child.name.local) {
+          case 'harmony':
+            harmonies.putIfAbsent(bar, () => []).add((position, child.copy()));
+          case 'note':
+            if (child.getElement('chord') == null &&
+                child.getElement('grace') == null) {
+              position += _duration(child);
+            }
+          case 'backup':
+            position -= _duration(child);
+          case 'forward':
+            position += _duration(child);
+        }
+      }
+    }
+    before.keep(xml);
+    var current = clearMeasures(xml, partIndex, from, to).xml;
+    for (var bar = from; bar <= to; bar++) {
+      var doc = _ScoreDoc(current);
+      final context = doc.measureAt(partIndex, bar).context;
+      doc.keep(current);
+      // A beat is a quarter, or in 6/8, 9/8 and 12/8 a dotted quarter.
+      final compound = context.beatType == 8 && context.beats % 3 == 0;
+      final type = compound
+          ? 'quarter'
+          : switch (context.beatType) {
+              2 => 'half',
+              8 => 'eighth',
+              16 => '16th',
+              _ => 'quarter',
+            };
+      final beats = compound ? context.beats ~/ 3 : context.beats;
+      for (var beat = 0; beat < beats; beat++) {
+        // The first rest of the first staff that is left is the next beat.
+        doc = _ScoreDoc(current);
+        final view = doc.measureAt(partIndex, bar);
+        final rest = view.notes.indexWhere(
+          (note) => note.isRest && note.staff == 1,
+        );
+        doc.keep(current);
+        if (rest < 0) break;
+        final at = XmlNoteRef(
+          partIndex: partIndex,
+          measureIndex: bar,
+          noteIndex: rest,
+        );
+        try {
+          current = setDuration(current, at, type, compound ? 1 : 0).xml;
+        } on FormatException {
+          // The rest is a beat long already.
+        }
+        current = restToNote(current, at).xml;
+        current = setNotehead(current, at, 'slash').xml;
+        current = setStem(current, at, 'none').xml;
+      }
+      final kept = harmonies[bar];
+      if (kept == null) continue;
+      doc = _ScoreDoc(current);
+      final measure = doc.measureAt(partIndex, bar);
+      for (final (position, harmony) in kept) {
+        // Before the slash that begins where the chord stood, or the last.
+        final notes = [
+          for (final note in measure.notes)
+            if (note.staff == 1 && !note.isGrace) note,
+        ];
+        if (notes.isEmpty) break;
+        final target = notes.firstWhere(
+          (note) => note.onset >= position,
+          orElse: () => notes.last,
+        );
+        final children = target.element.parent!.children;
+        children.insert(children.indexOf(target.element), harmony);
+      }
+      current = doc.toXml();
+    }
+    return XmlEditResult(current, _barRef(partIndex, from));
+  }
+
+  /// Makes the selected note or chord tacet, or lets it sound again: it is
+  /// printed as before and the player passes over it. For a cue, or a line
+  /// that is there to be read and not heard.
+  XmlEditResult toggleTacet(String xml, XmlNoteRef ref) {
+    final doc = _ScoreDoc(xml);
+    final measure = doc.measure(ref);
+    final info = measure.note(ref.noteIndex);
+    if (info.isRest) throw const FormatException('쉼표는 원래 소리가 없습니다.');
+    final group = measure.groupOf(info);
+    final tacet = _isTacet(group.first.element);
+    for (final member in group) {
+      member.element.findElements('play').toList().forEach(_remove);
+      if (!tacet) {
+        _insertOrdered(
+          member.element,
+          XmlElement(XmlName('play'), [], [
+            XmlElement(XmlName('mute'), [], [XmlText('on')]),
+          ]),
+          _noteOrder,
+        );
+      }
+    }
+    return XmlEditResult(doc.toXml(), ref);
+  }
+
+  /// Hides the time signature (or with [key] the key signature) a bar
+  /// states, or shows it again. The bar must state one: a signature that
+  /// only holds on from an earlier bar is not written here.
+  XmlEditResult toggleSignatureHidden(
+    String xml,
+    int partIndex,
+    int measureIndex, {
+    bool key = false,
+  }) {
+    final doc = _ScoreDoc(xml);
+    doc.measureAt(partIndex, measureIndex);
+    final name = key ? 'key' : 'time';
+    var found = false;
+    bool? hide;
+    for (final (index, _) in doc.parts.indexed) {
+      final measures = doc._measures(index);
+      if (measureIndex >= measures.length) continue;
+      for (final attributes in measures[measureIndex].findElements(
+        'attributes',
+      )) {
+        for (final sign in attributes.findElements(name)) {
+          found = true;
+          hide ??= sign.getAttribute('print-object') != 'no';
+          if (hide) {
+            sign.setAttribute('print-object', 'no');
+          } else {
+            sign.removeAttribute('print-object');
+          }
+        }
+      }
+    }
+    if (!found) {
+      throw FormatException(
+        key ? '이 마디에는 적힌 조표가 없습니다.' : '이 마디에는 적힌 박자표가 없습니다.',
+      );
+    }
+    return XmlEditResult(doc.toXml(), _barRef(partIndex, measureIndex));
+  }
+
+  /// Adds [count] empty bars after bar [measureIndex], in every part.
+  XmlEditResult insertMeasures(
+    String xml,
+    int partIndex,
+    int measureIndex,
+    int count,
+  ) {
+    if (count < 1 || count > 64) {
+      throw const FormatException('한 번에 1마디에서 64마디까지 넣을 수 있습니다.');
+    }
+    var current = xml;
+    for (var i = 0; i < count; i++) {
+      current = insertMeasureAfter(
+        current,
+        _barRef(partIndex, measureIndex + i),
+      ).xml;
+    }
+    return XmlEditResult(current, _barRef(partIndex, measureIndex + 1));
+  }
+
   /// Makes the upper voice of the selected note's staff the lower and the
   /// lower the upper, in its bar: the notes stay, the stems turn.
   XmlEditResult swapVoices(String xml, XmlNoteRef ref) {
@@ -238,6 +431,10 @@ extension XmlMeasureLooks on XmlMeasureEditor {
     return XmlEditResult(addChordNote(xml, ref, at: pitch).xml, ref);
   }
 }
+
+/// Whether a note is written to be passed over by the player.
+bool _isTacet(XmlElement note) =>
+    note.getElement('play')?.getElement('mute')?.innerText.trim() == 'on';
 
 /// How a note's head is drawn when not as usual: `slash`, `parentheses`.
 String? _noteheadOf(XmlElement note) {

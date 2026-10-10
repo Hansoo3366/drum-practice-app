@@ -59,6 +59,8 @@ class VerovioScoreView extends StatefulWidget {
     this.onRangeDragged,
     this.onMeasureDoubleTapped,
     this.onTextTapped,
+    this.metronome = false,
+    this.soundingRange,
     this.onBlankTapped,
     this.onLongPressed,
     this.rangeHandles = false,
@@ -136,10 +138,19 @@ class VerovioScoreView extends StatefulWidget {
   /// Fires in `select` mode for two taps in a row on a bar.
   final ValueChanged<int>? onMeasureDoubleTapped;
 
-  /// Fires in `select` mode for a tap on words of the score: [above] the
-  /// staff (a chord symbol) or under it (a lyric). [address] is the note
-  /// or rest they stand at.
-  final void Function(ScoreEventAddress address, bool above)? onTextTapped;
+  /// Fires in `select` mode for a tap on words of the score: a chord symbol
+  /// (`harm`), a syllable (`verse`), a tempo mark (`tempo`) or written
+  /// words (`dir`), as [kind] says. [address] is the note or rest they
+  /// stand at.
+  final void Function(ScoreEventAddress address, String kind)? onTextTapped;
+
+  /// A click on every beat while the score plays, higher on the first of
+  /// a bar.
+  final bool metronome;
+
+  /// The lowest and highest pitch the instrument (or a voice) reaches:
+  /// notes outside it are marked in red. Null marks none.
+  final ({int low, int high})? soundingRange;
 
   /// Fires in `select` mode for a tap on the page where nothing is: what
   /// was picked is let go, as when one clicks away from it.
@@ -249,6 +260,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
 
   /// Chord symbol boxes in scene coordinates, kept clear by section labels.
   List<Rect> _chordRects = const [];
+
+  /// What each of [_chordRects] is ([VerovioTextLabel.kind]).
+  List<String?> _chordKinds = const [];
 
   /// The MIDI being made or already made, and what it was made for; see
   /// [_playbackMidi].
@@ -899,6 +913,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     final notes = <NativeNotePlacement>[];
     final systemStarts = <int>[];
     final chordRects = <Rect>[];
+    final chordKinds = <String?>[];
     final part = widget.score.parts.isEmpty ? null : widget.score.parts.first;
     var pageTop = 0.0;
     var measureIndex = 0;
@@ -1204,6 +1219,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
             size * 1.1,
           ),
         );
+        chordKinds.add(chord.kind);
       }
       pageTop += pageHeight;
     }
@@ -1211,6 +1227,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     _documentWidth = viewWidth;
     _documentHeight = math.max(pageTop, 240);
     _chordRects = List.unmodifiable(chordRects);
+    _chordKinds = List.unmodifiable(chordKinds);
     _layout = NativeScoreLayout(
       contentSize: Size(_documentWidth, _documentHeight),
       measures: measures,
@@ -1310,12 +1327,23 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       // to go on from, the score's tempo changes and the practice tempo
       // are written into what it is given.
       sequence = playableSequence(
-        midi.sequence,
+        widget.metronome ? _withClicks(midi.sequence) : midi.sequence,
         timing,
         fromMs: widget.playback.state.currentTimeMs * speed,
         speed: speed,
       );
       await _setInstruments(midi);
+      if (widget.metronome) {
+        try {
+          await _audio.setChannelProgram(
+            channel: metronomeChannel,
+            program: metronomeProgram,
+            volume: 1,
+          );
+        } on Object {
+          // The click then sounds like the piano.
+        }
+      }
       await _bridge.uploadAndStart(sequence, includeMetronome: false);
     } catch (_) {
       widget.onPlayerIssue?.call();
@@ -1421,6 +1449,27 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       },
     );
     return future;
+  }
+
+  /// [sequence] with a click on every beat of the bars as they are played.
+  nm.MidiSequence _withClicks(nm.MidiSequence sequence) {
+    _measureForTime(0);
+    final timeline = _timeline;
+    if (timeline == null || widget.score.parts.isEmpty) return sequence;
+    final measures = widget.score.parts.first.measures;
+    return withMetronomeClicks(sequence, [
+      for (final index in timeline.map)
+        if (index < timeline.lengths.length && index < measures.length)
+          (
+            quarters: timeline.lengths[index],
+            beat: switch (measures[index].attributes.time) {
+              // Three eighths to the beat in 6/8, 9/8 and 12/8.
+              final time? when time.beatType == 8 && time.beats % 3 == 0 => 1.5,
+              final time? => 4 / time.beatType,
+              null => 1.0,
+            },
+          ),
+    ]);
   }
 
   /// Tells the synthesizer which instrument plays each channel (the piano
@@ -1730,13 +1779,17 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
 
   /// The words of the score under [content], if any: whether they stand
   /// above their staff or under it, and the note or rest they belong to.
-  ({ScoreEventAddress address, bool above})? _textAt(
+  ({ScoreEventAddress address, String kind})? _textAt(
     NativeScoreLayout layout,
     Offset content,
   ) {
     final reach = 4 / _viewScale;
-    for (final rect in _chordRects) {
+    for (final (index, rect) in _chordRects.indexed) {
       if (!rect.inflate(reach).contains(content)) continue;
+      // Bar numbers, ending numbers and section boxes are not words to
+      // correct here.
+      final kind = index < _chordKinds.length ? _chordKinds[index] : null;
+      if (!const {'harm', 'verse', 'tempo', 'dir'}.contains(kind)) continue;
       final center = rect.center;
       // The bar the words are over or under: the nearest of those at
       // their place across the page.
@@ -1758,7 +1811,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       if (staves.isEmpty) staves.add(1);
       final top =
           box.staffTopFor(staves.first) - 4 * box.lineGapFor(staves.first);
-      final above = center.dy < top;
+      // A chord symbol and a tempo mark stand over the staff; a syllable
+      // belongs to the staff it is under.
+      final above = kind != 'verse' && center.dy < top;
       // Words under a staff belong to the staff they are under.
       var staff = staves.first;
       if (!above) {
@@ -1793,7 +1848,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
           measureIndex: note.measureIndex,
           eventIndex: note.eventIndex,
         ),
-        above: above,
+        kind: kind!,
       );
     }
     return null;
@@ -2119,7 +2174,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     if (widget.inputMode == 'select' || widget.inputMode == 'off') {
       if (widget.onTextTapped != null && widget.inputMode == 'select') {
         if (_textAt(layout, content) case final text?) {
-          widget.onTextTapped!(text.address, text.above);
+          widget.onTextTapped!(text.address, text.kind);
           return;
         }
       }
@@ -2329,6 +2384,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
                                         ghostDurationType: _ghostDurationType,
                                         ghostAlter: _ghostAlter,
                                         ghostDots: widget.inputDots,
+                                        soundingRange: widget.soundingRange,
                                         ghostLabel: _ghostLabel,
                                         viewScale: _viewScale,
                                         handles: _handles(layout),

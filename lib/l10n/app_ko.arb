@@ -870,5 +870,18 @@
   "keyRest": "쉼표 넣고 다음으로",
   "favourFlats": "플랫으로 적기",
   "favourSharps": "샵으로 적기",
-  "tempoChange": "빠르기 변화"
+  "tempoChange": "빠르기 변화",
+  "metronomeOption": "재생할 때 메트로놈",
+  "hideTool": "숨기기",
+  "hideSignMenu": "표 숨기기",
+  "hideTime": "박자표",
+  "hideKey": "조표",
+  "insertMeasuresMany": "마디 여러 개 추가…",
+  "insertCount": "넣을 마디 수",
+  "looseSelect": "하나씩 골라 담기",
+  "looseHint": "음을 눌러 담거나 빼기",
+  "onlyUpperVoice": "위 성부만",
+  "onlyLowerVoice": "아래 성부만",
+  "rangeOption": "음역 밖 음 표시",
+  "slashFill": "슬래시로 채우기"
 }

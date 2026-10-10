@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-09T23:31:00+09:00"
+last_updated: "2026-10-10T16:48:00+09:00"
 current_phase:
   id: "RELEASE-4"
   name: "OMR 정확도 최소 95% 개선·검증"
@@ -1414,6 +1414,9 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-10-06T13:58:32+09:00"
   checks:
+    - name: "editor_gaps_20261010"
+      result: "passed_with_known_gaps"
+      detail: "교정 에디터 이슈·빠진 기능: analyze 0건, 전체 테스트 880 통과, release 4095 에뮬레이터에서 숨기기·Caesura·슬래시 채우기·옵션 유지·메트로놈 재생 시작 확인, 앱 예외 0. 대조표 90.4/100(must 42/42, 없는 것 14줄). 공백: 소리, 음역 밖 표시의 화면 확인."
     - name: "editor_review_against_manual_20261009"
       result: "passed_with_known_gaps"
       detail: "기존 편집 기능을 설명서와 재대조: 다른 동작 9가지 수정, 빠진 5가지 추가, 대조표에 18줄 보충(86.9/100, 127줄, must 42/42). analyze 0건, 전체 테스트 868 통과, release 4093 에뮬레이터 손동작 확인, 앱 예외 0. 공백: 소리·외장 키보드·실기기 감도."

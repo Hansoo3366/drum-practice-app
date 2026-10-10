@@ -696,3 +696,97 @@ TempoWord? _tempoWord(String text) {
   if (RegExp(r'^(straight|even)').hasMatch(word)) return TempoWord.straight;
   return null;
 }
+
+/// The notes of [xml] that are written but not played (tacet): when each
+/// begins, in quarter notes from the start, its pitch, and its staff
+/// counted through the score. [score] is the same score, read.
+List<({double quarters, int midi, int staffIndex})> tacetNotes(
+  String xml,
+  MusicScore score,
+) {
+  if (!xml.contains('<mute>')) return const [];
+  final lengths = _barQuarters(score);
+  final result = <({double quarters, int midi, int staffIndex})>[];
+  var firstStaff = 0;
+  for (final part in XmlDocument.parse(xml).rootElement.findElements('part')) {
+    var staves = 1;
+    for (final element in part.findAllElements('staves')) {
+      staves = math.max(staves, int.tryParse(element.innerText.trim()) ?? 1);
+    }
+    var divisions = 1;
+    var start = 0.0;
+    var index = 0;
+    for (final measure in part.findElements('measure')) {
+      var position = 0;
+      var last = 0;
+      for (final child in measure.childElements) {
+        int length() =>
+            int.tryParse(
+              child.getElement('duration')?.innerText.trim() ?? '',
+            ) ??
+            0;
+        switch (child.name.local) {
+          case 'attributes':
+            divisions = math.max(
+              1,
+              int.tryParse(
+                    child.getElement('divisions')?.innerText.trim() ?? '',
+                  ) ??
+                  divisions,
+            );
+          case 'note':
+            if (child.getElement('grace') != null) break;
+            final chord = child.getElement('chord') != null;
+            final from = chord ? last : position;
+            final pitch = child.getElement('pitch');
+            if (pitch != null &&
+                child
+                        .getElement('play')
+                        ?.getElement('mute')
+                        ?.innerText
+                        .trim() ==
+                    'on') {
+              final step = 'CDEFGAB'.indexOf(
+                pitch.getElement('step')?.innerText.trim() ?? 'C',
+              );
+              final octave =
+                  int.tryParse(
+                    pitch.getElement('octave')?.innerText.trim() ?? '',
+                  ) ??
+                  4;
+              final alter =
+                  double.tryParse(
+                    pitch.getElement('alter')?.innerText.trim() ?? '',
+                  )?.round() ??
+                  0;
+              final staff =
+                  int.tryParse(
+                    child.getElement('staff')?.innerText.trim() ?? '',
+                  ) ??
+                  1;
+              result.add((
+                quarters: start + from / divisions,
+                midi:
+                    (octave + 1) * 12 +
+                    const [0, 2, 4, 5, 7, 9, 11][step < 0 ? 0 : step] +
+                    alter,
+                staffIndex: firstStaff + staff - 1,
+              ));
+            }
+            if (!chord) {
+              last = position;
+              position += length();
+            }
+          case 'backup':
+            position -= length();
+          case 'forward':
+            position += length();
+        }
+      }
+      start += index < lengths.length ? lengths[index] : 0;
+      index++;
+    }
+    firstStaff += staves;
+  }
+  return result;
+}

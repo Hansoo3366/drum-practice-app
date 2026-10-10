@@ -769,30 +769,42 @@ class PianoKeyboard extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         // Over the keys, not on them: a button on a black key is a key
-        // that cannot be played.
-        ColoredBox(
-          color: AppColors.surfaceSoft,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            child: Row(
-              children: [
-                KeyboardButton(
-                  tooltip: lowerTooltip,
-                  icon: Icons.remove_rounded,
-                  onPressed: octave > 1 ? () => onOctave(-1) : null,
-                ),
-                const SizedBox(width: 6),
-                KeyboardButton(
-                  tooltip: higherTooltip,
-                  icon: Icons.add_rounded,
-                  onPressed: octave < 7 ? () => onOctave(1) : null,
-                ),
-                const Spacer(),
-                for (final button in buttons) ...[
+        // that cannot be played. The strip itself is swept to the side to
+        // move the keys an octave.
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onHorizontalDragEnd: (details) {
+            final speed = details.primaryVelocity ?? 0;
+            if (speed.abs() < 120) return;
+            // The keys follow the finger: swept to the left, the higher
+            // ones come in.
+            final by = speed < 0 ? 1 : -1;
+            if (octave + by >= 1 && octave + by <= 7) onOctave(by);
+          },
+          child: ColoredBox(
+            color: AppColors.surfaceSoft,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              child: Row(
+                children: [
+                  KeyboardButton(
+                    tooltip: lowerTooltip,
+                    icon: Icons.remove_rounded,
+                    onPressed: octave > 1 ? () => onOctave(-1) : null,
+                  ),
                   const SizedBox(width: 6),
-                  button,
+                  KeyboardButton(
+                    tooltip: higherTooltip,
+                    icon: Icons.add_rounded,
+                    onPressed: octave < 7 ? () => onOctave(1) : null,
+                  ),
+                  const Spacer(),
+                  for (final button in buttons) ...[
+                    const SizedBox(width: 6),
+                    button,
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),

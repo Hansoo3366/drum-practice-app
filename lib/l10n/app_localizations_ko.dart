@@ -2786,4 +2786,43 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get tempoChange => '빠르기 변화';
+
+  @override
+  String get metronomeOption => '재생할 때 메트로놈';
+
+  @override
+  String get hideTool => '숨기기';
+
+  @override
+  String get hideSignMenu => '표 숨기기';
+
+  @override
+  String get hideTime => '박자표';
+
+  @override
+  String get hideKey => '조표';
+
+  @override
+  String get insertMeasuresMany => '마디 여러 개 추가…';
+
+  @override
+  String get insertCount => '넣을 마디 수';
+
+  @override
+  String get looseSelect => '하나씩 골라 담기';
+
+  @override
+  String get looseHint => '음을 눌러 담거나 빼기';
+
+  @override
+  String get onlyUpperVoice => '위 성부만';
+
+  @override
+  String get onlyLowerVoice => '아래 성부만';
+
+  @override
+  String get rangeOption => '음역 밖 음 표시';
+
+  @override
+  String get slashFill => '슬래시로 채우기';
 }

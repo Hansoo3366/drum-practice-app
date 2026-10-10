@@ -2811,4 +2811,43 @@ class AppLocalizationsLa extends AppLocalizations {
 
   @override
   String get tempoChange => 'Tempo change';
+
+  @override
+  String get metronomeOption => 'Metronome while playing';
+
+  @override
+  String get hideTool => 'Hide';
+
+  @override
+  String get hideSignMenu => 'Hide signatures';
+
+  @override
+  String get hideTime => 'Time signature';
+
+  @override
+  String get hideKey => 'Key signature';
+
+  @override
+  String get insertMeasuresMany => 'Add several bars…';
+
+  @override
+  String get insertCount => 'How many bars';
+
+  @override
+  String get looseSelect => 'Pick notes one by one';
+
+  @override
+  String get looseHint => 'Tap notes to pick or drop them';
+
+  @override
+  String get onlyUpperVoice => 'Upper voice only';
+
+  @override
+  String get onlyLowerVoice => 'Lower voice only';
+
+  @override
+  String get rangeOption => 'Mark notes out of range';
+
+  @override
+  String get slashFill => 'Fill with slashes';
 }

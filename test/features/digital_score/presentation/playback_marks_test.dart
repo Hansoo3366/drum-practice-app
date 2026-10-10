@@ -307,4 +307,88 @@ void main() {
       }
     });
   });
+
+  test('a tacet note is written and not played', () {
+    final xml = _editor.toggleTacet(_score, _ref(1)).xml;
+    expect(_editor.describe(xml, _ref(1)).tacet, isTrue);
+    expect(xml, contains('<play><mute>on</mute></play>'));
+
+    final plain = _played(_score);
+    final notes = _played(xml);
+
+    // D is passed over; the others sound when and as they did.
+    expect(notes, hasLength(3));
+    expect(
+      [for (final note in notes) (note.tick, note.key)],
+      [
+        for (final (index, note) in plain.indexed)
+          if (index != 1) (note.tick, note.key),
+      ],
+    );
+    final again = _editor.toggleTacet(xml, _ref(1)).xml;
+    expect(again, isNot(contains('<play>')));
+    expect(_played(again), hasLength(4));
+  });
+
+  test('the metronome clicks on every beat, higher on the first of a bar', () {
+    final sequence = playbackMidi(
+      _score,
+      options: const nm.MidiGenerationOptions(
+        defaultBpm: 120,
+        includeMetronome: false,
+      ),
+    );
+    final tpq = sequence.ticksPerQuarter;
+
+    // Two bars of four beats, then one of 6/8 with two beats.
+    final clicked = withMetronomeClicks(
+      nm.MidiSequence(
+        ticksPerQuarter: tpq,
+        tracks: [
+          nm.MidiTrack(
+            name: 'Voice',
+            channel: 0,
+            events: [
+              const nm.MidiEvent.noteOn(
+                tick: 0,
+                channel: 0,
+                note: 60,
+                velocity: 80,
+              ),
+              nm.MidiEvent.noteOff(tick: tpq * 11, channel: 0, note: 60),
+            ],
+          ),
+        ],
+      ),
+      const [
+        (quarters: 4, beat: 1),
+        (quarters: 4, beat: 1),
+        (quarters: 3, beat: 1.5),
+      ],
+    );
+
+    final clicks = [
+      for (final event in clicked.tracks.last.events)
+        if (event.type == nm.MidiEventType.noteOn)
+          (event.tick ~/ (tpq ~/ 2), event.note),
+    ];
+    expect(clicked.tracks, hasLength(2));
+    expect(clicked.tracks.last.channel, metronomeChannel);
+    // In half beats: bar 1 at 0, bar 2 at 8, bar 3 at 16 and its second
+    // beat three eighths on.
+    expect(clicks, [
+      (0, 88),
+      (2, 81),
+      (4, 81),
+      (6, 81),
+      (8, 88),
+      (10, 81),
+      (12, 81),
+      (14, 81),
+      (16, 88),
+      (19, 81),
+    ]);
+    // The music itself is as it was.
+    expect(clicked.tracks.first.events, hasLength(2));
+  });
 }

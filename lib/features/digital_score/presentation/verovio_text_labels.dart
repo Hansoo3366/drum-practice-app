@@ -17,6 +17,7 @@ class VerovioTextLabel {
     required this.baselineY,
     required this.fontSize,
     this.anchor = TextAlign.left,
+    this.kind,
   });
 
   final String text;
@@ -24,6 +25,12 @@ class VerovioTextLabel {
   final double baselineY;
   final double fontSize;
   final TextAlign anchor;
+
+  /// What the text is, by the group Verovio drew it in: `harm` (a chord
+  /// symbol), `verse` (a syllable), `tempo`, `dir` (written words), `reh`
+  /// (a section box); null for anything else (bar and ending numbers,
+  /// tuplet numbers).
+  final String? kind;
 }
 
 // Verovio writes chord accidentals as Leipzig private-use glyphs.
@@ -59,6 +66,9 @@ const _leipzigChordGlyphs = <int, String>{
 /// Groups whose text the viewer leaves out: the part name printed before
 /// the first system ("Voice", "Piano") only takes room on a phone.
 const _hiddenTextGroups = {'label', 'labelAbbr'};
+
+/// The groups a text is told apart by ([VerovioTextLabel.kind]).
+const _kindGroups = ['harm', 'verse', 'tempo', 'dir', 'reh'];
 
 /// Groups whose texts are single words: a space inside a chord symbol or a
 /// lyric syllable is the converter's ("B ♭", "예 수"), not written.
@@ -143,7 +153,12 @@ readVerovioPage(String svg) {
     staves.add(VerovioStaffLines(left: left, right: right, lines: lines));
   }
 
-  void visit(XmlElement element, _Affine transform, bool compact) {
+  void visit(
+    XmlElement element,
+    _Affine transform,
+    bool compact, [
+    String? kind,
+  ]) {
     var current = transform;
     if (element.name.local == 'svg' && element != root) {
       final size = _viewBoxSize(element.getAttribute('viewBox'));
@@ -167,16 +182,22 @@ readVerovioPage(String svg) {
       readStaff(element, current);
     }
     if (element.name.local == 'text') {
-      final label = _chordLabel(element, current, compact: compact);
+      final label = _chordLabel(element, current, compact: compact, kind: kind);
       if (label != null) labels.add(label);
       return;
+    }
+    var kindBelow = kind;
+    if (element.name.local == 'g') {
+      for (final name in _kindGroups) {
+        if (_hasClass(element, name)) kindBelow = name;
+      }
     }
     final compactBelow =
         compact ||
         (element.name.local == 'g' &&
             _compactTextGroups.any((name) => _hasClass(element, name)));
     for (final child in element.childElements) {
-      visit(child, current, compactBelow);
+      visit(child, current, compactBelow, kindBelow);
     }
   }
 
@@ -195,6 +216,7 @@ VerovioTextLabel? _chordLabel(
   XmlElement text,
   _Affine parent, {
   required bool compact,
+  String? kind,
 }) {
   final transform = parent.multiply(
     _parseTransform(text.getAttribute('transform')),
@@ -268,6 +290,7 @@ VerovioTextLabel? _chordLabel(
       'end' => TextAlign.right,
       _ => TextAlign.left,
     },
+    kind: kind,
   );
 }
 

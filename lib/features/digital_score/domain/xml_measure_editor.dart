@@ -798,6 +798,8 @@ class XmlNoteSummary {
     this.stem,
     this.notehead,
     this.staff = 1,
+    this.hidden = false,
+    this.tacet = false,
   });
 
   final bool isRest;
@@ -861,6 +863,12 @@ class XmlNoteSummary {
 
   /// The staff the note is written on.
   final int staff;
+
+  /// Whether the note or rest is not drawn (it still counts and sounds).
+  final bool hidden;
+
+  /// Whether the note is written but not played.
+  final bool tacet;
 
   /// The syllable of [verse] as it is typed: with its `-` or `_`.
   String lyricTyped(int verse) =>
@@ -972,6 +980,8 @@ class XmlMeasureEditor {
       stem: head.element.getElement('stem')?.innerText.trim(),
       notehead: _noteheadOf(info.element),
       staff: info.staff,
+      hidden: info.element.getAttribute('print-object') == 'no',
+      tacet: _isTacet(info.element),
     );
   }
 

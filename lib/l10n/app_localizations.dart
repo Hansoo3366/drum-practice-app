@@ -5323,6 +5323,84 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Tempo change'**
   String get tempoChange;
+
+  /// metronomeOption
+  ///
+  /// In en, this message translates to:
+  /// **'Metronome while playing'**
+  String get metronomeOption;
+
+  /// hideTool
+  ///
+  /// In en, this message translates to:
+  /// **'Hide'**
+  String get hideTool;
+
+  /// hideSignMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Hide signatures'**
+  String get hideSignMenu;
+
+  /// hideTime
+  ///
+  /// In en, this message translates to:
+  /// **'Time signature'**
+  String get hideTime;
+
+  /// hideKey
+  ///
+  /// In en, this message translates to:
+  /// **'Key signature'**
+  String get hideKey;
+
+  /// insertMeasuresMany
+  ///
+  /// In en, this message translates to:
+  /// **'Add several bars…'**
+  String get insertMeasuresMany;
+
+  /// insertCount
+  ///
+  /// In en, this message translates to:
+  /// **'How many bars'**
+  String get insertCount;
+
+  /// looseSelect
+  ///
+  /// In en, this message translates to:
+  /// **'Pick notes one by one'**
+  String get looseSelect;
+
+  /// looseHint
+  ///
+  /// In en, this message translates to:
+  /// **'Tap notes to pick or drop them'**
+  String get looseHint;
+
+  /// onlyUpperVoice
+  ///
+  /// In en, this message translates to:
+  /// **'Upper voice only'**
+  String get onlyUpperVoice;
+
+  /// onlyLowerVoice
+  ///
+  /// In en, this message translates to:
+  /// **'Lower voice only'**
+  String get onlyLowerVoice;
+
+  /// rangeOption
+  ///
+  /// In en, this message translates to:
+  /// **'Mark notes out of range'**
+  String get rangeOption;
+
+  /// slashFill
+  ///
+  /// In en, this message translates to:
+  /// **'Fill with slashes'**
+  String get slashFill;
 }
 
 class _AppLocalizationsDelegate

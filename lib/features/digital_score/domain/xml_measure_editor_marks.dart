@@ -574,6 +574,7 @@ extension XmlMeasureMarks on XmlMeasureEditor {
   XmlEditResult toggleArticulation(String xml, XmlNoteRef ref, String name) {
     if (name != 'fermata' &&
         name != 'breath-mark' &&
+        name != 'caesura' &&
         !articulationNames.contains(name) &&
         !jazzArticulationNames.contains(name)) {
       throw const FormatException('지원하지 않는 기호입니다.');

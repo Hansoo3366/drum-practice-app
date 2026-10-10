@@ -23,6 +23,7 @@ import 'package:page_a_diddle/features/digital_score/presentation/piano_score_vi
 import 'package:page_a_diddle/features/digital_score/presentation/score_editor_chrome.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/score_editor_panel.dart';
 import 'package:page_a_diddle/features/digital_score/presentation/verovio_score_view.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// One-bar proofreading editor for converted scores.
 ///
@@ -216,6 +217,18 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       measureIndex: bar,
       noteIndex: note,
     );
+    // Notes picked one by one, wherever they are, in the order of the
+    // score.
+    if (_looseSet.isNotEmpty) {
+      final loose = _looseSet.toList()
+        ..sort(
+          (a, b) => a.$1 != b.$1 ? a.$1.compareTo(b.$1) : a.$2.compareTo(b.$2),
+        );
+      return [
+        for (final (bar, note) in loose)
+          if (bar < _measureCount && note < _notesOf(bar).length) at(bar, note),
+      ];
+    }
     final end = _rangeEnd;
     if (end == null || end.bar < 0 || end.bar >= _measureCount) {
       return [at(_measureIndex, from)];
@@ -247,6 +260,18 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// Whether note [index] of [notes] is the highest (or lowest, as [_only]
   /// says) of its chord. A note on its own is; a rest is not.
   bool _isOuterNote(List<MusicNote> notes, int index) {
+    if (_only == _Only.upperVoice || _only == _Only.lowerVoice) {
+      // The voices of the note's staff in the order they are written: the
+      // first is the upper one.
+      final voices = <String>[];
+      for (final note in notes) {
+        if (note.staff == notes[index].staff && !voices.contains(note.voice)) {
+          voices.add(note.voice);
+        }
+      }
+      final wanted = _only == _Only.upperVoice ? voices.first : voices.last;
+      return notes[index].voice == wanted;
+    }
     final pitch = notes[index].pitch;
     if (pitch == null) return false;
     var start = index;
@@ -299,6 +324,86 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   static var _railRight = false;
   static var _smallTools = false;
   static var _darkScore = false;
+
+  /// A click on every beat while the score plays.
+  static var _metronome = false;
+
+  /// Whether notes the instrument or the voice cannot reach are marked.
+  static var _marksRange = false;
+
+  /// The reach of an instrument by its General MIDI program, lowest and
+  /// highest pitch; a sung part by what a congregation sings.
+  ({int low, int high}) get _reach {
+    final instrument = _editor.instrumentOf(_xml, widget.partIndex);
+    if (instrument.name.toLowerCase().contains('voice') ||
+        instrument.name.toLowerCase().contains('vocal')) {
+      return (low: 55, high: 79);
+    }
+    return switch (instrument.program) {
+      4 => (low: 28, high: 103),
+      19 => (low: 36, high: 96),
+      25 || 27 => (low: 40, high: 88),
+      33 => (low: 28, high: 67),
+      40 => (low: 55, high: 103),
+      42 => (low: 36, high: 76),
+      48 => (low: 28, high: 103),
+      56 => (low: 54, high: 82),
+      65 => (low: 49, high: 81),
+      73 => (low: 60, high: 96),
+      _ => (low: 21, high: 108),
+    };
+  }
+
+  static var _optionsRead = false;
+
+  /// Reads how the editor was last laid out; the first time it is opened
+  /// since the app started.
+  Future<void> _readOptions() async {
+    if (_optionsRead) return;
+    try {
+      final stored = await SharedPreferences.getInstance();
+      _optionsRead = true;
+      if (!mounted) return;
+      setState(() {
+        _railRight = stored.getBool('editor.railRight') ?? _railRight;
+        _smallTools = stored.getBool('editor.smallTools') ?? _smallTools;
+        _darkScore = stored.getBool('editor.darkScore') ?? _darkScore;
+        _metronome = stored.getBool('editor.metronome') ?? _metronome;
+        _marksRange = stored.getBool('editor.marksRange') ?? _marksRange;
+        final size = stored.getDouble('editor.noteSize');
+        if (size != null && _noteSizes.contains(size)) _noteSize = size;
+      });
+    } on Object {
+      // Nothing was kept, or nothing can be: the editor is as it comes.
+    }
+  }
+
+  /// Changes how the editor is laid out and keeps it for the next time.
+  void _setOption(VoidCallback change) {
+    setState(change);
+    unawaited(() async {
+      try {
+        final stored = await SharedPreferences.getInstance();
+        await stored.setBool('editor.railRight', _railRight);
+        await stored.setBool('editor.smallTools', _smallTools);
+        await stored.setBool('editor.darkScore', _darkScore);
+        await stored.setBool('editor.metronome', _metronome);
+        await stored.setBool('editor.marksRange', _marksRange);
+        await stored.setDouble('editor.noteSize', _noteSize);
+      } on Object {
+        // Kept for as long as the app runs, then.
+      }
+    }());
+  }
+
+  /// The bar the score was last played from: where the rewind key goes
+  /// first, before it goes to the beginning.
+  int? _playedFrom;
+
+  /// Whether a tap adds a note to the picked ones or takes it from them,
+  /// wherever it is: notes that do not follow one another.
+  var _loose = false;
+  final _looseSet = <(int, int)>{};
 
   /// How large the notes are engraved, next to the page they are engraved
   /// on: the lines keep their bars, the notes grow or shrink in them.
@@ -379,6 +484,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     _refresh(select: 0);
     unawaited(_loadPlaces());
     unawaited(_offerDraft());
+    unawaited(_readOptions());
   }
 
   /// Whether a note is sounded when it is written, moved or stepped to.
@@ -668,6 +774,13 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         } else {
           _dropRange();
         }
+        // Notes picked one by one are counted by their place too.
+        if (!keepRange) {
+          _looseSet.clear();
+          if (_loose && _noteIndex != null) {
+            _looseSet.add((_measureIndex, _noteIndex!));
+          }
+        }
       });
     } on FormatException catch (error) {
       _showMessage(error.message);
@@ -777,6 +890,28 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   }
 
   void _onEventTapped(ScoreEventAddress address) {
+    // Picking one by one: a tap takes the note in, or lets it go again.
+    if (_loose && _tool == _Tool.select && _spanFrom == null) {
+      final index = xmlNoteIndexForEvent(
+        _shownMeasure(address.measureIndex),
+        address.eventIndex,
+      );
+      if (index == null) return;
+      final key = (address.measureIndex, index);
+      if (_looseSet.contains(key) && _looseSet.length > 1) {
+        setState(() => _looseSet.remove(key));
+        // The cursor stays on a note that is still picked.
+        if (_measureIndex == key.$1 && _noteIndex == key.$2) {
+          final other = _looseSet.first;
+          if (_enterBar(other.$1)) _selectNote(other.$2);
+        }
+        return;
+      }
+      if (!_enterBar(address.measureIndex)) return;
+      _selectNote(index);
+      setState(() => _looseSet.add(key));
+      return;
+    }
     // With the range tool a tap is the other end of the run, in whatever
     // bar: the bar being worked on stays the one the run began in.
     if (_ranging &&
@@ -836,6 +971,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   void _setTool(_Tool tool) => setState(() {
     _tool = tool;
+    if (tool != _Tool.select) {
+      _loose = false;
+      _looseSet.clear();
+    }
     _toolHint = true;
     _toolHintTimer?.cancel();
     _toolHintTimer = Timer(const Duration(seconds: 4), () {
@@ -1228,7 +1367,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   /// Words of the score were tapped: the chord symbol or the syllable of
   /// the note they stand at is what is to be corrected.
-  void _onTextTapped(ScoreEventAddress address, bool above) {
+  void _onTextTapped(ScoreEventAddress address, String kind) {
     if (!_enterBar(address.measureIndex)) return;
     final index = xmlNoteIndexForEvent(
       _shownMeasure(address.measureIndex),
@@ -1239,10 +1378,16 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     _selectNote(index);
     final summary = _summary;
     if (summary == null) return;
-    if (above) {
-      unawaited(_editChordSymbol());
-    } else if (!summary.isRest && !summary.isGrace) {
-      unawaited(_editLyric());
+    switch (kind) {
+      case 'harm':
+        unawaited(_editChordSymbol());
+      case 'verse':
+        if (!summary.isRest && !summary.isGrace) unawaited(_editLyric());
+      case 'tempo':
+        unawaited(_editTempo());
+      case 'dir':
+        // Written words ("rit.", "with feeling") are the bar's texts.
+        if (_hasTexts) unawaited(_editTexts());
     }
   }
 
@@ -1738,6 +1883,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     await _playback.stop();
     // Picked bars play alone; without any, the score from this bar on.
     final bars = _barSel;
+    _playedFrom = bars?.from ?? _measureIndex;
     await _playback.playFromMeasure(bars?.from ?? _measureIndex);
     _playUntil = bars?.to;
   }
@@ -1806,6 +1952,32 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       if (next >= notes.length) return;
       _selectNote(next);
     }
+  }
+
+  /// Asks how many empty bars to add after this one, and adds them.
+  Future<void> _insertBars() async {
+    final l10n = context.l10n;
+    final text = await showDialog<String>(
+      context: context,
+      builder: (_) => _TextDialog(
+        title: l10n.insertMeasuresMany,
+        initial: '2',
+        hint: l10n.insertCount,
+      ),
+    );
+    final count = int.tryParse(text?.trim() ?? '');
+    if (!mounted || count == null) return;
+    _apply(
+      (xml, ref) => _editor.insertMeasures(
+        xml,
+        widget.partIndex,
+        ref.measureIndex,
+        count,
+      ),
+      bars: (bars, at) =>
+          [...bars]
+            ..insertAll(at + 1, [for (var i = 0; i < count; i++) _nextBarId++]),
+    );
   }
 
   /// Writes [words] under the sung notes from the picked one on, one to
@@ -2027,6 +2199,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         onMeasureDoubleTapped: _tool == _Tool.select
             ? _onBarDoubleTapped
             : null,
+        metronome: _metronome,
+        soundingRange: _marksRange ? _reach : null,
         onTextTapped: _tool == _Tool.select && _spanFrom == null && !_ranging
             ? _onTextTapped
             : null,
@@ -2047,7 +2221,15 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             : null,
         // A tap on the bare page lets a run of notes or bars go.
         onBlankTapped: () {
-          if (_rangeEnd != null || _barSel != null) setState(_dropRange);
+          if (_rangeEnd != null || _barSel != null || _looseSet.length > 1) {
+            setState(() {
+              _dropRange();
+              _looseSet.clear();
+              if (_loose && _noteIndex != null) {
+                _looseSet.add((_measureIndex, _noteIndex!));
+              }
+            });
+          }
         },
         rangeHandles: _tool == _Tool.select && _rangeEnd != null,
         highlightedMeasureIndex: _barSel == null ? _measureIndex : null,
@@ -2177,7 +2359,23 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             TransportButton(
               compact: compact,
               tooltip: l10n.toStart,
-              onPressed: _measureIndex > 0 ? () => _goToMeasure(0) : null,
+              // First to where the score was last played from, then to
+              // its beginning.
+              onPressed:
+                  _measureIndex > 0 ||
+                      (_playedFrom != null && _playedFrom != _measureIndex)
+                  ? () {
+                      final from = _playedFrom;
+                      _playedFrom = null;
+                      _goToMeasure(
+                        from != null &&
+                                from != _measureIndex &&
+                                from < _measureCount
+                            ? from
+                            : 0,
+                      );
+                    }
+                  : null,
               child: const Icon(Icons.skip_previous_rounded),
             ),
             // The score from this bar on, as it sounds now: a correction is
@@ -2260,7 +2458,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       _Tool.note when _keysAppend => l10n.keysAppendHint,
       _Tool.note || _Tool.rest => _toolHint ? l10n.penHint : null,
       _Tool.eraser => _toolHint ? l10n.eraserHint : null,
-      _Tool.select => _ranging ? l10n.rangeHint : null,
+      _Tool.select =>
+        _loose ? l10n.looseHint : (_ranging ? l10n.rangeHint : null),
     };
     return PopScope(
       canPop: !_dirty,
@@ -2304,6 +2503,11 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                   icon: Icons.add_box_outlined,
                 ),
                 _MenuItem(
+                  l10n.insertMeasuresMany,
+                  () => unawaited(_insertBars()),
+                  icon: Icons.library_add_outlined,
+                ),
+                _MenuItem(
                   l10n.duplicateMeasure,
                   _duplicateBar,
                   icon: Icons.copy_all_rounded,
@@ -2343,21 +2547,33 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 ),
                 _MenuItem(
                   l10n.optRailRight,
-                  () => setState(() => _railRight = !_railRight),
+                  () => _setOption(() => _railRight = !_railRight),
                   icon: Icons.swap_horiz_rounded,
                   checked: _railRight,
                 ),
                 _MenuItem(
                   l10n.optSmallTools,
-                  () => setState(() => _smallTools = !_smallTools),
+                  () => _setOption(() => _smallTools = !_smallTools),
                   icon: Icons.photo_size_select_small_rounded,
                   checked: _smallTools,
                 ),
                 _MenuItem(
                   l10n.optDarkScore,
-                  () => setState(() => _darkScore = !_darkScore),
+                  () => _setOption(() => _darkScore = !_darkScore),
                   icon: Icons.dark_mode_outlined,
                   checked: _darkScore,
+                ),
+                _MenuItem(
+                  l10n.rangeOption,
+                  () => _setOption(() => _marksRange = !_marksRange),
+                  icon: Icons.height_rounded,
+                  checked: _marksRange,
+                ),
+                _MenuItem(
+                  l10n.metronomeOption,
+                  () => _setOption(() => _metronome = !_metronome),
+                  icon: Icons.av_timer_rounded,
+                  checked: _metronome,
                 ),
                 _MenuItem(
                   _clip == null
@@ -3000,6 +3216,24 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             label: l10n.selectMenu,
             items: [
               _MenuItem(l10n.selectAll, () => _pickBars(0, _measureCount - 1)),
+              // Notes that do not follow one another: each tap takes one
+              // in or lets it go.
+              _MenuItem(
+                l10n.looseSelect,
+                () => setState(() {
+                  _loose = !_loose;
+                  _ranging = false;
+                  _dropRange();
+                  _looseSet.clear();
+                  if (_loose) {
+                    _tool = _Tool.select;
+                    if (_noteIndex != null) {
+                      _looseSet.add((_measureIndex, _noteIndex!));
+                    }
+                  }
+                }),
+                checked: _loose,
+              ),
               _MenuItem(
                 l10n.selectBar,
                 () => _pickBars(_measureIndex, _measureIndex),
@@ -3008,6 +3242,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 (l10n.onlyAll, _Only.all),
                 (l10n.onlyTop, _Only.top),
                 (l10n.onlyBottom, _Only.bottom),
+                (l10n.onlyUpperVoice, _Only.upperVoice),
+                (l10n.onlyLowerVoice, _Only.lowerVoice),
               ])
                 _MenuItem(
                   label,
@@ -3083,6 +3319,48 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                   checked: hasNote && summary.notehead == head,
                 ),
             ],
+          ),
+          // Not drawn, but counted and played: the rests of a voice that
+          // only fills the bar.
+          _ToolButton(
+            tooltip: l10n.hideTool,
+            selected: summary?.hidden ?? false,
+            onPressed: hasEvent
+                ? () => _applyEach(
+                    _editor.toggleHidden,
+                    where: (note) => note.leadsChord && !note.isGrace,
+                  )
+                : null,
+            child: Text(l10n.hideTool),
+          ),
+          // A slash on every beat, for a part played from its chords.
+          _ToolButton(
+            tooltip: l10n.slashFill,
+            onPressed: () {
+              final bars = _barSel;
+              final from = bars?.from ?? _measureIndex;
+              final to = bars?.to ?? _measureIndex;
+              _apply(
+                (xml, ref) =>
+                    _editor.fillWithSlashes(xml, widget.partIndex, from, to),
+                bars: (bars, _) => bars,
+              );
+              if (bars != null) _pickBars(from, to);
+            },
+            child: Text(l10n.slashFill),
+          ),
+          // Written and not played.
+          _ToolButton(
+            tooltip: 'Tacet',
+            selected: summary?.tacet ?? false,
+            onPressed: hasNote
+                ? () => _applyEach(
+                    _editor.toggleTacet,
+                    where: (note) =>
+                        note.leadsChord && !note.isRest && !note.isGrace,
+                  )
+                : null,
+            child: const Text('Tacet'),
           ),
           _ToolButton(
             tooltip: l10n.otherStaff,
@@ -3370,6 +3648,15 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 ? () => _toggleMark('breath-mark', restsToo: false)
                 : null,
             child: const MusicGlyph(MusicGlyphs.breathMarkComma),
+          ),
+          // The two strokes that stop the music for a moment.
+          _ToolButton(
+            tooltip: 'Caesura',
+            selected: summary?.articulations.contains('caesura') ?? false,
+            onPressed: hasNote
+                ? () => _toggleMark('caesura', restsToo: false)
+                : null,
+            child: const Text('//'),
           ),
           const _ToolGap(),
           _MenuButton(
@@ -3692,6 +3979,27 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             onPressed: () => unawaited(_addText()),
             child: Text(l10n.addText),
           ),
+          _MenuButton(
+            tooltip: l10n.hideSignMenu,
+            label: l10n.hideSignMenu,
+            items: [
+              for (final (label, key) in [
+                (l10n.hideTime, false),
+                (l10n.hideKey, true),
+              ])
+                _MenuItem(
+                  label,
+                  () => _applyBar(
+                    (xml, measure) => _editor.toggleSignatureHidden(
+                      xml,
+                      widget.partIndex,
+                      measure,
+                      key: key,
+                    ),
+                  ),
+                ),
+            ],
+          ),
           // The words a player slows down and speeds up by, and goes back
           // to the tempo by. They are played as they are written.
           _MenuButton(
@@ -3815,7 +4123,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
               ])
                 _MenuItem(
                   label,
-                  () => setState(() => _noteSize = size),
+                  () => _setOption(() => _noteSize = size),
                   checked: _noteSize == size,
                 ),
             ],
@@ -3985,7 +4293,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 enum _Palette { note, length, pitch, marks, looks, words, bar, score }
 
 /// Which notes of a run of chords the tools work on.
-enum _Only { all, top, bottom }
+enum _Only { all, top, bottom, upperVoice, lowerVoice }
 
 /// What a tap on the score does.
 enum _Tool { select, eraser, note, rest }
