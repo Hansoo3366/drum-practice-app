@@ -221,10 +221,15 @@ class _VerovioPages extends StatelessWidget {
     required this.pages,
     required this.width,
     required this.onHeightChanged,
+    this.paged = false,
   });
 
   final List<_VerovioPage> pages;
   final double width;
+
+  /// Whether each page is shown whole, with its outline and a gap to the
+  /// next, as it is printed.
+  final bool paged;
   final ValueChanged<double> onHeightChanged;
 
   @override
@@ -239,7 +244,35 @@ class _VerovioPages extends StatelessWidget {
           : width * viewBox.height / viewBox.width;
       final height = viewBox.width <= 0
           ? 0.0
-          : width * page.visibleHeight / viewBox.width;
+          : width *
+                (paged ? viewBox.height : page.visibleHeight) /
+                viewBox.width;
+      if (paged) {
+        // The sheet of paper: its edge, and a shadow under it.
+        children.add(
+          Positioned(
+            left: 0,
+            top: top,
+            width: width,
+            height: height,
+            child: const DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.fromBorderSide(
+                  BorderSide(color: Color(0xFFBDBDC2)),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }
       children.add(
         Positioned(
           left: 0,
@@ -287,7 +320,7 @@ class _VerovioPages extends StatelessWidget {
           ),
         );
       }
-      top += height;
+      top += height + (paged ? pageViewGap : 0);
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => onHeightChanged(top));
     return Stack(children: children);
@@ -562,3 +595,6 @@ Offset _scaledPoint(Offset point, double scale, double pageTop) {
 /// writes a note: up to the third ledger line or so. Chord symbols and
 /// lyrics stand further off.
 const tapReachSpaces = 3.5;
+
+/// The gap between two pages shown as they are printed.
+const pageViewGap = 14.0;

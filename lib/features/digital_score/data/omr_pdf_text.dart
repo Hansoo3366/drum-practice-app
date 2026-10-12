@@ -6,6 +6,7 @@ class OmrPdfText {
   const OmrPdfText();
 
   Future<String> extract(Uint8List bytes) async {
+    await pdfrxFlutterInitialize();
     final document = await PdfDocument.openData(
       bytes,
       sourceName: 'omr-source',

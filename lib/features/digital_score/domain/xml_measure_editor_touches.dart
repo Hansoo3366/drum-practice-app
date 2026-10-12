@@ -160,20 +160,10 @@ extension XmlMeasureTouches on XmlMeasureEditor {
     if (heads.any((head) => head.voice != heads.first.voice)) {
       throw const FormatException('한 성부의 음만 묶을 수 있습니다.');
     }
-    void write(_NoteInfo head, String? value) {
+    void clear(_NoteInfo head) {
       for (final member in measure.groupOf(head)) {
         member.element.findElements('beam').toList().forEach(_remove);
       }
-      if (value == null) return;
-      _insertOrdered(
-        head.element,
-        XmlElement(
-          XmlName('beam'),
-          [XmlAttribute(XmlName('number'), '1')],
-          [XmlText(value)],
-        ),
-        _noteOrder,
-      );
     }
 
     // The notes of the voice in order, with what each one's beam says now.
@@ -229,16 +219,11 @@ extension XmlMeasureTouches on XmlMeasureEditor {
       ]);
     }
     for (final head in voice) {
-      write(head, null);
+      clear(head);
     }
+    // Every beam of a run: sixteenths keep their second beam.
     for (final run in runs) {
-      if (run.length < 2) continue;
-      for (final (index, head) in run.indexed) {
-        write(
-          head,
-          index == 0 ? 'begin' : (index == run.length - 1 ? 'end' : 'continue'),
-        );
-      }
+      measure._writeBeams(run);
     }
     return XmlEditResult(
       doc.toXml(),
@@ -367,6 +352,11 @@ extension XmlMeasureTouches on XmlMeasureEditor {
     );
     final freed = (was - each) * actual;
     final after = before - freed;
+    // Two in the time of three take more time than they had: only where
+    // the bar has it.
+    if (after > before && after > capacity) {
+      throw const FormatException('마디에 자리가 없어 이 잇단음표로 묶을 수 없습니다.');
+    }
     // The voice ends where it ended, as far as the bar's time goes.
     final pad = before >= capacity && after < capacity
         ? math.min(freed, capacity - after)
@@ -395,25 +385,40 @@ extension XmlMeasureTouches on XmlMeasureEditor {
     }
     // What is written after the voice goes back to the start of the bar
     // by the voice's length: that is shorter now.
+    // (Or longer, for two in the time of three.) What follows was written
+    // from where the voice ended: it is moved by as much the other way, so
+    // that it sounds where it did.
     final shorter = freed - pad;
-    if (shorter > 0) {
+    if (shorter != 0) {
       final siblings = last.parent!.children;
       for (var i = siblings.indexOf(last) + 1; i < siblings.length; i++) {
         final next = siblings[i];
         if (next is! XmlElement) continue;
-        if (next.name.local == 'backup') {
-          final length = _duration(next);
-          if (length > shorter) {
-            _setChild(next, 'duration', '${length - shorter}', const [
-              'duration',
-            ]);
-          } else {
-            _remove(next);
+        final name = next.name.local;
+        if (!const {'backup', 'forward', 'note'}.contains(name)) continue;
+        // How far what follows is moved from the end of the voice: back
+        // (negative) or on.
+        final moved = switch (name) {
+          'backup' => -_duration(next),
+          'forward' => _duration(next),
+          _ => 0,
+        };
+        final now = moved + shorter;
+        if (name != 'note' && now != 0 && (now < 0) == (name == 'backup')) {
+          _setChild(next, 'duration', '${now.abs()}', const ['duration']);
+        } else {
+          final at = siblings.indexOf(next);
+          if (name != 'note') siblings.removeAt(at);
+          if (now != 0) {
+            siblings.insert(
+              at,
+              XmlElement(XmlName(now < 0 ? 'backup' : 'forward'), [], [
+                XmlElement(XmlName('duration'), [], [XmlText('${now.abs()}')]),
+              ]),
+            );
           }
         }
-        if (const {'backup', 'forward', 'note'}.contains(next.name.local)) {
-          break;
-        }
+        break;
       }
     }
     final start = heads.first.onset;
@@ -528,6 +533,28 @@ extension XmlMeasureTouches on XmlMeasureEditor {
     var written = 0;
     for (final event in clip._events) {
       if (at == null) break;
+      // The place is the chord as a whole, whichever of its notes was
+      // picked, and on its own: a tie into it or out of it would carry the
+      // new pitch to notes that are not being written.
+      {
+        final doc = _ScoreDoc(current);
+        final measure = doc.measure(at);
+        final group = measure.groupOf(measure.note(at.noteIndex));
+        at = at.withNote(
+          measure.notes.indexWhere((note) => identical(note, group.first)),
+        );
+        var untied = false;
+        for (final member in group) {
+          if (!member.tieStart && !member.tieStop) continue;
+          doc.breakTies(at.measureIndex, member);
+          untied = true;
+        }
+        if (untied) {
+          current = doc.toXml();
+        } else {
+          doc.keep(current);
+        }
+      }
       // The value first: it may put rests behind the note, which the next
       // copied note then takes.
       try {
@@ -535,9 +562,9 @@ extension XmlMeasureTouches on XmlMeasureEditor {
       } on FormatException {
         // Already that value, or no room for it: the note keeps its own.
       }
-      // One note of the right kind at the place.
-      while (describe(current, at).chordSize > 1) {
-        final summary = describe(current, at);
+      // One note of the right kind at the place: the chord's other notes
+      // go one by one, and what follows it stays where it is.
+      for (var guard = 0; guard < 16; guard++) {
         final doc = _ScoreDoc(current);
         final measure = doc.measure(at);
         final group = measure.groupOf(measure.note(at.noteIndex));
@@ -545,8 +572,8 @@ extension XmlMeasureTouches on XmlMeasureEditor {
           (note) => identical(note, group.last),
         );
         doc.keep(current);
-        if (summary.chordSize <= 1 || extra < 0) break;
-        current = removeNote(current, at.withNote(extra)).xml;
+        if (group.length <= 1 || extra < 0 || extra == at.noteIndex) break;
+        current = deleteNote(current, at.withNote(extra)).xml;
       }
       final now = describe(current, at);
       if (event.pitches.isEmpty) {
@@ -654,7 +681,16 @@ extension XmlMeasureTouches on XmlMeasureEditor {
           tied: note.tieStart,
         ));
       }
-      return (capacity: ticks(measure.capacity), events: events);
+      // A bar that does not fill its time (a pickup, a bar the reader
+      // left short) is not a place to flow notes through: they would be
+      // written out to its full length.
+      final capacity = ticks(measure.capacity);
+      final filled = events.fold<int>(0, (sum, event) => sum + event.ticks);
+      if (filled < capacity ||
+          measure.element.getAttribute('implicit') == 'yes') {
+        throw const FormatException('박자를 채우지 않은 마디에는 흘려 붙일 수 없습니다.');
+      }
+      return (capacity: capacity, events: events);
     }
 
     // What each bar holds afterwards.
@@ -838,13 +874,17 @@ extension XmlMeasureTouches on XmlMeasureEditor {
       final count = doc._measures(ref.partIndex).length;
       for (var bar = ref.measureIndex + 1; bar < count; bar++) {
         final next = doc.measureAt(ref.partIndex, bar);
-        final first = next.notes.indexWhere(
-          (note) =>
-              !note.isGrace &&
-              !note.isCue &&
-              note.staff == info.staff &&
-              identical(next.groupOf(note).first, note),
+        bool leads(_NoteInfo note) =>
+            !note.isGrace &&
+            !note.isCue &&
+            note.staff == info.staff &&
+            identical(next.groupOf(note).first, note);
+        // The same voice goes on; a bar that does not have it is entered
+        // by what its staff does have.
+        var first = next.notes.indexWhere(
+          (note) => leads(note) && note.voice == head.voice,
         );
+        if (first < 0) first = next.notes.indexWhere(leads);
         if (first >= 0) return ref.inBar(bar, first);
       }
       return null;

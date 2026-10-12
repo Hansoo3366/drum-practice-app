@@ -39,7 +39,7 @@ void main() {
       kind: ScoreExportKind.musicXml,
     );
 
-    expect(exported.fileName, 'Demo.musicxml');
+    expect(exported.fileName, 'Demo.xml');
     final decoded = const MusicXmlCodec().decode(
       exported.bytes,
       fileName: exported.fileName,

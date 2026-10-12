@@ -154,7 +154,8 @@ extension XmlMeasureLooks on XmlMeasureEditor {
       }
     }
     before.keep(xml);
-    var current = clearMeasures(xml, partIndex, from, to).xml;
+    // Of this part only: the other parts keep what they play there.
+    var current = clearMeasures(xml, partIndex, from, to, onlyPart: true).xml;
     for (var bar = from; bar <= to; bar++) {
       var doc = _ScoreDoc(current);
       final context = doc.measureAt(partIndex, bar).context;
@@ -214,6 +215,61 @@ extension XmlMeasureLooks on XmlMeasureEditor {
       current = doc.toXml();
     }
     return XmlEditResult(current, _barRef(partIndex, from));
+  }
+
+  /// Writes the selected note a quarter tone higher ([quarter] 1) or lower
+  /// (-1) than its pitch, or as its pitch again (0). The sign is the
+  /// quarter-tone accidental; the note is played at its pitch, for the
+  /// player counts in semitones.
+  XmlEditResult setQuarterTone(String xml, XmlNoteRef ref, int quarter) {
+    if (quarter < -1 || quarter > 1) {
+      throw const FormatException('사분음은 올림, 내림, 없음 가운데 하나입니다.');
+    }
+    final doc = _ScoreDoc(xml);
+    final measure = doc.measure(ref);
+    final info = measure.note(ref.noteIndex);
+    final pitch = info.pitch;
+    if (pitch == null) throw const FormatException('쉼표에는 임시표가 없습니다.');
+    if (info.quarterTone == quarter) {
+      throw const FormatException('이미 그렇게 되어 있습니다.');
+    }
+    final total = pitch.alter + quarter / 2;
+    final sign = switch (total) {
+      0.5 => 'quarter-sharp',
+      -0.5 => 'quarter-flat',
+      1.5 => 'three-quarters-sharp',
+      -1.5 => 'three-quarters-flat',
+      _ => null,
+    };
+    // A quarter further the way the note already leans, or from a plain
+    // note: a quarter back from a sharp would be read as another note's
+    // quarter tone, and taking it away would not give the sharp back.
+    if (quarter != 0 &&
+        (sign == null || (pitch.alter != 0 && pitch.alter.sign != quarter))) {
+      throw const FormatException('이 음에는 사분음 기호를 붙일 수 없습니다.');
+    }
+    final element = info.element;
+    final written = element.getElement('pitch')!;
+    written.findElements('alter').toList().forEach(_remove);
+    if (total != 0) {
+      final alter = XmlElement(XmlName('alter'), [], [
+        XmlText(quarter == 0 ? '${pitch.alter}' : '$total'),
+      ]);
+      final step = written.getElement('step')!;
+      written.children.insert(written.children.indexOf(step) + 1, alter);
+    }
+    element.findElements('accidental').toList().forEach(_remove);
+    if (sign != null) {
+      _insertOrdered(
+        element,
+        XmlElement(XmlName('accidental'), [], [XmlText(sign)]),
+        _noteOrder,
+      );
+    } else {
+      // Its ordinary sign again, where the key and the bar ask for one.
+      doc.measure(ref).refreshAccidentals(info.staff, {pitch.step});
+    }
+    return XmlEditResult(doc.toXml(), ref);
   }
 
   /// Has the part go on with another instrument from a bar on (a player

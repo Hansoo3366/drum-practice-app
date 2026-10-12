@@ -164,7 +164,7 @@ class _OmrQualitySheetState extends ConsumerState<_OmrQualitySheet> {
       await widget.onReviewed(updated);
       if (mounted) setState(() => _report = updated);
     } on Object catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = _saidOf(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -205,11 +205,13 @@ class _OmrQualitySheetState extends ConsumerState<_OmrQualitySheet> {
             ),
             const SizedBox(height: 8),
           ],
-          OutlinedButton.icon(
-            onPressed: _busy ? null : widget.onCorrect,
-            icon: const Icon(Icons.compare_outlined),
-            label: const Text('원본 마디 대조·수정'),
-          ),
+          // Only a converted score has an original to hold it against.
+          if (widget.data.omrJobId != null)
+            OutlinedButton.icon(
+              onPressed: _busy ? null : widget.onCorrect,
+              icon: const Icon(Icons.compare_outlined),
+              label: const Text('원본 마디 대조·수정'),
+            ),
           // Reviewing with a key of one's own is a developer's tool: the
           // server reviews every conversion, and a user has no such key.
           if (kDebugMode) ...[
@@ -325,6 +327,7 @@ enum _ScoreMenuAction {
   exportPdf,
   exportProject,
   chordDisplay,
+  pageView,
   mixer,
   guide,
 }

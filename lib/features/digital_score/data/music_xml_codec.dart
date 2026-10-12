@@ -261,7 +261,13 @@ class MusicXmlCodec {
               step: PitchStepMusicXml.parse(
                 _requiredChildText(pitchElement, 'step'),
               ),
-              alter: _intText(pitchElement, 'alter') ?? 0,
+              // A quarter tone ("0.5") is read as its whole part: the
+              // model and the player count in semitones.
+              alter:
+                  double.tryParse(
+                    _childText(pitchElement, 'alter') ?? '',
+                  )?.truncate() ??
+                  0,
               octave: _requiredInt(pitchElement, 'octave'),
             );
           } else if (_firstChild(child, 'rest') == null) {
@@ -383,7 +389,15 @@ class MusicXmlCodec {
       clefs = next;
     }
 
-    final timeElement = _firstChild(element, 'time');
+    // A time signature of no beats, or of beats of no length (a converter's
+    // slip), says nothing: the bar goes on in the time it was in.
+    final timeElement = switch (_firstChild(element, 'time')) {
+      final written?
+          when (_intText(written, 'beats') ?? 1) > 0 &&
+              (_intText(written, 'beat-type') ?? 1) > 0 =>
+        written,
+      _ => null,
+    };
     final time = timeElement == null
         ? inherited.time
         : MusicTimeSignature(

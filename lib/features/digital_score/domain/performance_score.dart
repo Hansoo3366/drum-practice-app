@@ -174,6 +174,16 @@ bool _midiReady(XmlDocument document) {
       if (_padVoices(measure, barDivisions)) changed = true;
       final numbers = <String, Map<String, int>>{};
       for (final note in measure.findElements('note')) {
+        // A quarter tone is played at the pitch it is written on: the
+        // player has semitones only, and would round it up to the next.
+        final alter = note.getElement('pitch')?.getElement('alter');
+        if (alter != null && alter.innerText.contains('.')) {
+          final value = double.tryParse(alter.innerText.trim());
+          if (value != null) {
+            alter.innerText = '${value.truncate()}';
+            changed = true;
+          }
+        }
         final voice = note.getElement('voice');
         if (voice == null) continue;
         final staff = note.getElement('staff')?.innerText.trim() ?? '1';
@@ -198,6 +208,7 @@ bool _midiReady(XmlDocument document) {
   // The time signature the score declares, and the one this copy last wrote.
   var declared = (4, 4);
   final written = List.filled(parts.length, (4, 4));
+  final spoiled = <XmlElement>[];
   for (var index = 0; index < count; index++) {
     var quarters = 0.0;
     for (var p = 0; p < parts.length; p++) {
@@ -217,6 +228,10 @@ bool _midiReady(XmlDocument document) {
                 beatType > 0) {
               if (p == 0) declared = (beats, beatType);
               written[p] = (beats, beatType);
+            } else if (time != null) {
+              // A time of no beats, or of beats of no length: the player
+              // would divide by it. The bar goes on in the time it was in.
+              spoiled.add(time);
             }
           case 'note':
             if (child.getElement('chord') == null &&
@@ -234,7 +249,16 @@ bool _midiReady(XmlDocument document) {
     }
     final capacity = declared.$1 * 4 / declared.$2;
     var wanted = declared;
-    if (quarters > capacity + 1e-6) {
+    // A pickup is as long as its notes: played at the length of its time
+    // signature, the music would wait in silence for the bar to end.
+    final pickup =
+        quarters > 1e-6 &&
+        quarters < capacity - 1e-6 &&
+        [
+          for (var p = 0; p < parts.length; p++)
+            if (index < measures[p].length) measures[p][index],
+        ].every((measure) => measure.getAttribute('implicit') == 'yes');
+    if (quarters > capacity + 1e-6 || pickup) {
       wanted = (0, 0);
       for (final beatType in const [4, 8, 16, 32, 64]) {
         final beats = quarters * beatType / 4;
@@ -270,6 +294,11 @@ bool _midiReady(XmlDocument document) {
       written[p] = wanted;
       changed = true;
     }
+  }
+  for (final time in spoiled) {
+    if (time.parent == null) continue;
+    time.remove();
+    changed = true;
   }
   return changed;
 }
@@ -472,6 +501,27 @@ List<XmlElement> _rests(int length, int divisions, {required XmlElement like}) {
   return rests;
 }
 
+/// How long the bar at [index] lasts when it is a pickup: a bar marked as
+/// not counted (`implicit`) in every part that has it, with notes, and
+/// shorter than its time. Null for any other bar.
+double? _pickupQuarters(MusicScore score, int index) {
+  var written = 0.0;
+  var full = 0.0;
+  for (final part in score.parts) {
+    if (index >= part.measures.length) continue;
+    final bar = part.measures[index];
+    if (!bar.implicit) return null;
+    final time =
+        bar.attributes.time ?? const MusicTimeSignature(beats: 4, beatType: 4);
+    full = math.max(full, time.beats * 4 / time.beatType);
+    written = math.max(
+      written,
+      bar.durationDivisions / bar.attributes.divisions,
+    );
+  }
+  return written > 1e-6 && written < full - 1e-6 ? written : null;
+}
+
 /// How long each bar of [score] lasts when played, in quarter notes: its
 /// time signature, or its notes where they run past it.
 List<double> _barQuarters(MusicScore score) {
@@ -490,7 +540,10 @@ List<double> _barQuarters(MusicScore score) {
         bar.durationDivisions / bar.attributes.divisions,
       );
     }
-    lengths.add(quarters);
+    // A pickup lasts as long as its notes ([_midiReady] gives it a time
+    // signature that says so).
+    final pickup = _pickupQuarters(score, index);
+    lengths.add(pickup ?? quarters);
   }
   return lengths;
 }
@@ -694,18 +747,23 @@ PlayedTempo playedTempo(String xml, MusicScore score) {
 TempoWord? _tempoWord(String text) {
   final word = text.trim().toLowerCase();
   if (word.isEmpty) return null;
-  if (RegExp(r'^(rit|rall|riten|slower|calando|allarg)').hasMatch(word)) {
+  // Anywhere in the words: "poco rit.", "molto rall.", "(a tempo)",
+  // "Medium Swing". "A tempo" first: it may follow the word it ends.
+  if (RegExp(r'\b(a tempo|tempo i\b|tempo primo|tempo 1)').hasMatch(word)) {
+    return TempoWord.asBefore;
+  }
+  // "ritmico" and "ritornello" are not "ritardando".
+  if (RegExp(r'\b(rit(?!m|orn)|rall|slower|calando|allarg)').hasMatch(word)) {
     return TempoWord.slower;
   }
   // "string." is stringendo; "Strings" is an instrument.
-  if (RegExp(r'^(accel|stringendo|string\.|faster)').hasMatch(word)) {
+  if (RegExp(r'\b(accel|stringendo|string\.|faster)').hasMatch(word)) {
     return TempoWord.faster;
   }
-  if (RegExp(r'^(a tempo|tempo i\b|tempo primo|tempo 1)').hasMatch(word)) {
-    return TempoWord.asBefore;
+  if (RegExp(r'\bswing').hasMatch(word)) return TempoWord.swing;
+  if (RegExp(r'\b(straight|even)\b').hasMatch(word)) {
+    return TempoWord.straight;
   }
-  if (RegExp(r'^swing').hasMatch(word)) return TempoWord.swing;
-  if (RegExp(r'^(straight|even)').hasMatch(word)) return TempoWord.straight;
   return null;
 }
 
@@ -716,7 +774,8 @@ List<({double quarters, int midi, int staffIndex})> tacetNotes(
   String xml,
   MusicScore score,
 ) {
-  if (!xml.contains('<mute>')) return const [];
+  // Slashes stand for the chords over them: they are no notes to play.
+  if (!xml.contains('<mute>') && !xml.contains('>slash<')) return const [];
   final lengths = _barQuarters(score);
   final result = <({double quarters, int midi, int staffIndex})>[];
   var firstStaff = 0;
@@ -752,12 +811,14 @@ List<({double quarters, int midi, int staffIndex})> tacetNotes(
             final from = chord ? last : position;
             final pitch = child.getElement('pitch');
             if (pitch != null &&
-                child
-                        .getElement('play')
-                        ?.getElement('mute')
-                        ?.innerText
-                        .trim() ==
-                    'on') {
+                (child
+                            .getElement('play')
+                            ?.getElement('mute')
+                            ?.innerText
+                            .trim() ==
+                        'on' ||
+                    child.getElement('notehead')?.innerText.trim() ==
+                        'slash')) {
               final step = 'CDEFGAB'.indexOf(
                 pitch.getElement('step')?.innerText.trim() ?? 'C',
               );
@@ -769,7 +830,7 @@ List<({double quarters, int midi, int staffIndex})> tacetNotes(
               final alter =
                   double.tryParse(
                     pitch.getElement('alter')?.innerText.trim() ?? '',
-                  )?.round() ??
+                  )?.truncate() ??
                   0;
               final staff =
                   int.tryParse(

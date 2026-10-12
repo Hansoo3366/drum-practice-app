@@ -155,10 +155,20 @@ extension XmlMeasureRanges on XmlMeasureEditor {
   /// written in them (notes, chord symbols, words, dynamics) gives way to
   /// rests. What a notation program does when a run of bars is cut or
   /// deleted; [deleteMeasures] takes the bars themselves out.
-  XmlEditResult clearMeasures(String xml, int partIndex, int from, int to) {
+  ///
+  /// With [onlyPart] the bars of the other parts are left as they are: for
+  /// what is done to one part alone.
+  XmlEditResult clearMeasures(
+    String xml,
+    int partIndex,
+    int from,
+    int to, {
+    bool onlyPart = false,
+  }) {
     final doc = _ScoreDoc(xml);
     _checkRange(from, to, doc.measureCount(partIndex));
     for (final (index, _) in doc.parts.indexed) {
+      if (onlyPart && index != partIndex) continue;
       final count = doc._measures(index).length;
       for (var bar = from; bar <= to && bar < count; bar++) {
         var view = doc.measureAt(index, bar);
@@ -736,6 +746,18 @@ void _movePlace({required XmlElement from, required XmlElement to}) {
   for (final sound in from.findElements('sound').where(jumps).toList()) {
     _remove(sound);
     to.children.insert(opening(), sound);
+  }
+  // How fast the music goes from this bar on is said at the place too:
+  // it holds whatever notes are written there, unless what is written
+  // there says how fast itself. (Left in the bar that goes, it would be
+  // handed to the first of the new bars.)
+  final tempo = [
+    for (final child in from.childElements)
+      if (_setsTempo(child)) child,
+  ];
+  tempo.forEach(_remove);
+  if (!to.childElements.any(_setsTempo)) {
+    to.children.insertAll(opening(), tempo);
   }
 }
 

@@ -47,6 +47,10 @@ class OmrPageCrop {
     Uint8List pdfBytes,
     int pageIndex,
   ) async {
+    // The PDF library is told where its cache is before a document is
+    // opened. Nothing else may have done so: a library of converted
+    // scores draws no PDF thumbnail.
+    await pdfrxFlutterInitialize();
     final document = await PdfDocument.openData(
       pdfBytes,
       sourceName: 'omr-preview',
@@ -77,6 +81,7 @@ class OmrPageCrop {
     required ui.Rect region,
   }) async {
     validateRegion(region);
+    await pdfrxFlutterInitialize();
     final document = await PdfDocument.openData(
       pdfBytes,
       sourceName: 'omr-region',
@@ -142,6 +147,7 @@ class OmrPageCrop {
     required int measureIndex,
     required String musicXml,
   }) async {
+    await pdfrxFlutterInitialize();
     final document = await PdfDocument.openData(
       pdfBytes,
       sourceName: 'omr-ai-crop',

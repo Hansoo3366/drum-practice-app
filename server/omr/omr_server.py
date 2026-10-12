@@ -27,6 +27,7 @@ from omr_book import _load_book, _restore_dropped_bars, _restore_exported_rhythm
 from omr_marks import _add_segno_coda, _navigation_marks, _repeat_starts, _segno_coda_marks, _tidy_endings, _upload_photos
 from omr_text import _attach_stray_accidentals, _drop_chord_junk, _ocr_chord_lines, _ocr_lyrics, _reread_chords
 from omr_validate import _corrections, _validate
+import omr_hybrid
 from omr_ai import ARRANGE_MAX_BRIEF, _ai_enabled, _ai_review, _arrange_advice
 from omr_annotations import _separate_upload
 from omr_clients import Clients, Quota
@@ -473,10 +474,19 @@ def _run_job_serial(job_id: str, source: Path, outgoing: Path, profile: str) -> 
                     candidate["repairs"] = repairs
                 candidate["raw_result"] = str(raw.relative_to(outgoing))
                 if result != raw:
-                    corrections = _corrections(
-                        _read_score(raw), _read_score(result),
-                        [bar["measureIndex"] for bar in repairs.get("bars_restored") or []],
-                    )
+                    reread = repairs.get("hybrid") or {}
+                    if reread.get("status") == "done":
+                        # The bars are another reader's: there is no bar of the engine's
+                        # export to set beside each.
+                        corrections = {"source": f"server-rules/{PIPELINE}", "items": [{
+                            "kind": "notes", "before": f"{reread['bars_before']} bars",
+                            "after": f"{reread['bars']} bars", "lines": reread["lines_reread"],
+                        }]}
+                    else:
+                        corrections = _corrections(
+                            _read_score(raw), _read_score(result),
+                            [bar["measureIndex"] for bar in repairs.get("bars_restored") or []],
+                        )
                     corrections_file = result.with_name("corrections.json")
                     corrections_file.write_text(
                         json.dumps(corrections, ensure_ascii=False, indent=2), encoding="utf-8",
@@ -907,6 +917,8 @@ def _postprocess(path: Path, profile: str) -> tuple[Path, dict]:
         stem = path.name[: -len(path.suffix)] if path.suffix else path.name
         return _write_mxl(root, path.with_name(f"{stem}.fixed.mxl")), {"parts_merged": merged}
     original = ET.tostring(root)
+    # Where a second reader's bars stand belongs to the score it was written for.
+    (path.parent / omr_hybrid.SIDECAR).unlink(missing_ok=True)
     # First: the repairs below go by where a note stands on its staff.
     octave_lines_undone = _undo_octave_shifts(root)
     # Preserve explicitly read rhythm before text repairs attach syllables.
@@ -922,11 +934,28 @@ def _postprocess(path: Path, profile: str) -> tuple[Path, dict]:
     # Remove phantom secondary-voice rests first, otherwise they would block
     # the recovery's whole-part monophony guard. Real polyphony still blocks.
     report["rhythm_restored"] = _restore_exported_rhythm(root, path.parent)
+    # The second reader gives one staff its notes: a staff the engine split into parts by
+    # name is one part before it does, not after.
+    merged_early = _merge_split_parts(root) if omr_hybrid.enabled() else 0
     book = _load_book(root, path.parent)
     if book is not None:
         report["repeat_starts"] = _repeat_starts(book)
         if report["repeat_starts"]:
             # Sung notes and onsets were indexed with the removed chords.
+            book = _load_book(root, path.parent)
+    if book is not None and omr_hybrid.enabled():
+        # Bars and notes from the second reader; the reading of chords and lyrics below
+        # then goes by them (omr_hybrid).
+        try:
+            report["second_reader"] = omr_hybrid.read_sheets(path, book)
+            report["hybrid"], undo = omr_hybrid.apply(root, book, path.parent, dashes)
+        except Exception as exc:  # noqa: BLE001 - the score stays the engine's
+            report["hybrid"], undo = {"status": "error", "error": str(exc)[-300:]}, None
+        if undo is not None:
+            reread = _load_book(root, path.parent)
+            if reread is None:
+                undo()
+                report["hybrid"] = {"status": "undone", "reason": "the reread score is not tied to the page"}
             book = _load_book(root, path.parent)
     if book is not None:
         with tempfile.TemporaryDirectory(dir=path.parent) as workdir:
@@ -943,9 +972,10 @@ def _postprocess(path: Path, profile: str) -> tuple[Path, dict]:
     report["ties_added"] = _tie_held_dashes(root)
     report["title"] = _title_from_credits(root)
     # Last: the repairs above address parts by their position in the book.
-    report["parts_merged"] = _merge_split_parts(root)
+    report["parts_merged"] = merged_early or _merge_split_parts(root)
     # After the merge: a bracket may have been read into the part that is folded in.
     report["endings_tidied"] = _tidy_endings(root)
+    omr_hybrid.strip(root)
     report["backups_clamped"] = _clamp_backups(root)
     # Every repair edits the tree, so an unchanged tree means nothing was fixed.
     if ET.tostring(root) == original:

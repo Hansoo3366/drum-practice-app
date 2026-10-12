@@ -767,7 +767,11 @@ class SwipeChoices<T> extends StatefulWidget {
 }
 
 class _SwipeChoicesState<T> extends State<SwipeChoices<T>> {
-  static const _cell = 42.0;
+  static const _cellMost = 42.0;
+
+  /// How wide a value is in the open row: as wide as fits beside the tool
+  /// on this screen, so the row never opens under the finger.
+  var _cell = _cellMost;
   static const _holdTime = Duration(milliseconds: 350);
   Offset? _down;
   Timer? _hold;
@@ -788,6 +792,10 @@ class _SwipeChoicesState<T> extends State<SwipeChoices<T>> {
     final area = overlay.context.findRenderObject()! as RenderBox;
     final box = context.findRenderObject()! as RenderBox;
     final tool = box.localToGlobal(Offset.zero, ancestor: area) & box.size;
+    final room = widget.toLeft
+        ? tool.left - 6 - 4
+        : area.size.width - (tool.right + 6) - 4;
+    _cell = math.min(_cellMost, math.max(24.0, room / widget.choices.length));
     final width = _cell * widget.choices.length;
     final left = widget.toLeft
         ? math.max(4.0, tool.left - 6 - width)
@@ -858,7 +866,9 @@ class _SwipeChoicesState<T> extends State<SwipeChoices<T>> {
     final opened = _entry != null;
     _hold?.cancel();
     _hold = null;
-    _entry?.remove();
+    _entry
+      ?..remove()
+      ..dispose();
     _entry = null;
     _down = null;
     _hover.value = null;

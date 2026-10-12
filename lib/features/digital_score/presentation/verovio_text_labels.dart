@@ -89,8 +89,22 @@ enum ChordDisplay { symbols, nashville, roman }
 /// ("3m7", "4/6", "5(sus4)") or in Roman numerals ("iii7", "IV/VI"). A
 /// text that is not a chord symbol ("N.C.") comes back as it is.
 String chordAsNumber(String text, int fifths, {required bool roman}) {
-  final parts = text.split('/');
-  if (parts.length > 2) return text;
+  // What follows a "/" is the bass when it is a note name; a number after
+  // one ("C6/9") is part of the chord. Anything else is no chord symbol.
+  var parts = text.split('/');
+  if (parts.length > 1 &&
+      !RegExp(r'^\s*[A-G](♯|#|♭|b)?\s*$').hasMatch(parts.last)) {
+    parts = [text];
+  }
+  if (parts.length > 2) {
+    parts = [parts.sublist(0, parts.length - 1).join('/'), parts.last];
+  }
+  if (parts.first
+      .split('/')
+      .skip(1)
+      .any((piece) => !RegExp(r'^\d').hasMatch(piece))) {
+    return text;
+  }
   final chord = _chordRoot(parts.first);
   if (chord == null) return text;
   final bass = parts.length == 2 ? _chordRoot(parts[1]) : null;
@@ -117,16 +131,16 @@ String chordAsNumber(String text, int fifths, {required bool roman}) {
 
   const numerals = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
   final at = place(chord);
-  final minor =
-      chord.rest.startsWith('m') &&
-      !chord.rest.startsWith('maj') &&
-      !chord.rest.startsWith('M');
+  // Minor as it is written: "m", "mi", "min" or "-"; "maj" and "ma7" are
+  // major.
+  final minor = RegExp(r'^(min|mi(?!n)|m(?!a)|-)').firstMatch(chord.rest);
   final String root;
   if (roman) {
     final numeral = numerals[at.degree];
     // A minor chord is its numeral in small letters, without the "m".
-    root = minor
-        ? '${at.sign}${numeral.toLowerCase()}${chord.rest.substring(1)}'
+    root = minor != null
+        ? '${at.sign}${numeral.toLowerCase()}'
+              '${chord.rest.substring(minor.end)}'
         : '${at.sign}$numeral${chord.rest}';
   } else {
     root = '${at.sign}${at.degree + 1}${chord.rest}';

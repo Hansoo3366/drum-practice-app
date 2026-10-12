@@ -45,7 +45,7 @@ class MidiCodec {
         0xff,
         0x58,
         0x04,
-        time.beats,
+        time.beats.clamp(1, 255),
         _beatTypeExponent(time.beatType),
         24,
         8,
@@ -80,7 +80,14 @@ class MidiCodec {
       }
       measureStart += _toTicks(measureCapacity(measure.attributes), divisions);
     }
-    events.add(_MidiEvent(measureStart, const [0xff, 0x2f, 0x00]));
+    // The track ends after its last note: a bar that holds more than its
+    // time signature says ends later than the bars add up to, and nothing
+    // may follow the end of a track.
+    var end = measureStart;
+    for (final event in events) {
+      if (event.tick > end) end = event.tick;
+    }
+    events.add(_MidiEvent(end, const [0xff, 0x2f, 0x00]));
     return _encodeTrack(events);
   }
 

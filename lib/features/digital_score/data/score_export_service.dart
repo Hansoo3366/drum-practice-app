@@ -11,6 +11,15 @@ import 'package:page_a_diddle/features/digital_score/domain/playback_sequence.da
 
 enum ScoreExportKind { musicXml, midi, pdf, project }
 
+/// The extension an exported MusicXML file is saved under.
+///
+/// ".xml", not ".musicxml": Android does not know ".musicxml", and the
+/// system's save dialog then numbers a second file of the same name after
+/// the extension ("song.musicxml (1)"), which no program opens. ".xml" is
+/// the other name MusicXML files go by, and one the system does know
+/// ("song (1).xml").
+const musicXmlExportExtension = 'xml';
+
 class ScoreExport {
   const ScoreExport({
     required this.bytes,
@@ -58,8 +67,8 @@ class ScoreExportService {
     return switch (kind) {
       ScoreExportKind.musicXml => ScoreExport(
         bytes: _musicXmlCodec.encode(performance, MusicXmlFileFormat.musicXml),
-        fileName: '$safeTitle.musicxml',
-        extension: 'musicxml',
+        fileName: '$safeTitle.$musicXmlExportExtension',
+        extension: musicXmlExportExtension,
       ),
       ScoreExportKind.midi => ScoreExport(
         bytes: _midiCodec.encode(performance),

@@ -163,6 +163,26 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// score that writes none has the lines the viewer set for it; once bars
   /// were added or removed, as many bars to a line as it had there.
   List<int> _lineStartsFor(String xml) {
+    if (_continuous) {
+      final count = measureCountOf(xml, widget.partIndex);
+      return [for (var start = 0; start < count; start += _barsAcross) start];
+    }
+    return _scoreLineStartsFor(xml);
+  }
+
+  /// Read as one long line that moves across the screen, instead of lines
+  /// one under the other. A very long score is as many such lines as it
+  /// needs: one line of any length is more than a phone engraves.
+  var _continuous = false;
+  static const _barsAcross = 32;
+
+  /// How many screens wide a line of the long view is: four bars to the
+  /// screen, as a line of the score has.
+  double get _screensAcross =>
+      (math.min(_measureCount, _barsAcross) / 4).ceilToDouble().clamp(1, 8);
+
+  /// The lines the score itself is in.
+  List<int> _scoreLineStartsFor(String xml) {
     final written = writtenLineStarts(xml, widget.partIndex);
     if (written.isNotEmpty) return written;
     final count = measureCountOf(xml, widget.partIndex);
@@ -178,8 +198,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   /// The lines of the part as they were last read: the text each was made
   /// from, what is engraved for it, and its bars.
-  List<({String text, String shown, List<MusicMeasure> bars})> _lines =
-      const [];
+  List<_Line> _lines = const [];
 
   /// The score the lines of [_lines] were last put together into, and for
   /// which state.
@@ -295,20 +314,28 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   }
 
   /// What the editor says of each picked note.
-  List<XmlNoteSummary> get _pickedSummaries {
-    final bars = <int, List<XmlNoteSummary>>{};
-    return [
-      for (final ref in _pickedRefs)
-        if ((bars[ref.measureIndex] ??= _summariesOf(_xml, ref.measureIndex))
-            case final notes when ref.noteIndex < notes.length)
-          notes[ref.noteIndex],
-    ];
+  List<XmlNoteSummary> _summariesOf(String xml, int bar) {
+    if (!identical(xml, _xml)) {
+      return _editor.notesOf(xml, widget.partIndex, bar);
+    }
+    if (bar == _measureIndex) return _bar.notes;
+    // What was read of the bars of the score as it is now is kept: with a
+    // whole piece picked, every tool asks for every bar, and reading them
+    // all takes long.
+    if (!identical(_summariesXml, xml)) {
+      _summariesXml = xml;
+      _summaries.clear();
+    }
+    return _summaries[bar] ??= _editor.notesOf(xml, widget.partIndex, bar);
   }
 
-  List<XmlNoteSummary> _summariesOf(String xml, int bar) =>
-      bar == _measureIndex && identical(xml, _xml)
-      ? _bar.notes
-      : _editor.inspect(xml, widget.partIndex, bar).notes;
+  String? _summariesXml;
+  final _summaries = <int, List<XmlNoteSummary>>{};
+
+  /// Whether more than the cursor's note is picked: a run, whole bars, or
+  /// notes picked one by one.
+  bool get _severalPicked =>
+      _rangeEnd != null || _barSel != null || _looseSet.length > 1;
 
   void _dropRange() {
     _rangeEnd = null;
@@ -393,8 +420,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     try {
       final stored = await SharedPreferences.getInstance();
       _optionsRead = true;
-      if (!mounted) return;
-      setState(() {
+      // The choices are the app's, not this screen's: they are taken even
+      // when the screen was left while they were being read.
+      void take(VoidCallback read) => mounted ? setState(read) : read();
+      take(() {
         _railRight = stored.getBool('editor.railRight') ?? _railRight;
         _smallTools = stored.getBool('editor.smallTools') ?? _smallTools;
         _darkScore = stored.getBool('editor.darkScore') ?? _darkScore;
@@ -457,6 +486,16 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   /// The bar after which the player stops, when only picked bars play.
   int? _playUntil;
+
+  /// Lets a run of notes, picked bars and notes picked one by one go, when
+  /// the cursor is moved away from them.
+  void _letRunGo() {
+    if (_rangeEnd == null && _barSel == null && _looseSet.length <= 1) return;
+    setState(() {
+      _dropRange();
+      _looseSet.clear();
+    });
+  }
 
   /// The chord the keys were building is done: it is the chord before now.
   void _endChord() {
@@ -598,6 +637,16 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       base: widget.musicXml,
     );
     if (draft == null || !mounted || _cursor != 0) return;
+    // A draft is of one part's bars: one that does not count them as the
+    // score does is not offered.
+    try {
+      if (draft.bars.isEmpty ||
+          draft.bars.length != measureCountOf(draft.xml, widget.partIndex)) {
+        return;
+      }
+    } on FormatException {
+      return;
+    }
     final l10n = context.l10n;
     final resume = await showDialog<bool>(
       context: context,
@@ -687,10 +736,14 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       // of it, so an edit reads one line and not the score.
       final starts = _lineStartsFor(xml);
       final texts = partChunks(xml, widget.partIndex, starts);
-      final lines = <({String text, String shown, List<MusicMeasure> bars})>[];
+      final lines = <_Line>[];
       MusicScore? first;
       for (var i = 0; i < texts.length; i++) {
-        if (i < _lines.length && _lines[i].text == texts[i]) {
+        // What was read of a line holds while its text and its place in
+        // the score are the same: the notes are named by their bar.
+        if (i < _lines.length &&
+            _lines[i].start == starts[i] &&
+            _lines[i].text == texts[i]) {
           lines.add(_lines[i]);
           continue;
         }
@@ -699,6 +752,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         final bars = decoded.parts.first.measures;
         lines.add((
           text: texts[i],
+          start: starts[i],
           shown: chunkForDisplay(texts[i], bars, starts[i]),
           bars: bars,
         ));
@@ -745,11 +799,15 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   /// Applies [edit] at the selected note. An edit that adds or removes bars
   /// says with [bars] what the list of bar ids becomes.
-  void _apply(
+  ///
+  /// Says whether the edit went through (a refusal is shown and is false).
+  bool _apply(
     XmlEditResult Function(String xml, XmlNoteRef ref) edit, {
     List<int> Function(List<int> bars, int at)? bars,
     bool keepRange = false,
   }) {
+    // What is being saved is the score as it stood when saving began.
+    if (_saving) return false;
     // A bar edit needs no note: a bar read without any can still be removed.
     final ref =
         _ref ??
@@ -760,11 +818,23 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                 measureIndex: _measureIndex,
                 noteIndex: 0,
               ));
-    if (ref == null) return;
+    if (ref == null) return false;
     // Any edit ends a line that was being drawn.
     if (_spanFrom != null) setState(() => _spanFrom = null);
     try {
       final result = edit(_xml, ref);
+      if (result.xml == _xml) {
+        // Nothing was changed (a rest written where a rest is): the cursor
+        // goes where the edit left it, and there is nothing to undo.
+        setState(() {
+          _measureIndex = result.selection.measureIndex.clamp(
+            0,
+            _measureCount - 1,
+          );
+          _refresh(select: result.selection.noteIndex);
+        });
+        return true;
+      }
       final before = _measureIndex;
       _measureIndex = result.selection.measureIndex;
       final _Read read;
@@ -827,8 +897,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
           }
         }
       });
+      return true;
     } on FormatException catch (error) {
       _showMessage(error.message);
+      return false;
     }
   }
 
@@ -837,6 +909,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     setState(() {
       _spanFrom = null;
       _keysAppend = false;
+      _chordNow = <int>[];
+      _looseSet.clear();
       _dropRange();
       final edit = _edits[_cursor - 1];
       _cursor--;
@@ -852,6 +926,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     setState(() {
       _spanFrom = null;
       _keysAppend = false;
+      _chordNow = <int>[];
+      _looseSet.clear();
       _dropRange();
       final edit = _edits[_cursor];
       _cursor++;
@@ -910,6 +986,9 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       _stepEvent();
       return;
     }
+    // The cursor moves on: a run of notes or bars is no longer what the
+    // tools work on.
+    _letRunGo();
     final index = _noteIndex;
     final count = _previewMeasure.notes.length;
     if (index != null && index + by >= 0 && index + by < count) {
@@ -1061,6 +1140,22 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     if (type == null) return;
     final dots = (summary.dots + 1) % 3;
     setState(() => _entryDots = dots);
+    if (_pickedRefs.length > 1) {
+      // Each picked note keeps its own value and takes the dot.
+      _applyEach(
+        (xml, ref) {
+          final own = _editor.describe(xml, ref).type;
+          if (own == null) throw const FormatException('길이를 알 수 없는 음표입니다.');
+          return _editor.setDuration(xml, ref, own, dots);
+        },
+        // The notes: a rest between them that grew would take the note
+        // after it.
+        where: (note) =>
+            note.leadsChord && !note.isRest && !note.isGrace && !note.inTuplet,
+        backwards: true,
+      );
+      return;
+    }
     _setLength(type, dots);
   }
 
@@ -1156,6 +1251,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                     ),
                     _Palette.bar => const MusicGlyph(MusicGlyphs.repeatRight),
                     _Palette.score => const MusicGlyph(MusicGlyphs.gClef),
+                    _Palette.view => const Icon(Icons.visibility_outlined),
                   },
                 ),
             ],
@@ -1191,7 +1287,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     final picked = _pickedRefs;
     if (_rangeEnd != null && picked.length > 1) {
       _apply(
-        (xml, ref) => _editor.addSpan(xml, picked.first, picked.last, kind),
+        (xml, ref) => XmlEditResult(
+          _editor.addSpan(xml, picked.first, picked.last, kind).xml,
+          ref,
+        ),
         keepRange: true,
       );
       return;
@@ -1224,35 +1323,233 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   }) {
     final picked = _pickedRefs;
     if (picked.length <= 1) {
-      _apply(edit);
+      // The one note that is picked: with only the top notes of chords
+      // asked for, or notes picked one by one, it need not be the cursor.
+      final only = picked.firstOrNull;
+      if (only == null ||
+          (only.measureIndex == _measureIndex &&
+              only.noteIndex == _noteIndex)) {
+        _apply(edit);
+      } else {
+        _apply((xml, _) => edit(xml, only));
+      }
       return;
     }
     final bars = _barSel;
     _apply((xml, ref) {
-      var current = xml;
-      var done = 0;
-      final read = <int, List<XmlNoteSummary>>{};
-      for (final at in backwards ? picked.reversed : picked) {
-        final notes = read[at.measureIndex] ??= _summariesOf(
-          xml,
-          at.measureIndex,
-        );
-        if (at.noteIndex >= notes.length) continue;
-        if (where != null && !where(notes[at.noteIndex])) continue;
-        try {
-          current = edit(current, at).xml;
-          done++;
-        } on FormatException {
-          // A note the edit does not fit is passed over.
+      final order = [...backwards ? picked.reversed : picked];
+      // The notes as they stood before any of this: what the edit is for,
+      // and what a tied note was before another moved it. Read bar by bar
+      // as they are come to (and kept, see [_summariesOf]).
+      XmlNoteSummary? stoodAt(XmlNoteRef at) {
+        final notes = _summariesOf(xml, at.measureIndex);
+        if (at.noteIndex >= notes.length) return null;
+        final note = notes[at.noteIndex];
+        return where == null || where(note) ? note : null;
+      }
+
+      var first = true;
+      XmlEditResult? one(String current, XmlNoteRef at) {
+        final was = stoodAt(at);
+        if (was == null) return null;
+        // A note tied to one that was moved has moved with it: its pitch
+        // is no longer what it was, and it is not moved a second time.
+        if ((was.tieStop || was.tieStart) && was.pitch != null && !first) {
+          final now = _editor.describe(current, at).pitch;
+          if (now != null &&
+              (now.midi != was.pitch!.midi || now.step != was.pitch!.step)) {
+            return null;
+          }
+        }
+        final edited = edit(current, at);
+        first = false;
+        return edited;
+      }
+
+      // Read before the edits begin: reading the score as it was while
+      // edits are under way would have the editor let go of the score it
+      // is working on.
+      void readBars(Iterable<XmlNoteRef> notes) {
+        for (final bar in {for (final at in notes) at.measureIndex}) {
+          _summariesOf(xml, bar);
         }
       }
-      if (done == 0) {
+
+      if (order.length > manyNotes) {
+        // Too many for one go: the screen would stand still for seconds
+        // (and the system would call the app unresponsive). They are done
+        // a few at a time, the screen saying how far it has got.
+        unawaited(
+          _applyAtLeisure(
+            order,
+            one,
+            before: readBars,
+            keepRange: !backwards,
+            bars: bars,
+          ),
+        );
+        return XmlEditResult(xml, ref);
+      }
+      // However many notes there are, the score is written out only now
+      // and then ([XmlMeasureEditor.editEach]).
+      readBars(order);
+      final result = _editor.editEach(xml, order, one);
+      if (result.done == 0) {
         throw const FormatException('고른 음에는 할 수 없는 편집입니다.');
       }
-      return XmlEditResult(current, ref);
+      return XmlEditResult(result.xml, ref);
     }, keepRange: !backwards);
     // Whole bars stay picked whatever was done to their notes: the bars
     // are the same bars, with other notes in them.
+    if (bars != null && _barSel == null && bars.to < _measureCount) {
+      _pickBars(bars.from, bars.to);
+    }
+  }
+
+  /// More notes than this are edited a few at a time ([_applyAtLeisure]).
+  @visibleForTesting
+  static const manyNotes = 300;
+
+  /// Does [one] to each of [notes], a few at a time, with the screen
+  /// saying how far it has got and a way to call it off. What was done is
+  /// one edit of the score in the end (one step of undo); called off, the
+  /// score is as it was.
+  Future<void> _applyAtLeisure(
+    List<XmlNoteRef> notes,
+    XmlEditResult? Function(String xml, XmlNoteRef ref) one, {
+    required void Function(Iterable<XmlNoteRef> notes) before,
+    required bool keepRange,
+    required ({int from, int to})? bars,
+  }) async {
+    final start = _xml;
+    final at = ValueNotifier<int>(0);
+    var calledOff = false;
+    var shown = true;
+    final l10n = context.l10n;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => PopScope(
+          canPop: false,
+          child: AlertDialog(
+            content: ValueListenableBuilder<int>(
+              valueListenable: at,
+              builder: (context, done, _) => Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(l10n.editingManyNotes(done, notes.length)),
+                  const SizedBox(height: 12),
+                  LinearProgressIndicator(value: done / notes.length),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => calledOff = true,
+                child: Text(l10n.cancel),
+              ),
+            ],
+          ),
+        ),
+      ).whenComplete(() => shown = false),
+    );
+    var current = start;
+    var done = 0;
+    // As many at a time as take about a fifth of a second, and never so
+    // few that the score is written out for every note: a go ends with one
+    // writing of the score, which on a phone takes longer than the edits.
+    var size = 64;
+    final watch = Stopwatch();
+    try {
+      // First the notes as they stand are read, a few bars at a time; all
+      // of them before the first edit, for the editor works on one score
+      // at a time and would read the whole of it again at every change
+      // from the one to the other.
+      for (var read = 0; read < notes.length && !calledOff;) {
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+        if (!mounted || !identical(_xml, start)) return;
+        watch
+          ..reset()
+          ..start();
+        while (read < notes.length && watch.elapsedMilliseconds < 50) {
+          final bar = notes[read].measureIndex;
+          before([notes[read]]);
+          while (read < notes.length && notes[read].measureIndex == bar) {
+            read++;
+          }
+        }
+      }
+      while (at.value < notes.length && !calledOff) {
+        // The dialog is drawn, and a press on it heard, between the goes.
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+        if (!mounted || !identical(_xml, start)) return;
+        watch
+          ..reset()
+          ..start();
+        final end = math.min(at.value + size, notes.length);
+        final group = notes.sublist(at.value, end);
+        final result = _editor.editEach(current, group, one);
+        current = result.xml;
+        done += result.done;
+        at.value = end;
+        final took = watch.elapsedMilliseconds;
+        if (took < 120) {
+          size = math.min(size * 2, 1024);
+        } else if (took > 400) {
+          size = math.max(32, size ~/ 2);
+        }
+      }
+    } finally {
+      if (mounted && shown) Navigator.of(context, rootNavigator: true).pop();
+    }
+    if (!mounted || calledOff || !identical(_xml, start)) return;
+    if (done == 0) {
+      _showMessage('고른 음에는 할 수 없는 편집입니다.');
+      return;
+    }
+    _apply((xml, ref) => XmlEditResult(current, ref), keepRange: keepRange);
+    if (bars != null && _barSel == null && bars.to < _measureCount) {
+      _pickBars(bars.from, bars.to);
+    }
+  }
+
+  /// Moves the picked notes up or down, by [steps] lines and spaces or by
+  /// [octaves]. However many are picked (a whole piece is thousands of
+  /// notes), the score is read and written once.
+  void _movePicked({int steps = 0, int octaves = 0, bool gracesToo = false}) {
+    bool fits(XmlNoteSummary note) =>
+        !note.isRest && (gracesToo || !note.isGrace);
+    final picked = _pickedRefs;
+    if (picked.length <= 1) {
+      _applyEach(
+        steps != 0
+            ? (xml, ref) => _editor.moveDiatonic(xml, ref, steps)
+            : (xml, ref) => _editor.shiftOctave(xml, ref, octaves),
+        where: fits,
+      );
+      return;
+    }
+    final bars = _barSel;
+    _apply((xml, ref) {
+      final read = <int, List<XmlNoteSummary>>{};
+      final notes = <XmlNoteRef>[];
+      for (final at in picked) {
+        final inBar = read[at.measureIndex] ??= _summariesOf(
+          xml,
+          at.measureIndex,
+        );
+        if (at.noteIndex < inBar.length && fits(inBar[at.noteIndex])) {
+          notes.add(at);
+        }
+      }
+      return XmlEditResult(
+        _editor.movePitches(xml, notes, steps: steps, octaves: octaves).xml,
+        ref,
+      );
+    }, keepRange: true);
+    // Whole bars stay picked: they are the same bars.
     if (bars != null && _barSel == null && bars.to < _measureCount) {
       _pickBars(bars.from, bars.to);
     }
@@ -1265,11 +1562,22 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         name == 'fermata' ? note.fermata : note.articulations.contains(name);
     bool takes(XmlNoteSummary note) =>
         note.leadsChord && !note.isGrace && (restsToo || !note.isRest);
-    final all = [
-      for (final note in _pickedSummaries)
-        if (takes(note)) note,
-    ];
-    final allHave = all.isNotEmpty && all.every(has);
+    // The mark is taken off when every picked note has it: read until one
+    // is found that has not (in a long piece, mostly the first).
+    var any = false;
+    var allHave = true;
+    for (final ref in _pickedRefs) {
+      final notes = _summariesOf(_xml, ref.measureIndex);
+      if (ref.noteIndex >= notes.length || !takes(notes[ref.noteIndex])) {
+        continue;
+      }
+      any = true;
+      if (!has(notes[ref.noteIndex])) {
+        allHave = false;
+        break;
+      }
+    }
+    allHave = any && allHave;
     _applyEach(
       (xml, ref) => _editor.toggleArticulation(xml, ref, name),
       where: (note) => takes(note) && has(note) == allHave,
@@ -1342,8 +1650,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             semitones,
           ),
           bars: (bars, _) => bars,
-          keepRange: true,
         );
+        // The bars that were moved are the picked ones, whatever was
+        // picked before.
+        if (to < _measureCount) _pickBars(from, to);
     }
   }
 
@@ -1395,12 +1705,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// A finger carried the picked notes: up or down the staff, or to the
   /// side for an accidental.
   void _onSelectionDragged(int steps, int alter) {
-    if (steps != 0) {
-      _applyEach(
-        (xml, ref) => _editor.moveDiatonic(xml, ref, steps),
-        where: (note) => !note.isRest,
-      );
-    }
+    if (steps != 0) _movePicked(steps: steps, gracesToo: true);
     if (alter != 0) {
       _applyEach((xml, ref) {
         final now = _editor.describe(xml, ref).pitch?.alter ?? 0;
@@ -1454,6 +1759,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     if (start == null || end == null) return;
     setState(() {
       _ranging = false;
+      _loose = false;
+      _looseSet.clear();
       if (bars != null) {
         // Whole bars stay whole bars.
         final forward = to.measureIndex >= from.measureIndex;
@@ -1492,6 +1799,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     setState(() {
       _tool = _Tool.select;
       _ranging = false;
+      _loose = false;
+      _looseSet.clear();
       _only = _Only.all;
       _barSel = (from: from, to: to);
       _noteIndex = count == 0 ? null : 0;
@@ -1650,7 +1959,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       }
       return;
     }
-    _apply((xml, ref) {
+    final wrote = _apply((xml, ref) {
       var current = _tool == _Tool.note
           ? _withEntryValue(xml, ref)
           : XmlEditResult(xml, ref);
@@ -1661,13 +1970,14 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
       }
       return current;
     });
-    _afterKey();
+    if (wrote) _afterKey();
   }
 
   /// Picks the next note, chord or rest of the bar, passing over the other
   /// notes of a chord and over ornament notes; at the end of the bar the
   /// first of the next, with [intoNextBar]. Says whether it moved.
   bool _stepEvent({bool intoNextBar = true}) {
+    _letRunGo();
     final index = _noteIndex;
     if (index == null) return false;
     final notes = _bar.notes;
@@ -1689,9 +1999,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   /// join it. The cursor stays; the arrow goes on to the next note.
   void _chordKey(int midi) {
     if (_chordNow.contains(midi)) return;
-    final before = _xml;
     final first = _chordNow.isEmpty;
-    _apply((xml, ref) {
+    final wrote = _apply((xml, ref) {
       if (!first) {
         // The picked note stays the one the chord is built on.
         return XmlEditResult(_editor.addChordPitch(xml, ref, midi).xml, ref);
@@ -1704,8 +2013,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
           ? _editor.enterPitch(sized.xml, sized.selection, midi)
           : sized;
     });
-    // The first key may find the note as it should be: it still counts.
-    if (!first && identical(before, _xml)) return;
+    // A key the score refused is not part of the chord.
+    if (!wrote) return;
     setState(() => _chordNow = [..._chordNow, midi]);
     _soundPicked();
   }
@@ -2230,12 +2539,14 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         // Line by line: an edit engraves the line it is in, not the score.
         engravingChunks: _engraved,
         // A narrower page for the same lines: larger notes.
-        engravingPageSize: _noteSize == 1.0
+        engravingPageSize: _noteSize == 1.0 && !_continuous
             ? null
             : Size(
-                (2100 / _noteSize).roundToDouble(),
+                (2100 * (_continuous ? _screensAcross : 1) / _noteSize)
+                    .roundToDouble(),
                 (2970 / _noteSize).roundToDouble(),
               ),
+        widthFactor: _continuous ? _screensAcross : 1,
         playbackXml: () => partAloneXml(_xml, widget.partIndex),
         showZoomControls: false,
         semanticsLabel: l10n.proofreadBar(
@@ -2971,8 +3282,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
 
   /// What the keys of an attached keyboard do.
   Map<ShortcutActivator, VoidCallback> get _shortcuts {
-    void move(XmlEditResult Function(String, XmlNoteRef) edit) {
-      _applyEach(edit, where: (note) => !note.isRest && !note.isGrace);
+    void move({int steps = 0, int octaves = 0}) {
+      _movePicked(steps: steps, octaves: octaves);
       _soundPicked();
     }
 
@@ -2990,14 +3301,13 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
     return {
       const SingleActivator(LogicalKeyboardKey.arrowLeft): () => _stepNote(-1),
       const SingleActivator(LogicalKeyboardKey.arrowRight): () => _stepNote(1),
-      const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
-          move((xml, ref) => _editor.moveDiatonic(xml, ref, 1)),
+      const SingleActivator(LogicalKeyboardKey.arrowUp): () => move(steps: 1),
       const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
-          move((xml, ref) => _editor.moveDiatonic(xml, ref, -1)),
+          move(steps: -1),
       const SingleActivator(LogicalKeyboardKey.arrowUp, shift: true): () =>
-          move((xml, ref) => _editor.shiftOctave(xml, ref, 1)),
+          move(octaves: 1),
       const SingleActivator(LogicalKeyboardKey.arrowDown, shift: true): () =>
-          move((xml, ref) => _editor.shiftOctave(xml, ref, -1)),
+          move(octaves: -1),
       const SingleActivator(LogicalKeyboardKey.delete): _erase,
       const SingleActivator(LogicalKeyboardKey.backspace): _erase,
       const SingleActivator(LogicalKeyboardKey.escape): () =>
@@ -3082,6 +3392,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         _Palette.words => l10n.toolsWords,
         _Palette.bar => l10n.toolsBarSigns,
         _Palette.score => l10n.toolsScore,
+        _Palette.view => l10n.toolsView,
       };
 
   /// Applies an edit of the bar as a whole; the picked note stays picked.
@@ -3123,6 +3434,10 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   List<Widget> _paletteTools(AppLocalizations l10n) {
     final summary = _summary;
     final hasNote = summary != null && !summary.isRest && !summary.isGrace;
+    // With a run or whole bars picked, the tools for many notes are for
+    // the notes among them, wherever the cursor stands (a bar that opens
+    // with a rest).
+    final anyNote = hasNote || _severalPicked;
     final canRetime = summary != null && !summary.isGrace && !summary.inTuplet;
     final hasEvent = summary != null && !summary.isGrace;
     switch (_palette) {
@@ -3133,6 +3448,8 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             selected: _ranging,
             onPressed: () => setState(() {
               _ranging = !_ranging;
+              _loose = false;
+              _looseSet.clear();
               _dropRange();
               // A run of notes is picked with the select tool.
               if (_ranging) _tool = _Tool.select;
@@ -3607,43 +3924,23 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
         return [
           _ToolButton(
             tooltip: l10n.noteStepUp,
-            onPressed: hasNote
-                ? () => _applyEach(
-                    (xml, ref) => _editor.moveDiatonic(xml, ref, 1),
-                    where: (note) => !note.isRest && !note.isGrace,
-                  )
-                : null,
+            onPressed: anyNote ? () => _movePicked(steps: 1) : null,
             child: const Icon(Icons.arrow_upward_rounded),
           ),
           _ToolButton(
             tooltip: l10n.noteStepDown,
-            onPressed: hasNote
-                ? () => _applyEach(
-                    (xml, ref) => _editor.moveDiatonic(xml, ref, -1),
-                    where: (note) => !note.isRest && !note.isGrace,
-                  )
-                : null,
+            onPressed: anyNote ? () => _movePicked(steps: -1) : null,
             child: const Icon(Icons.arrow_downward_rounded),
           ),
           // "8" is how an octave is written on a score (8va).
           _ToolButton(
             tooltip: l10n.octaveUp,
-            onPressed: hasNote
-                ? () => _applyEach(
-                    (xml, ref) => _editor.shiftOctave(xml, ref, 1),
-                    where: (note) => !note.isRest && !note.isGrace,
-                  )
-                : null,
+            onPressed: anyNote ? () => _movePicked(octaves: 1) : null,
             child: const _OctaveLabel(up: true),
           ),
           _ToolButton(
             tooltip: l10n.octaveDown,
-            onPressed: hasNote
-                ? () => _applyEach(
-                    (xml, ref) => _editor.shiftOctave(xml, ref, -1),
-                    where: (note) => !note.isRest && !note.isGrace,
-                  )
-                : null,
+            onPressed: anyNote ? () => _movePicked(octaves: -1) : null,
             child: const _OctaveLabel(up: false),
           ),
           const _ToolGap(),
@@ -3673,6 +3970,31 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                       _applyEach(_editor.respell, where: (note) => !note.isRest)
                 : null,
             child: const Text('♯↔♭'),
+          ),
+          // Between two keys of the piano: written, and played at the
+          // pitch of the note itself.
+          _MenuButton(
+            tooltip: l10n.quarterToneMenu,
+            label: l10n.quarterToneMenu,
+            items: [
+              for (final (label, quarter) in [
+                (l10n.quarterToneUp, 1),
+                (l10n.quarterToneDown, -1),
+                (l10n.remove, 0),
+              ])
+                _MenuItem(
+                  label,
+                  hasNote
+                      ? () => _applyEach(
+                          (xml, ref) =>
+                              _editor.setQuarterTone(xml, ref, quarter),
+                          where: (note) => !note.isRest && !note.isGrace,
+                        )
+                      : null,
+                  checked:
+                      hasNote && quarter != 0 && summary.quarterTone == quarter,
+                ),
+            ],
           ),
           // A run of notes written all with flats, or all with sharps.
           for (final (label, text, sharps) in [
@@ -3709,7 +4031,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
             _ToolButton(
               tooltip: label,
               selected: summary?.articulations.contains(name) ?? false,
-              onPressed: hasNote
+              onPressed: anyNote
                   ? () => _toggleMark(name, restsToo: false)
                   : null,
               child: MusicGlyph(glyph),
@@ -3717,7 +4039,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
           _ToolButton(
             tooltip: l10n.fermata,
             selected: summary?.fermata ?? false,
-            onPressed: hasEvent
+            onPressed: hasEvent || _severalPicked
                 ? () => _toggleMark('fermata', restsToo: true)
                 : null,
             child: const MusicGlyph(MusicGlyphs.fermataAbove),
@@ -4174,7 +4496,7 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                       // other bar stays on the line it is on.
                       var current = xml;
                       if (writtenLineStarts(xml, widget.partIndex).isEmpty) {
-                        final shown = _lineStartsFor(xml);
+                        final shown = _scoreLineStartsFor(xml);
                         for (final start in shown.skip(1)) {
                           current = _editor
                               .toggleBreak(
@@ -4271,6 +4593,75 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
               ),
             ],
           ),
+          _MenuButton(
+            tooltip: l10n.barsPerLine,
+            label: l10n.barsPerLine,
+            items: [
+              _MenuItem(
+                l10n.barsPerLineAuto,
+                () => _applyBar(
+                  (xml, _) =>
+                      _editor.setBarsPerLine(xml, widget.partIndex, null),
+                ),
+              ),
+              for (final count in const [2, 3, 4, 5, 6, 8])
+                _MenuItem(
+                  l10n.barsPerLineOf(count),
+                  () => _applyBar(
+                    (xml, _) =>
+                        _editor.setBarsPerLine(xml, widget.partIndex, count),
+                  ),
+                ),
+            ],
+          ),
+          _MenuButton(
+            tooltip: l10n.staffMenu,
+            label: l10n.staffMenu,
+            items: [
+              _MenuItem(
+                l10n.staffAdd,
+                staves == 1
+                    ? () => _applyBar(
+                        (xml, _) => _editor.addStaff(xml, widget.partIndex),
+                      )
+                    : null,
+              ),
+              _MenuItem(
+                l10n.staffRemove,
+                staves == 2
+                    ? () => _applyBar(
+                        (xml, _) => _editor.removeStaff(xml, widget.partIndex),
+                      )
+                    : null,
+              ),
+            ],
+          ),
+        ];
+      case _Palette.view:
+        return [
+          // How the score is laid out to be read: lines one under the
+          // other, or one long line that moves across the screen.
+          _MenuButton(
+            tooltip: l10n.viewMenu,
+            label: l10n.viewMenu,
+            items: [
+              for (final (label, continuous) in [
+                (l10n.viewLines, false),
+                (l10n.viewContinuous, true),
+              ])
+                _MenuItem(label, () {
+                  if (_continuous == continuous) return;
+                  setState(() {
+                    _continuous = continuous;
+                    // The same score in other lines: read anew.
+                    _shown = null;
+                    _lines = const [];
+                    _refresh();
+                  });
+                  _reveal();
+                }, checked: _continuous == continuous),
+            ],
+          ),
           // Shown, not written: the score keeps its chord symbols.
           _MenuButton(
             tooltip: l10n.chordDisplayMenu,
@@ -4340,49 +4731,6 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
                   () => _setOption(() => _noteSize = size),
                   checked: _noteSize == size,
                 ),
-            ],
-          ),
-          _MenuButton(
-            tooltip: l10n.barsPerLine,
-            label: l10n.barsPerLine,
-            items: [
-              _MenuItem(
-                l10n.barsPerLineAuto,
-                () => _applyBar(
-                  (xml, _) =>
-                      _editor.setBarsPerLine(xml, widget.partIndex, null),
-                ),
-              ),
-              for (final count in const [2, 3, 4, 5, 6, 8])
-                _MenuItem(
-                  l10n.barsPerLineOf(count),
-                  () => _applyBar(
-                    (xml, _) =>
-                        _editor.setBarsPerLine(xml, widget.partIndex, count),
-                  ),
-                ),
-            ],
-          ),
-          _MenuButton(
-            tooltip: l10n.staffMenu,
-            label: l10n.staffMenu,
-            items: [
-              _MenuItem(
-                l10n.staffAdd,
-                staves == 1
-                    ? () => _applyBar(
-                        (xml, _) => _editor.addStaff(xml, widget.partIndex),
-                      )
-                    : null,
-              ),
-              _MenuItem(
-                l10n.staffRemove,
-                staves == 2
-                    ? () => _applyBar(
-                        (xml, _) => _editor.removeStaff(xml, widget.partIndex),
-                      )
-                    : null,
-              ),
             ],
           ),
         ];
@@ -4503,8 +4851,17 @@ class _ScoreProofreadScreenState extends ConsumerState<ScoreProofreadScreen> {
   }
 }
 
+/// A line of the part as it was last read: the text it was made from, the
+/// bar it begins with, what is engraved for it, and its bars.
+typedef _Line = ({
+  String text,
+  int start,
+  String shown,
+  List<MusicMeasure> bars,
+});
+
 /// The palettes of tools under the bar.
-enum _Palette { note, length, pitch, marks, looks, words, bar, score }
+enum _Palette { note, length, pitch, marks, looks, words, bar, score, view }
 
 /// Which notes of a run of chords the tools work on.
 enum _Only { all, top, bottom, upperVoice, lowerVoice }
@@ -4656,7 +5013,16 @@ class _PalettePanel extends StatelessWidget {
               ],
             ),
           ),
-          _PaletteRow(children: children),
+          // On a small phone a long palette scrolls in its own place: the
+          // score and the tools beside it keep theirs.
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: math.max(120, MediaQuery.sizeOf(context).height * 0.3),
+            ),
+            child: SingleChildScrollView(
+              child: _PaletteRow(children: children),
+            ),
+          ),
         ],
       ),
     );

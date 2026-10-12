@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1004,8 +1006,13 @@ void main() {
         ('코드 · 가사', '절'),
         ('마디 기호', '쪽나눔'),
         ('악보', '보표'),
+        ('보기', '음표 크기'),
       ]) {
         await _openPalette(tester, name);
+        // A long palette scrolls in its own place on a small phone: its
+        // last tool is reached by scrolling, never to the side.
+        await tester.ensureVisible(find.byTooltip(lastTool));
+        await _settle(tester);
         final tool = tester.getRect(find.byTooltip(lastTool));
         expect(tool.right, lessThanOrEqualTo(360), reason: '$name: $lastTool');
         expect(tool.bottom, lessThanOrEqualTo(720), reason: '$name: $lastTool');
@@ -1743,6 +1750,275 @@ void main() {
         await _close(tester);
       });
 
+      group('what a reading of the screen against its promises found', () {
+        String score(String first) =>
+            '<score-partwise version="4.0"><part-list><score-part id="P1">'
+            '<part-name>Voice</part-name></score-part></part-list>'
+            '<part id="P1"><measure number="1"><attributes>'
+            '<divisions>4</divisions><key><fifths>0</fifths></key>'
+            '<time><beats>4</beats><beat-type>4</beat-type></time>'
+            '<clef><sign>G</sign><line>2</line></clef></attributes>'
+            '$first</measure></part></score-partwise>';
+        String n(String step, int duration, String type, {String extra = ''}) =>
+            '<note><pitch><step>$step</step><octave>4</octave></pitch>'
+            '<duration>$duration</duration><voice>1</voice>'
+            '<type>$type</type>$extra</note>';
+        String r(int duration, String type) =>
+            '<note><rest/><duration>$duration</duration><voice>1</voice>'
+            '<type>$type</type></note>';
+        Future<void> leave(WidgetTester tester) async {
+          await tester.binding.handlePopRoute();
+          await _settle(tester);
+          if (find.text('버리기').evaluate().isNotEmpty) {
+            await tester.tap(find.text('버리기'));
+            await _settle(tester);
+          }
+          await _close(tester);
+        }
+
+        testWidgets('the dot gives each note of a run its own dotted value', (
+          tester,
+        ) async {
+          await _open(
+            tester,
+            _MemoryStorage(),
+            musicXml: score(
+              '${n('C', 2, 'eighth')}${r(2, 'eighth')}'
+              '${n('D', 1, '16th')}${r(1, '16th')}${r(2, 'eighth')}'
+              '${r(8, 'half')}',
+            ),
+          );
+          view(tester).onRangeDragged!(note(tester, 0, 0), note(tester, 0, 2));
+          await _settle(tester);
+          await tester.tap(find.byTooltip('점음표'));
+          await _settle(tester);
+
+          final notes = [
+            for (final note in view(
+              tester,
+            ).score.parts.first.measures.first.notes)
+              if (!note.isRest) (note.pitch!.step, note.type, note.dots),
+          ];
+          expect(notes, [(PitchStep.c, 'eighth', 1), (PitchStep.d, '16th', 1)]);
+          await leave(tester);
+        });
+
+        testWidgets('tied notes of a run move once, together', (tester) async {
+          const start =
+              '<tie type="start"/><notations><tied type="start"/></notations>';
+          const stop =
+              '<tie type="stop"/><notations><tied type="stop"/></notations>';
+          await _open(
+            tester,
+            _MemoryStorage(),
+            musicXml: score(
+              '${n('C', 4, 'quarter', extra: start)}'
+              '${n('C', 4, 'quarter', extra: stop)}'
+              '${n('E', 4, 'quarter')}${n('F', 4, 'quarter')}',
+            ),
+          );
+          view(tester).onRangeDragged!(note(tester, 0, 0), note(tester, 0, 2));
+          await _settle(tester);
+          view(tester).onSelectionDragged!(1, 0);
+          await _settle(tester);
+          // Every note a step up: the tied pair is not carried twice.
+          expect(steps(tester, 0), ['d', 'd', 'f', 'f']);
+          await leave(tester);
+        });
+
+        testWidgets('an edit that changes nothing is nothing to undo or save', (
+          tester,
+        ) async {
+          await _open(tester, _MemoryStorage());
+          // The rest of the second bar, and the keyboard's rest key: a
+          // rest where a rest is.
+          view(tester).onEventTapped!(note(tester, 1, 0));
+          await _settle(tester);
+          await tester.tap(find.byTooltip('건반'));
+          await _settle(tester);
+          await tester.tap(find.byTooltip('쉼표 넣고 다음으로'));
+          await _settle(tester);
+          expect(
+            tester
+                .widget<IconButton>(
+                  find.ancestor(
+                    of: find.byTooltip('실행 취소'),
+                    matching: find.byType(IconButton),
+                  ),
+                )
+                .onPressed,
+            isNull,
+          );
+          // Nothing was changed: the screen is left without being asked.
+          await tester.binding.handlePopRoute();
+          await _settle(tester);
+          expect(find.text('버리기'), findsNothing);
+          await _close(tester);
+        });
+
+        testWidgets('stepping on from picked bars lets the bars go', (
+          tester,
+        ) async {
+          await _open(tester, _MemoryStorage(), musicXml: four);
+          view(tester).onMeasureDoubleTapped!(0);
+          await _settle(tester);
+          expect(view(tester).alsoSelectedNotes, hasLength(3));
+          await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+          await _settle(tester);
+          // One note is picked, and it is the one the tools work on.
+          expect(view(tester).alsoSelectedNotes, isEmpty);
+          expect(view(tester).selectedNoteAddress, note(tester, 0, 1));
+          view(tester).onSelectionDragged!(1, 0);
+          await _settle(tester);
+          expect(steps(tester, 0), ['c', 'e', 'e', 'f']);
+          await leave(tester);
+        });
+
+        testWidgets('a line drawn over a run leaves the run picked', (
+          tester,
+        ) async {
+          await _open(tester, _MemoryStorage(), musicXml: four);
+          view(tester).onRangeDragged!(note(tester, 0, 0), note(tester, 0, 2));
+          await _settle(tester);
+          await _openPalette(tester, '기호');
+          await tester.tap(find.byTooltip('이음줄'));
+          await _settle(tester);
+          expect(view(tester).playbackXml!(), contains('<slur'));
+          expect(view(tester).selectedNoteAddress, note(tester, 0, 0));
+          expect(view(tester).alsoSelectedNotes, hasLength(2));
+          await leave(tester);
+        });
+      });
+
+      group('very many notes at once', () {
+        // Ninety bars of four notes: more than the screen edits in one go.
+        final long =
+            '<score-partwise version="4.0"><part-list><score-part id="P1">'
+            '<part-name>Voice</part-name></score-part></part-list><part id="P1">'
+            '<measure number="1"><attributes><divisions>1</divisions>'
+            '<key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time>'
+            '<clef><sign>G</sign><line>2</line></clef></attributes>${bar('CDEF')}</measure>'
+            '${[for (var i = 2; i <= 90; i++) '<measure number="$i">${bar('GABC')}</measure>'].join()}'
+            '</part></score-partwise>';
+        Future<void> pickAll(WidgetTester tester) async {
+          view(tester).onRangeDragged!(note(tester, 0, 0), note(tester, 89, 3));
+          await _settle(tester);
+          expect(view(tester).alsoSelectedNotes.length, 359);
+        }
+
+        testWidgets('are edited a few at a time, as one edit in the end', (
+          tester,
+        ) async {
+          await _open(tester, _MemoryStorage(), musicXml: long);
+          await pickAll(tester);
+          await _openPalette(tester, '기호');
+          await tester.tap(find.byTooltip('스타카토'));
+          // A frame, and no time gone by: the first notes are not done yet.
+          await tester.pump();
+          // The screen says how far it has got, and nothing is changed yet.
+          expect(find.byType(LinearProgressIndicator), findsOneWidget);
+          expect(view(tester).playbackXml!(), isNot(contains('<staccato')));
+          for (var i = 0; i < 400; i++) {
+            if (find.byType(LinearProgressIndicator).evaluate().isEmpty) break;
+            await tester.pump(const Duration(milliseconds: 5));
+          }
+          await _settle(tester);
+          expect(find.byType(LinearProgressIndicator), findsNothing);
+          expect(
+            '<staccato'.allMatches(view(tester).playbackXml!()).length,
+            360,
+          );
+          // One step of undo takes all of it back.
+          await tester.tap(find.byTooltip('실행 취소'));
+          await _settle(tester);
+          expect(view(tester).playbackXml!(), isNot(contains('<staccato')));
+          await tester.binding.handlePopRoute();
+          await _settle(tester);
+          if (find.text('버리기').evaluate().isNotEmpty) {
+            await tester.tap(find.text('버리기'));
+            await _settle(tester);
+          }
+          await _close(tester);
+        });
+
+        testWidgets('a whole piano piece: the screen answers at once', (
+          tester,
+        ) async {
+          const path = 'assets/scores/clair-de-lune-claude-debussy.mxl';
+          final clair = const MusicXmlCodec().xmlString(
+            Uint8List.fromList(File(path).readAsBytesSync()),
+            fileName: path,
+          );
+          await _open(tester, _MemoryStorage(), musicXml: clair);
+          await _openPalette(tester, '음표');
+          await tester.tap(find.byTooltip('선택 범위'));
+          await _settle(tester);
+          await tester.tap(find.text('전체 선택').last);
+          await _settle(tester);
+          // The piece opens with a rest: the tools are for the notes picked.
+          await _openPalette(tester, '기호');
+          final watch = Stopwatch()..start();
+          await tester.tap(find.byTooltip('스타카토'));
+          await tester.pump();
+          // Before anything is edited the screen has said that it is at
+          // work: no reading of the whole piece first.
+          expect(find.byType(LinearProgressIndicator), findsOneWidget);
+          expect(watch.elapsedMilliseconds, lessThan(600));
+          for (var i = 0; i < 4000; i++) {
+            if (find.byType(LinearProgressIndicator).evaluate().isEmpty) break;
+            await tester.pump(const Duration(milliseconds: 2));
+          }
+          await _settle(tester);
+          expect(
+            '<staccato'.allMatches(view(tester).playbackXml!()).length,
+            greaterThan(700),
+          );
+          await tester.binding.handlePopRoute();
+          await _settle(tester);
+          if (find.text('버리기').evaluate().isNotEmpty) {
+            await tester.tap(find.text('버리기'));
+            await _settle(tester);
+          }
+          await _close(tester);
+        });
+
+        testWidgets('called off, the score is as it was', (tester) async {
+          await _open(tester, _MemoryStorage(), musicXml: long);
+          await pickAll(tester);
+          await _openPalette(tester, '기호');
+          await tester.tap(find.byTooltip('스타카토'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 1));
+          await tester.tap(find.widgetWithText(TextButton, '취소'));
+          for (var i = 0; i < 20; i++) {
+            await tester.pump(const Duration(milliseconds: 5));
+          }
+          await _settle(tester);
+          expect(find.byType(LinearProgressIndicator), findsNothing);
+          expect(view(tester).playbackXml!(), isNot(contains('<staccato')));
+          // Nothing to undo, nothing to save.
+          await tester.binding.handlePopRoute();
+          await _settle(tester);
+          expect(find.text('버리기'), findsNothing);
+          await _close(tester);
+        });
+
+        testWidgets('moved up, they are moved in one go', (tester) async {
+          await _open(tester, _MemoryStorage(), musicXml: long);
+          await pickAll(tester);
+          view(tester).onSelectionDragged!(1, 0);
+          await _settle(tester);
+          expect(find.byType(LinearProgressIndicator), findsNothing);
+          expect(steps(tester, 0), ['d', 'e', 'f', 'g']);
+          expect(steps(tester, 89), ['a', 'b', 'c', 'd']);
+          await tester.binding.handlePopRoute();
+          await _settle(tester);
+          await tester.tap(find.text('버리기'));
+          await _settle(tester);
+          await _close(tester);
+        });
+      });
+
       testWidgets('held and moved, it picks a run of notes over the barline', (
         tester,
       ) async {
@@ -2235,7 +2511,7 @@ void main() {
         // Chord symbols are shown as numbers when asked for; the score
         // keeps what it says.
         expect(view(tester).chordDisplay, ChordDisplay.symbols);
-        await _openPalette(tester, '악보');
+        await _openPalette(tester, '보기');
         await menu(tester, '코드 표시', 'Nashville 숫자');
         expect(view(tester).chordDisplay, ChordDisplay.nashville);
         expect(
@@ -2421,6 +2697,7 @@ void main() {
         await _openPalette(tester, '악보');
         await menu(tester, '한 줄 마디 수', '2마디');
         expect(barsPerLine(), [2, 2]);
+        await _openPalette(tester, '보기');
         // The notes are engraved larger on the same lines, and as they
         // were again.
         expect(view(tester).engravingPageSize, isNull);
@@ -2429,8 +2706,19 @@ void main() {
         expect(barsPerLine(), [2, 2]);
         await menu(tester, '음표 크기', '보통');
         expect(view(tester).engravingPageSize, isNull);
+        await _openPalette(tester, '악보');
         await menu(tester, '한 줄 마디 수', '3마디');
         expect(barsPerLine(), [3, 1]);
+        // Read as one long line across the screen, and in lines again.
+        await _openPalette(tester, '보기');
+        expect(view(tester).widthFactor, 1);
+        await menu(tester, '보기 방식', '이어 보기');
+        expect(barsPerLine(), [4]);
+        expect(view(tester).widthFactor, 1);
+        expect(view(tester).engravingPageSize, const Size(2100, 2970));
+        await menu(tester, '보기 방식', '줄 보기');
+        expect(barsPerLine(), [3, 1]);
+        expect(view(tester).engravingPageSize, isNull);
         await leave(tester);
       });
 
@@ -2780,6 +3068,274 @@ void main() {
       await _settle(tester);
       expect(find.byTooltip('한 칸 위'), findsNothing);
       await _close(tester);
+    });
+
+    group('the screen, used any which way', () {
+      // Somebody who taps whatever is on the screen, in any order, with
+      // the score, the tools, the keys and the sheets all mixed up: the
+      // screen never throws, and what it saves at the end is a score.
+      final texts = ['', 'Am7', 'C/E', '주_', '-', '999', '0', 'x' * 60, 'rit.'];
+      const keys = [
+        LogicalKeyboardKey.arrowLeft,
+        LogicalKeyboardKey.arrowRight,
+        LogicalKeyboardKey.arrowUp,
+        LogicalKeyboardKey.arrowDown,
+        LogicalKeyboardKey.delete,
+        LogicalKeyboardKey.backspace,
+        LogicalKeyboardKey.period,
+        LogicalKeyboardKey.digit1,
+        LogicalKeyboardKey.digit4,
+        LogicalKeyboardKey.digit6,
+        LogicalKeyboardKey.keyA,
+        LogicalKeyboardKey.keyC,
+        LogicalKeyboardKey.keyG,
+        LogicalKeyboardKey.keyR,
+        LogicalKeyboardKey.keyT,
+        LogicalKeyboardKey.enter,
+        LogicalKeyboardKey.escape,
+        LogicalKeyboardKey.space,
+      ];
+
+      // What the wandering came to, over all its runs: it has to have
+      // edited, opened sheets and saved, or it tests nothing.
+      var saves = 0;
+      var edits = 0;
+      var sheets = 0;
+
+      Future<void> wander(
+        WidgetTester tester,
+        int seed, {
+        required String xml,
+        int steps = 140,
+      }) async {
+        SharedPreferences.setMockInitialValues({});
+        final r = Random(seed);
+        final storage = _MemoryStorage();
+        await _open(tester, storage, musicXml: xml);
+        final trail = <String>[];
+        void did(String what) {
+          trail.add(what);
+          if (trail.length > 30) trail.removeAt(0);
+          final error = tester.takeException();
+          if (error != null) {
+            fail('seed $seed, after ${trail.join(' → ')}:\n$error');
+          }
+        }
+
+        ScoreEventAddress? somewhere() {
+          final bars = view(tester).score.parts.first.measures;
+          // Now and then a place that is no longer there.
+          final bar = r.nextInt(14) == 0
+              ? bars.length + r.nextInt(2)
+              : r.nextInt(bars.length);
+          if (bar >= bars.length) {
+            return ScoreEventAddress(
+              partIndex: 0,
+              measureIndex: bar,
+              eventIndex: r.nextInt(4),
+            );
+          }
+          final notes = bars[bar].notes.length;
+          final index = notes == 0 ? 0 : r.nextInt(notes);
+          final event = eventIndexForXmlNote(bars[bar], index);
+          return ScoreEventAddress(
+            partIndex: 0,
+            measureIndex: bar,
+            eventIndex: event ?? r.nextInt(3),
+          );
+        }
+
+        for (var step = 0; step < steps; step++) {
+          final screen = find.byType(ScoreProofreadScreen);
+          if (screen.evaluate().isEmpty) break;
+          final onTop =
+              ModalRoute.of(tester.element(screen))?.isCurrent ?? false;
+          if (!onTop) {
+            sheets++;
+            // A sheet, a menu or a dialog lies over the screen.
+            final field = find.byType(TextField).hitTestable();
+            final buttons = find
+                .byWidgetPredicate(
+                  (widget) =>
+                      widget is TextButton ||
+                      widget is FilledButton ||
+                      widget is OutlinedButton ||
+                      widget is ListTile ||
+                      widget is PopupMenuItem ||
+                      widget is ChoiceChip ||
+                      widget is IconButton,
+                )
+                .hitTestable();
+            final roll = r.nextInt(10);
+            if (roll < 2 && field.evaluate().isNotEmpty) {
+              final text = texts[r.nextInt(texts.length)];
+              await tester.enterText(field.first, text);
+              did('typed "$text"');
+            } else if (roll < 8 && buttons.evaluate().isNotEmpty) {
+              final all = buttons.evaluate().toList();
+              final pick = all[r.nextInt(all.length)];
+              await tester.tapAt(
+                tester.getCenter(find.byElementPredicate((e) => e == pick)),
+              );
+              did('pressed a ${pick.widget.runtimeType} of what lay over');
+            } else {
+              await tester.binding.handlePopRoute();
+              did('went back from what lay over');
+            }
+          } else {
+            final roll = r.nextInt(100);
+            final score = find.byType(VerovioScoreView).evaluate().isEmpty
+                ? null
+                : view(tester);
+            if (roll < 38 && score != null) {
+              final at = somewhere()!;
+              switch (r.nextInt(9)) {
+                case 0:
+                case 1:
+                  score.onEventTapped?.call(at);
+                  did('tapped m${at.measureIndex} e${at.eventIndex}');
+                case 2:
+                  score.onRangeDragged?.call(at, somewhere()!);
+                  did('ran a range from m${at.measureIndex}');
+                case 3:
+                  score.onSelectionDragged?.call(
+                    r.nextInt(9) - 4,
+                    r.nextInt(3) - 1,
+                  );
+                  did('carried the selection');
+                case 4:
+                  score.onMeasureDoubleTapped?.call(at.measureIndex);
+                  did('double-tapped bar ${at.measureIndex}');
+                case 5:
+                  score.onBlankTapped?.call();
+                  did('tapped the page');
+                case 6:
+                  score.onLongPressed?.call(at);
+                  did('held m${at.measureIndex} e${at.eventIndex}');
+                case 7:
+                  score.onNotePlaced?.call(
+                    NativeStaffPlace(
+                      measureIndex: at.measureIndex,
+                      eventIndex: at.eventIndex,
+                      staff: 1 + r.nextInt(2),
+                      step: PitchStep.values[r.nextInt(7)],
+                      octave: 1 + r.nextInt(7),
+                      ghostCenter: Offset.zero,
+                      lineGap: 10,
+                    ),
+                  );
+                  did('placed a note in m${at.measureIndex}');
+                default:
+                  score.onTextTapped?.call(
+                    at,
+                    const ['harm', 'verse', 'tempo', 'dir'][r.nextInt(4)],
+                  );
+                  did('tapped words at m${at.measureIndex}');
+              }
+            } else if (roll < 80) {
+              // Any tool there is, by its tooltip. Leaving and the player
+              // (no sound engine under a test) are kept for the end.
+              final tools = find.byType(Tooltip).hitTestable().evaluate().where(
+                (element) {
+                  final message = (element.widget as Tooltip).message ?? '';
+                  return message != '뒤로' &&
+                      !message.contains('재생') &&
+                      !message.contains('듣기');
+                },
+              ).toList();
+              if (tools.isEmpty) continue;
+              final pick = tools[r.nextInt(tools.length)];
+              final message = (pick.widget as Tooltip).message;
+              await tester.tapAt(
+                tester.getCenter(find.byElementPredicate((e) => e == pick)),
+              );
+              did('pressed "$message"');
+            } else if (roll < 92) {
+              final key = keys[r.nextInt(keys.length)];
+              await tester.sendKeyEvent(key);
+              did('key ${key.keyLabel}');
+            } else {
+              final name = r.nextBool() ? '실행 취소' : '다시 실행';
+              final button = find.byTooltip(name).hitTestable();
+              if (button.evaluate().isEmpty) continue;
+              await tester.tap(button.first, warnIfMissed: false);
+              did(name);
+            }
+          }
+          for (var i = 0; i < 4; i++) {
+            await tester.pump(const Duration(milliseconds: 150));
+          }
+          did('settled');
+        }
+
+        // Whatever lies over the screen is put away, and what was done is
+        // saved: it is a score.
+        for (var i = 0; i < 6; i++) {
+          final screen = find.byType(ScoreProofreadScreen);
+          if (screen.evaluate().isEmpty) break;
+          if (ModalRoute.of(tester.element(screen))?.isCurrent ?? false) break;
+          await tester.binding.handlePopRoute();
+          await _settle(tester);
+        }
+        did('put away what lay over');
+        final save = find.widgetWithText(FilledButton, '저장').hitTestable();
+        if (find.byType(ScoreProofreadScreen).evaluate().isNotEmpty &&
+            save.evaluate().isNotEmpty &&
+            tester.widget<FilledButton>(save.first).onPressed != null) {
+          await tester.tap(save.first);
+          await _settle(tester);
+          final confirm = find.widgetWithText(FilledButton, '저장').hitTestable();
+          if (confirm.evaluate().isNotEmpty) {
+            await tester.tap(confirm.last);
+            await _settle(tester);
+          }
+          did('saved');
+        }
+        saves += storage.versions.length;
+        if (storage.draft != null || storage.versions.isNotEmpty) edits++;
+        for (final bytes in storage.versions.values) {
+          final saved = const MusicXmlCodec().decodeXml(utf8.decode(bytes));
+          final counts = {for (final part in saved.parts) part.measures.length};
+          expect(counts, hasLength(1), reason: 'seed $seed: parts agree');
+        }
+        await _close(tester);
+        did('closed');
+      }
+
+      String leadSheet() {
+        String bar(int index) =>
+            '<harmony><root><root-step>${'CFGA'[index % 4]}</root-step></root>'
+            '<kind>major</kind></harmony>'
+            '${[for (final step in 'CDEF'.split('')) '<note><pitch><step>$step</step><octave>4</octave></pitch><duration>2</duration><voice>1</voice><type>quarter</type><lyric number="1"><syllabic>single</syllabic><text>가</text></lyric></note>'].join()}';
+        return '<score-partwise version="4.0"><part-list><score-part id="P1">'
+            '<part-name>Voice</part-name></score-part></part-list>'
+            '<part id="P1"><measure number="1"><attributes>'
+            '<divisions>2</divisions><key><fifths>-1</fifths></key>'
+            '<time><beats>4</beats><beat-type>4</beat-type></time>'
+            '<clef><sign>G</sign><line>2</line></clef></attributes>'
+            '${bar(0)}</measure>'
+            '${[for (var i = 1; i < 10; i++) '<measure number="${i + 1}">${bar(i)}</measure>'].join()}'
+            '</part></score-partwise>';
+      }
+
+      final scale =
+          int.tryParse(const String.fromEnvironment('CHAOS_SCALE')) ?? 1;
+      for (var seed = 0; seed < 6 * scale; seed++) {
+        testWidgets('a lead sheet, seed $seed', (tester) async {
+          await wander(tester, 1000 + seed, xml: leadSheet());
+        });
+      }
+      for (var seed = 0; seed < 3 * scale; seed++) {
+        testWidgets('a piano score, seed $seed', (tester) async {
+          await wander(tester, 2000 + seed, xml: _xml, steps: 100);
+        });
+      }
+      test('the wandering edited, opened sheets and saved', () {
+        printOnFailure('saves $saves, edits $edits, sheets $sheets');
+        expect(edits, greaterThan(2));
+        expect(sheets, greaterThan(10));
+        expect(saves, greaterThan(0));
+      });
     });
   });
 }

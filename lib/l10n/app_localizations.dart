@@ -5515,6 +5515,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Solo'**
   String get mixerSolo;
+
+  /// quarterToneMenu
+  ///
+  /// In en, this message translates to:
+  /// **'Quarter tone'**
+  String get quarterToneMenu;
+
+  /// quarterToneUp
+  ///
+  /// In en, this message translates to:
+  /// **'A quarter tone up'**
+  String get quarterToneUp;
+
+  /// quarterToneDown
+  ///
+  /// In en, this message translates to:
+  /// **'A quarter tone down'**
+  String get quarterToneDown;
+
+  /// viewMenu
+  ///
+  /// In en, this message translates to:
+  /// **'View'**
+  String get viewMenu;
+
+  /// viewLines
+  ///
+  /// In en, this message translates to:
+  /// **'Lines'**
+  String get viewLines;
+
+  /// viewContinuous
+  ///
+  /// In en, this message translates to:
+  /// **'Continuous'**
+  String get viewContinuous;
+
+  /// viewPrint
+  ///
+  /// In en, this message translates to:
+  /// **'Print view (page outlines)'**
+  String get viewPrint;
+
+  /// toolsView
+  ///
+  /// In en, this message translates to:
+  /// **'View'**
+  String get toolsView;
+
+  /// editingManyNotes
+  ///
+  /// In en, this message translates to:
+  /// **'Editing note {done} of {total}'**
+  String editingManyNotes(int done, int total);
 }
 
 class _AppLocalizationsDelegate

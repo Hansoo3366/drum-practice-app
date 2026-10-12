@@ -34,6 +34,8 @@ parser.add_argument('run')
 parser.add_argument('--client-run', help='reuse an EXISTING QA install; never register one to evade quota')
 parser.add_argument('--client-file', help='QA install secret OUTSIDE the repository (default: user cache)')
 parser.add_argument('--songs', nargs='+', help='explicit subset, otherwise all songs')
+parser.add_argument('--profile', default='chords_lyrics', choices=['chords_lyrics', 'standard'],
+                    help='what the app asks for: chords_lyrics (lead sheets) or standard (piano scores)')
 parser.add_argument('--songs-file', default=os.path.join(HERE, 'songs.json'),
                     help='the song list: songs.json (the 17 tuning songs) or holdout.json')
 args = parser.parse_args()
@@ -104,7 +106,7 @@ def _run(song):
             time.sleep(8)
         save_job(song, {'id': known['id'], 'status': info.get('status'), 'error': info.get('error') or '', 'seconds': None})
     elif known.get('status') != 'done':
-        body, ctype = multipart({'profile': 'chords_lyrics'}, f'{song}.pdf', open(f'{DATA}/pdf/{song}.pdf', 'rb').read())
+        body, ctype = multipart({'profile': args.profile}, f'{song}.pdf', open(f'{DATA}/pdf/{song}.pdf', 'rb').read())
         started = time.time()
         status, answer = call('POST', '/convert', {**AUTH, 'Content-Type': ctype}, body, timeout=300)
         if status != 202:

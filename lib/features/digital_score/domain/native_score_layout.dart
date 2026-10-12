@@ -24,6 +24,7 @@ class NativeMeasureBox {
     required this.contentWidth,
     this.staffTops = const <int, double>{},
     this.staffLineGaps = const <int, double>{},
+    this.staffBottomLines = const <int, double>{},
     this.onsetAnchors = const <NativeOnsetAnchor>[],
   });
 
@@ -42,7 +43,26 @@ class NativeMeasureBox {
   /// the same geometry as the rendered SVG instead of guessing from a box.
   final Map<int, double> staffTops;
   final Map<int, double> staffLineGaps;
+
+  /// Where the bottom line of each staff is drawn, keyed by staff number.
+  ///
+  /// [staffTops] is where a pitch is (E4 or A3), not an edge of the staff:
+  /// under a bass clef on the first staff, or an octave clef, the two are
+  /// spaces apart.
+  final Map<int, double> staffBottomLines;
   final List<NativeOnsetAnchor> onsetAnchors;
+
+  /// The drawn bottom and top lines of [staff]. Where the lines were not
+  /// measured, a first staff is taken as a treble staff and a second as a
+  /// bass staff.
+  double bottomLineFor(int staff) {
+    return staffBottomLines[staff] ??
+        (staff >= 2
+            ? staffTopFor(staff) + 4 * lineGapFor(staff)
+            : staffTopFor(staff));
+  }
+
+  double topLineFor(int staff) => bottomLineFor(staff) - 4 * lineGapFor(staff);
 
   double staffTopFor(int staff) {
     return staffTops[staff] ?? (staff >= 2 ? bassStaffTop : trebleStaffTop);

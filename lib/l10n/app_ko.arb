@@ -902,5 +902,14 @@
   "instrumentChange": "여기서 악기 바꾸기",
   "mixer": "믹서",
   "mixerMute": "끄기",
-  "mixerSolo": "혼자 듣기"
+  "mixerSolo": "혼자 듣기",
+  "quarterToneMenu": "사분음",
+  "quarterToneUp": "사분음 올림",
+  "quarterToneDown": "사분음 내림",
+  "viewMenu": "보기 방식",
+  "viewLines": "줄 보기",
+  "viewContinuous": "이어 보기",
+  "viewPrint": "인쇄 보기 (쪽 테두리)",
+  "toolsView": "보기",
+  "editingManyNotes": "음 {total}개 가운데 {done}개째 편집하는 중"
 }

@@ -13,6 +13,7 @@ from fractions import Fraction
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+import omr_hybrid
 from omr_rules import _INK, _LYRIC_MIN_CONFIDENCE, _LYRIC_MIN_LINE_CONFIDENCE, _TESSERACT_ENV, _float, _key_alter
 
 
@@ -772,10 +773,18 @@ def _load_book(root: ET.Element, folder: Path, ocr: bool = True) -> dict | None:
         return None
     if len(systems) != len(groups):
         return None
+    # Lines whose bars a second reader read: bars and notes stand where it found them
+    # (omr_hybrid).
+    reread = omr_hybrid.placed_lines(folder)
     unmatched = []
     for (number, system_index, system, staves, interline), group in zip(systems, groups):
+        bars = reread.get((str(number), system_index))
+        if bars is not None and len(bars) == len(group):
+            for staff in staves:
+                if staff["system"] == system_index:
+                    staff["measures"] = list(bars)
         # The bars of the system: the signature announced at the end of a line is not one.
-        if len(_system_stacks(system, interline)) != len(group):
+        elif len(_system_stacks(system, interline)) != len(group):
             unmatched.append((group, number, [s for s in staves if s["system"] == system_index]))
             continue
         for part_index, part in enumerate(system.findall("part")):

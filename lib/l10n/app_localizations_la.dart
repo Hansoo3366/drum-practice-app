@@ -2909,4 +2909,33 @@ class AppLocalizationsLa extends AppLocalizations {
 
   @override
   String get mixerSolo => 'Solo';
+
+  @override
+  String get quarterToneMenu => 'Quarter tone';
+
+  @override
+  String get quarterToneUp => 'A quarter tone up';
+
+  @override
+  String get quarterToneDown => 'A quarter tone down';
+
+  @override
+  String get viewMenu => 'View';
+
+  @override
+  String get viewLines => 'Lines';
+
+  @override
+  String get viewContinuous => 'Continuous';
+
+  @override
+  String get viewPrint => 'Print view (page outlines)';
+
+  @override
+  String get toolsView => 'View';
+
+  @override
+  String editingManyNotes(int done, int total) {
+    return 'Editing note $done of $total';
+  }
 }

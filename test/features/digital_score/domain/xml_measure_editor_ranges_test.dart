@@ -619,4 +619,35 @@ void main() {
       expect(first.events[0], isA<MusicHarmony>());
     });
   });
+
+  test('bars pasted over others leave the tempo marks where they were', () {
+    String tempo(int bpm) =>
+        '<direction placement="above"><direction-type><metronome>'
+        '<beat-unit>quarter</beat-unit><per-minute>$bpm</per-minute>'
+        '</metronome></direction-type><sound tempo="$bpm"/></direction>';
+    final xml = _score([
+      _bar('CDEF'),
+      _bar('GABC'),
+      '${tempo(72)}${_bar('DEFG')}',
+      '${tempo(90)}${_bar('EFGA')}',
+      _bar('CCCC'),
+    ]);
+    final clip = _editor.copyMeasures(xml, 0, 1);
+    final ref = XmlNoteRef(partIndex: 0, measureIndex: 2, noteIndex: 0);
+    final pasted = _editor.overwriteMeasures(xml, ref, clip).xml;
+    final bars = XmlDocument.parse(pasted).findAllElements('measure').toList();
+    String? at(int index) =>
+        bars[index].findAllElements('per-minute').firstOrNull?.innerText;
+    expect(bars, hasLength(5));
+    // Each mark at its own bar still, over the new notes.
+    expect([for (var i = 0; i < 5; i++) at(i)], [null, null, '72', '90', null]);
+    final score = _codec.decodeXml(pasted);
+    expect(
+      [
+        for (final note in score.parts.first.measures[2].notes)
+          note.pitch!.step,
+      ],
+      [PitchStep.c, PitchStep.d, PitchStep.e, PitchStep.f],
+    );
+  });
 }

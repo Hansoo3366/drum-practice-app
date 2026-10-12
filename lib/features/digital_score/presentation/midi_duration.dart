@@ -362,6 +362,54 @@ nm.MidiSequence shapeSwing(nm.MidiSequence sequence, PlayedTempo tempo) {
     return (tick % tpq - half).abs() <= tpq ~/ 16 ? tick + late : tick;
   }
 
+  // Note by note: a note that begins late ends no earlier than it begins
+  // (a thirty-second on the late eighth is moved whole).
+  List<nm.MidiEvent> swing(List<nm.MidiEvent> events) {
+    final out = <nm.MidiEvent>[];
+    // The notes sounding, by channel and pitch: when each began as
+    // written, and as played.
+    final open = <(int, int), List<({int written, int played})>>{};
+    for (final event in events) {
+      final note = event.note;
+      if (note == null) {
+        out.add(event);
+        continue;
+      }
+      final key = (event.channel, note);
+      if (event.type == nm.MidiEventType.noteOn && (event.velocity ?? 0) > 0) {
+        final played = swung(event.tick);
+        open.putIfAbsent(key, () => []).add((
+          written: event.tick,
+          played: played,
+        ));
+        out.add(
+          nm.MidiEvent.noteOn(
+            tick: played,
+            channel: event.channel,
+            note: note,
+            velocity: event.velocity!,
+          ),
+        );
+      } else if (event.type == nm.MidiEventType.noteOff ||
+          event.type == nm.MidiEventType.noteOn) {
+        var tick = swung(event.tick);
+        final began = open[key];
+        if (began != null && began.isNotEmpty) {
+          final on = began.removeAt(0);
+          if (tick <= on.played) {
+            tick = on.played + math.max(1, event.tick - on.written);
+          }
+        }
+        out.add(
+          nm.MidiEvent.noteOff(tick: tick, channel: event.channel, note: note),
+        );
+      } else {
+        out.add(event);
+      }
+    }
+    return _inTickOrder(out);
+  }
+
   return nm.MidiSequence(
     ticksPerQuarter: tpq,
     tracks: [
@@ -369,27 +417,7 @@ nm.MidiSequence shapeSwing(nm.MidiSequence sequence, PlayedTempo tempo) {
         nm.MidiTrack(
           name: track.name,
           channel: track.channel,
-          events: _inTickOrder([
-            for (final event in track.events)
-              if (event.type == nm.MidiEventType.noteOn &&
-                  (event.velocity ?? 0) > 0)
-                nm.MidiEvent.noteOn(
-                  tick: swung(event.tick),
-                  channel: event.channel,
-                  note: event.note!,
-                  velocity: event.velocity!,
-                )
-              else if (event.note != null &&
-                  (event.type == nm.MidiEventType.noteOff ||
-                      event.type == nm.MidiEventType.noteOn))
-                nm.MidiEvent.noteOff(
-                  tick: swung(event.tick),
-                  channel: event.channel,
-                  note: event.note!,
-                )
-              else
-                event,
-          ]),
+          events: swing(track.events),
         ),
     ],
   );
@@ -439,7 +467,9 @@ nm.MidiSequence withoutNotes(
                       isOff(e) &&
                       e.note == midi &&
                       e.channel == channel &&
-                      e.tick >= start,
+                      // After it began: a note of the same pitch before
+                      // it ends on the very tick this one begins.
+                      e.tick > start,
                 );
                 if (off >= 0) events.removeAt(off);
               }
@@ -470,11 +500,24 @@ nm.MidiSequence withMetronomeClicks(
   if (total <= 0 || ticks <= 0) return sequence;
   final clicks = <nm.MidiEvent>[];
   final length = math.max(1, sequence.ticksPerQuarter ~/ 8);
+  // A beat is where the score puts it. The sequence ends with its last
+  // note, which may be before the end of the last bar (a rest closes it):
+  // only a sequence that is of another length altogether is measured
+  // against the bars as a whole.
+  final longest = bars.fold<double>(
+    0,
+    (most, bar) => math.max(most, bar.quarters),
+  );
+  final written = total * sequence.ticksPerQuarter;
+  final perQuarter =
+      (written - ticks).abs() <= longest * sequence.ticksPerQuarter
+      ? sequence.ticksPerQuarter.toDouble()
+      : ticks / total;
   var start = 0.0;
   for (final bar in bars) {
     final beat = bar.beat <= 0 ? 1.0 : bar.beat;
     for (var at = 0.0; at < bar.quarters - 1e-6; at += beat) {
-      final tick = ((start + at) / total * ticks).round();
+      final tick = ((start + at) * perQuarter).round();
       final first = at == 0;
       clicks
         ..add(
@@ -559,6 +602,9 @@ nm.MidiSequence shapeTempo(
 
   // The tempo as played, by tick: the written one with the changes below.
   final played = <int, int>{};
+  // Where the change before left the tempo, when this one takes over from
+  // it at once: a second "rit." slows what the first had slowed.
+  double? carried;
   for (final (index, move) in moves.indexed) {
     final from = tickOf(move.at);
     // Until the score says how fast again: a tempo mark, "a tempo", the
@@ -577,23 +623,48 @@ nm.MidiSequence shapeTempo(
         until = tick;
       }
     }
+    var takenOver = false;
     if (index + 1 < moves.length) {
       final next = tickOf(moves[index + 1].at);
-      if (next > from && next < until) until = next;
+      if (next > from && next < until) {
+        until = next;
+        takenOver = true;
+      }
     }
-    if (until <= from) continue;
-    final base = bpmAt(from);
-    final goal = base * (move.word == TempoWord.slower ? 0.72 : 1.3);
+    if (until <= from) {
+      carried = null;
+      continue;
+    }
+    final base = carried ?? bpmAt(from).toDouble();
+    carried = null;
+    final goal = (base * (move.word == TempoWord.slower ? 0.72 : 1.3)).clamp(
+      20.0,
+      400.0,
+    );
     // A step every beat, the last one at the goal.
     final steps = math.max(1, ((until - from) / tpq).round());
     for (var step = 0; step < steps; step++) {
       final tick = from + (until - from) * step ~/ steps;
       played[tick] = (base + (goal - base) * (step + 1) / steps).round();
     }
+    if (takenOver) {
+      carried = goal;
+      continue;
+    }
     // What follows goes as it was written, unless it says itself how fast.
     played.putIfAbsent(until, () => bpmAt(until));
   }
-  for (final hold in tempo.holds) {
+  // Where one held note sounds through another that begins later (a whole
+  // note under a fermata, and a fermata on the last beat over it), the
+  // music stops on the later one: the holds are not multiplied.
+  final holds = [
+    for (final hold in tempo.holds)
+      if (!tempo.holds.any(
+        (other) => other.from > hold.from + 1e-6 && other.from < hold.to - 1e-6,
+      ))
+        hold,
+  ];
+  for (final hold in holds) {
     final from = tickOf(hold.from);
     final to = tickOf(hold.to);
     if (to <= from) continue;
@@ -693,7 +764,9 @@ nm.MidiSequence shapeHairpins(
       final hairpin = ofPart[i];
       final from = (hairpin.from * tpq).round();
       final to = (hairpin.to * tpq).round();
-      final begin = from < heldUntil ? held : 1.0;
+      // Where the hairpin before left the notes, when nothing was marked
+      // since: a crescendo and the diminuendo after it come back down.
+      final begin = from <= heldUntil ? held : 1.0;
       // As loud as written where the hairpin begins, and where it ends.
       final before = notes.lastWhere(
         (note) => note.tick <= from,
@@ -1089,6 +1162,14 @@ PlaybackMidi withInstrumentChanges(
                 // A note ends on the channel it began on.
                 final open = <int, List<int>>{};
                 return [
+                  // What a file made of this says of the new channel: the
+                  // player is told by [PlaybackMidi.programs].
+                  for (final step in steps)
+                    nm.MidiEvent.programChange(
+                      tick: 0,
+                      channel: step.channel,
+                      program: programs[step.channel] ?? 0,
+                    ),
                   for (final event in track.events)
                     if (isOn(event))
                       () {

@@ -70,6 +70,11 @@ class _OmrCorrectionScreenState extends ConsumerState<OmrCorrectionScreen> {
   List<XmlElement> get _measures =>
       _parts[_part].findElements('measure').toList();
 
+  /// What went wrong, as the user is told it: a refusal in its own words,
+  /// without the name of the error it came as.
+  static String _said(Object error) =>
+      error is FormatException ? error.message : error.toString();
+
   Future<void> _load() async {
     try {
       final source = await ref
@@ -81,7 +86,7 @@ class _OmrCorrectionScreenState extends ConsumerState<OmrCorrectionScreen> {
       _pdf = Uint8List.fromList(source.bytes);
       await _loadPage();
     } on Object catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = _said(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -119,7 +124,7 @@ class _OmrCorrectionScreenState extends ConsumerState<OmrCorrectionScreen> {
     try {
       await _loadPage();
     } on Object catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = _said(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -141,7 +146,7 @@ class _OmrCorrectionScreenState extends ConsumerState<OmrCorrectionScreen> {
         });
       }
     } on Object catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = _said(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -160,7 +165,7 @@ class _OmrCorrectionScreenState extends ConsumerState<OmrCorrectionScreen> {
           .reviewRegion(pngBytes: _cropPng!, target: _target!);
       if (mounted) setState(() => _review = review);
     } on Object catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = _said(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -201,7 +206,7 @@ class _OmrCorrectionScreenState extends ConsumerState<OmrCorrectionScreen> {
         context,
       ).showSnackBar(const SnackBar(content: Text('수정 버전을 저장했습니다.')));
     } on Object catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = _said(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -223,7 +228,7 @@ class _OmrCorrectionScreenState extends ConsumerState<OmrCorrectionScreen> {
         ),
       );
     } on Object catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = _said(error));
     }
   }
 
@@ -251,7 +256,7 @@ class _OmrCorrectionScreenState extends ConsumerState<OmrCorrectionScreen> {
         });
       }
     } on Object catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = _said(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

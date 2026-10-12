@@ -125,3 +125,85 @@ ACCURACY_DATA=$PWD/score_sample/_accuracy/holdout RUN=h1 python3 tool/accuracy/s
 "Go to Ch."라고 적힌 진짜 엔딩을 지우는 것을 이 표본이 잡았다. 17곡에서는 보이지 않던 문제다.
 지금 표본 3곡은 이전 개발에서 본 곡이라 완전히 새 악보가 아니다. 새 악보가 생기면 바꾼다.
 
+## 다른 음표 판독기와 견주기 (2026-10-11)
+
+`score_notes.py`는 정답지에서 코드와 가사를 빼고 **마디와 마디별 음표 수**만으로 채점한다.
+코드·가사를 읽지 못하는 판독기(공개 OMR 모델)를 서버 결과와 같은 잣대로 재기 위한 것이다.
+
+```bash
+# 서버 결과(out5의 ai 버전)와, 다른 판독기가 쪽 사진마다 쓴 MusicXML(<폴더>/<곡>/p<N>.musicxml)
+python3 tool/accuracy/score_notes.py audiveris=mxl:5/ai homr=pages:/path/to/homr/pages
+# 줄 그림(lines/<곡>/pP-sNN.png)마다 돌린 결과는 lines:<폴더>
+# 독립 표본은 ACCURACY_DATA=score_sample/_accuracy/holdout 로 정답지 폴더를 바꾼다
+```
+
+판독기 둘 이상이면 마디별로 둘 다 맞음·한쪽만 맞음·둘 다 틀림도 센다(두 번째 판독기를
+검산용으로 쓸 때의 값어치). 음높이와 음 길이는 정답지에 없어 여기서도 재지 않는다.
+
+2026-10-11 측정(17곡 766마디, 마디를 찾았고 음표 수가 맞은 비율):
+서버(Audiveris+규칙+AI) 614마디 80.2%, 합쳐진 마디 46 · homr 0.7.0을 쪽 사진에 그대로
+돌린 것 753마디 98.3%, 합쳐진 마디 0. 독립 표본 2곡 65마디는 95.4% 대 96.9%.
+homr는 코드·가사·도돌이표를 읽지 않으므로 음표 판독만의 비교다.
+
+## 피아노 악보 (2026-10-11)
+
+`score_piano.py`는 정답 MusicXML이 있는 피아노 악보를 음표 단위로 채점한다: 마디 안의 자리,
+음높이, 길이(보표·성부는 구분하지 않고, 꾸밈음·쉼표는 뺀다). 마디는 순서대로 맞춘다.
+
+```bash
+# 자료는 score_sample/_accuracy/piano/ (pdf/<곡>.pdf, truth/<곡>.musicxml, songs.json)
+ACCURACY_DATA=score_sample/_accuracy/piano SSL_CERT_FILE=/etc/ssl/cert.pem \
+  python3 tool/accuracy/convert.py p1 --profile standard --songs-file score_sample/_accuracy/piano/songs.json
+ACCURACY_DATA=score_sample/_accuracy/piano \
+  python3 tool/accuracy/score_piano.py server=mxl:p1/fixed homr=pages:/path/to/homr/piano
+```
+
+정답지는 앱이 조판해 내보낸 PDF와 그 원본 MusicXML의 쌍이다(같은 버전에서 PDF와 MusicXML을
+함께 내보낸다). 2026-10-11 측정: 2곡 210마디에서 마디가 통째로 맞은 비율은 서버 22.9%,
+homr 20.0%. 두 곡 모두 어려운 고전곡이라, 보통 난이도의 정답지를 더 만들어야 한다.
+
+## 음표는 homr, 코드·가사는 서버 (2026-10-12)
+
+서버 후처리 안에서 두 판독기를 합친다(`server/omr/omr_hybrid.py`, `OMR_HYBRID_NOTES=1`일 때만).
+줄마다 homr가 읽은 마디·음표로 바꾸고, 각 음표에 쪽 위의 가로 위치를 준 뒤, 서버가 하던 코드 줄·
+가사 줄 다시 읽기를 그 음표 위에서 그대로 돌린다. 줄이 맞지 않으면 그 줄만 엔진 결과로 둔다.
+
+`replay_post.py`는 변환 때 엔진이 남긴 자료(`out<실행>/<곡>/raw.mxl`, `books2/<곡>/<후보>/score.omr`,
+`pdf/<곡>.pdf`)로 서버 후처리(`_postprocess`)만 이 컴퓨터에서 다시 돌려 `out<새 실행>/`에 쓴다.
+변환도 AI 호출도 하지 않으므로 나온 것은 서버의 **`fixed` 단계**다. 이어서 검증(`validation.json`,
+`layout.json`)과 AI 검토에 보낼 줄 그림·설명(`ai/crops`, `ai/dataset.json`)까지 만들어, 바뀐 마디가
+뒤 단계와 맞물리는지 본다.
+
+```bash
+# tessdata 4.1.0의 kor·eng(서버와 같은 것)을 받아 둔 폴더가 필요하다.
+export TESSDATA_PREFIX=/path/to/tessdata
+# 서버만: 스위치를 끄면 결과가 기존과 바이트 단위로 같다(17곡 확인).
+python3 tool/accuracy/replay_post.py 5 r2
+# 분업: homr가 미리 읽어 둔 결과(<곡>/p<N>.musicxml, p<N>.json)를 쓰거나,
+OMR_HYBRID_NOTES=1 HOMR_READ=/path/to/homr/read python3 tool/accuracy/replay_post.py 5 h10
+# 서버가 하듯 homr를 직접 부른다(OMR_HOMR_PYTHON=homr를 설치한 파이썬).
+OMR_HYBRID_NOTES=1 OMR_HOMR_PYTHON=/path/to/venv/bin/python python3 tool/accuracy/replay_post.py 5 h11
+RUN=h10 python3 tool/accuracy/score.py fixed
+```
+
+2026-10-12 측정(17곡 766마디, **AI 검토 전 `fixed` 단계끼리** 비교, homr 0.7.0을 프로세서만으로 실행):
+
+| | 서버만 | 분업 |
+|---|---|---|
+| 찾은 마디 | 743/766 | 763/766 |
+| 합쳐 읽은 마디 | 44 | 0 |
+| 마디별 음표 수 | 83.6% | 98.3% |
+| 가사 | 81.7% | 88.1% |
+| 코드 | 63.3% | 67.5% |
+| 도돌이·엔딩 등 | 72.5% | 72.3% |
+| 마디 완전 일치 | 38.1% | 46.5% |
+
+곡별로 완전 일치·코드·음표 수가 내려간 곡은 없다(가사 s08 −0.5, 기호 s07 −33은 있음). 17곡 211줄이
+모두 homr 줄로 바뀌었고, 결과는 모두 쪽 그림과 묶였다. **AI 검토 뒤 최종 수치(기준 67.8%)는 이
+컴퓨터에 AI 키가 없어 재지 못했다.** 서버에 올려 `convert.py`로 다시 변환해야 나온다. 독립 표본 3곡도
+엔진 자료(`.omr`)가 서버에만 있어 같은 때 잰다.
+
+음높이·음가는 이 정답지로 재지 않는다. 두 판독기가 음표 수가 같은 587마디에서 음높이가 같은 마디는
+78.2%이고, 다른 것의 대부분은 엔진이 조표를 잘못 읽은 한 곡(s01, 실제 6플랫을 2플랫으로)이다.
+homr는 조표·음자리표를 줄마다 새로 읽어 한 줄씩 틀리는 일이 있어(17곡에서 조표 2줄, 음자리표 2줄,
+박자표 3개), 이웃 줄과 다른 한 줄은 이웃을 따르게 고친다.

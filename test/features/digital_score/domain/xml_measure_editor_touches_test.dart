@@ -373,10 +373,89 @@ void main() {
         () => _editor.groupTuplet(xml, 0, 0, [0]),
         throwsA(isA<FormatException>()),
       );
-      // Two are a duplet: in the time of three.
+      // Two are a duplet, in the time of three: in a bar that is full
+      // there is no time for it.
+      expect(
+        () => _editor.groupTuplet(xml, 0, 0, [0, 1]),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('two notes are a duplet where the bar has the time for it', () {
+      // An eighth short, as a reader leaves a bar whose duplet it lost.
+      final xml = _score([
+        '${eighth('C')}${eighth('D')}${_note('E', 4)}${_note('F', 4)}'
+            '${eighth('G')}',
+        quarters,
+      ]);
       final duplet = _editor.groupTuplet(xml, 0, 0, [0, 1]).xml;
       expect(duplet, contains('<actual-notes>2</actual-notes>'));
       expect(duplet, contains('<normal-notes>3</normal-notes>'));
+      final bar = _codec.decodeXml(duplet).parts.first.measures.first;
+      expect(_read(duplet), ['c4', 'd4', 'e4', 'f4', 'g4']);
+      expect(
+        bar.notes.fold<int>(0, (sum, note) => sum + note.duration) /
+            bar.attributes.divisions,
+        4,
+      );
+    });
+
+    test('a duplet in the upper staff leaves the lower staff where it was', () {
+      // 6/8, the upper staff an eighth short, the lower one a whole bar.
+      const xml =
+          '<?xml version="1.0" encoding="UTF-8"?>'
+          '<score-partwise version="4.0"><part-list>'
+          '<score-part id="P1"><part-name>Piano</part-name></score-part>'
+          '</part-list><part id="P1"><measure number="1">'
+          '<attributes><divisions>2</divisions><key><fifths>0</fifths></key>'
+          '<time><beats>6</beats><beat-type>8</beat-type></time>'
+          '<staves>2</staves>'
+          '<clef number="1"><sign>G</sign><line>2</line></clef>'
+          '<clef number="2"><sign>F</sign><line>4</line></clef></attributes>'
+          '<note><pitch><step>C</step><octave>5</octave></pitch>'
+          '<duration>1</duration><voice>1</voice><type>eighth</type>'
+          '<staff>1</staff></note>'
+          '<note><pitch><step>D</step><octave>5</octave></pitch>'
+          '<duration>1</duration><voice>1</voice><type>eighth</type>'
+          '<staff>1</staff></note>'
+          '<note><pitch><step>E</step><octave>5</octave></pitch>'
+          '<duration>3</duration><voice>1</voice><type>quarter</type><dot/>'
+          '<staff>1</staff></note>'
+          '<backup><duration>5</duration></backup>'
+          '<note><pitch><step>C</step><octave>3</octave></pitch>'
+          '<duration>6</duration><voice>2</voice><type>half</type><dot/>'
+          '<staff>2</staff></note>'
+          '</measure></part></score-partwise>';
+      final duplet = _editor.groupTuplet(xml, 0, 0, [0, 1]).xml;
+      final measure = XmlDocument.parse(
+        duplet,
+      ).findAllElements('measure').first;
+      var at = 0;
+      var low = -1;
+      var end = 0;
+      for (final child in measure.childElements) {
+        final length = int.tryParse(
+          child.getElement('duration')?.innerText ?? '',
+        );
+        if (length == null) continue;
+        switch (child.name.local) {
+          case 'backup':
+            at -= length;
+          case 'forward':
+            at += length;
+          case 'note':
+            if (child.getElement('staff')?.innerText == '2') low = at;
+            at += length;
+            end = at > end ? at : end;
+        }
+      }
+      // The lower staff still begins with the bar, and nothing runs past
+      // the end of the bar.
+      expect(low, 0);
+      final divisions = int.parse(
+        measure.findAllElements('divisions').firstOrNull?.innerText ?? '2',
+      );
+      expect(end / divisions, 3);
     });
   });
 
@@ -807,6 +886,37 @@ void main() {
       expect(bar.notes.first.duration, 16);
     });
 
+    test('a quarter tone is written with its own sign, and taken off', () {
+      final xml = _score([
+        '${_note('C', 4)}${_note('F', 4, alter: 1)}${_note('B', 4, alter: -1)}'
+            '${_note('E', 4)}',
+      ]);
+
+      final up = _editor.setQuarterTone(xml, _ref(0), 1).xml;
+      expect(up, contains('<alter>0.5</alter>'));
+      expect(up, contains('<accidental>quarter-sharp</accidental>'));
+      expect(_editor.describe(up, _ref(0)).quarterTone, 1);
+      // A quarter above F sharp, a quarter below B flat.
+      expect(
+        _editor.setQuarterTone(xml, _ref(1), 1).xml,
+        contains('<accidental>three-quarters-sharp</accidental>'),
+      );
+      expect(
+        _editor.setQuarterTone(xml, _ref(2), -1).xml,
+        contains('<accidental>three-quarters-flat</accidental>'),
+      );
+      // The score still reads, the note at its pitch; other edits of the
+      // bar leave the quarter-tone sign alone.
+      expect(_read(up), ['c4', 'f#4', 'bb4', 'e4']);
+      final moved = _editor.moveDiatonic(up, _ref(3), 1).xml;
+      expect(moved, contains('<accidental>quarter-sharp</accidental>'));
+      // Taken off, it is plain C again.
+      final plain = _editor.setQuarterTone(up, _ref(0), 0).xml;
+      expect(plain, isNot(contains('quarter-')));
+      expect(plain, isNot(contains('<alter>0')));
+      expect(_editor.describe(plain, _ref(0)).quarterTone, 0);
+    });
+
     test('the two voices of a staff change places', () {
       String voiced(String step, int octave, String voice) =>
           '<note><pitch><step>$step</step><octave>$octave</octave></pitch>'
@@ -890,5 +1000,154 @@ void main() {
           .whereType<MusicPitch>(),
       hasLength(8),
     );
+  });
+
+  group('what an adversarial reading of the editor found', () {
+    const chord = '<chord/>';
+    String chordOf(String step, int octave) =>
+        '<note>$chord<pitch><step>$step</step><octave>$octave</octave></pitch>'
+        '<duration>2</duration><voice>1</voice><type>quarter</type></note>';
+
+    test('pasting a note on a chord replaces the chord and nothing else', () {
+      final xml = _score([
+        _note('C', 4) +
+            chordOf('E', 4) +
+            _note('D', 4) +
+            _note('E', 4) +
+            _note('F', 4),
+        _note('G', 4) + _rest() + _rest() + _rest(),
+      ]);
+      final clip = _editor.copyNotes(xml, [_ref(0, measureIndex: 1)]);
+      final pasted = _editor.pasteNotes(xml, _ref(0), clip).xml;
+      expect(_read(pasted), ['g4', 'd4', 'e4', 'f4']);
+      // On the chord's upper note it is the same chord that is replaced.
+      final upper = _editor.pasteNotes(xml, _ref(1), clip).xml;
+      expect(_read(upper), ['g4', 'd4', 'e4', 'f4']);
+    });
+
+    test('pasting over tied notes writes each note its own pitch', () {
+      const tieStart =
+          '<tie type="start"/><notations><tied type="start"/></notations>';
+      const tieStop =
+          '<tie type="stop"/><notations><tied type="stop"/></notations>';
+      final xml = _score([
+        _note('C', 4, extra: tieStart) +
+            _note('C', 4, extra: tieStop) +
+            _rest() +
+            _rest(),
+        _note('E', 4) + _note('G', 4) + _rest() + _rest(),
+      ]);
+      final clip = _editor.copyNotes(xml, [
+        _ref(0, measureIndex: 1),
+        _ref(1, measureIndex: 1),
+      ]);
+      final pasted = _editor.pasteNotes(xml, _ref(0), clip).xml;
+      expect(_read(pasted), ['e4', 'g4', 'r', 'r']);
+      expect(pasted, isNot(contains('<tie ')));
+    });
+
+    test('two notes made a duplet never make the bar longer than it was', () {
+      final xml = _score([
+        _note('C', 4) + _note('D', 4) + _note('E', 4) + _note('F', 4),
+      ]);
+      // Two in the time of three would need a beat the bar does not have.
+      expect(
+        () => _editor.groupTuplet(xml, 0, 0, [0, 1], inTimeOf: 3),
+        throwsFormatException,
+      );
+    });
+
+    test('filling a part with slashes leaves the other parts alone', () {
+      final one = _score([
+        _note('C', 4) + _note('D', 4) + _note('E', 4) + _note('F', 4),
+      ]);
+      final two = one
+          .replaceFirst(
+            '</part-list>',
+            '<score-part id="P2"><part-name>Bass</part-name></score-part>'
+                '</part-list>',
+          )
+          .replaceFirst(
+            '</part></score-partwise>',
+            '</part><part id="P2"><measure number="1"><attributes>'
+                '<divisions>2</divisions></attributes>'
+                '${_note('G', 2)}${_note('A', 2)}${_note('B', 2)}${_note('C', 3)}'
+                '</measure></part></score-partwise>',
+          );
+      final filled = _editor.fillWithSlashes(two, 0, 0, 0).xml;
+      final bass = _codec.decodeXml(filled).parts[1].measures.first.notes;
+      expect([for (final note in bass) note.pitch?.midi], [43, 45, 47, 48]);
+    });
+
+    test('the last note of a short bar leaves a rest when it is deleted', () {
+      final xml = _score([
+        _note('C', 4) + _note('D', 4) + _note('E', 4) + _note('F', 4),
+        _note('G', 4),
+      ]);
+      final removed = _editor.removeNote(xml, _ref(0, measureIndex: 1)).xml;
+      expect(_read(removed, measureIndex: 1), ['r']);
+    });
+  });
+
+  group('many notes moved at once', () {
+    const tieStart =
+        '<tie type="start"/><notations><tied type="start"/></notations>';
+    const tieStop =
+        '<tie type="stop"/><notations><tied type="stop"/></notations>';
+
+    test('each moves once, tied notes together, rests passed over', () {
+      final xml = _score([
+        _note('C', 4, extra: tieStart) +
+            _note('C', 4, extra: tieStop) +
+            _rest() +
+            _note('F', 4),
+        _note('G', 4) + _note('A', 4) + _note('B', 4) + _note('C', 5),
+      ]);
+      final all = [
+        for (var bar = 0; bar < 2; bar++)
+          for (var note = 0; note < 4; note++) _ref(note, measureIndex: bar),
+      ];
+      final up = _editor.movePitches(xml, all, steps: 1).xml;
+      expect(_read(up), ['d4', 'd4', 'r', 'g4']);
+      expect(_read(up, measureIndex: 1), ['a4', 'b4', 'c5', 'd5']);
+      // The tie is still a tie.
+      expect(up, contains('<tie type="start"/>'));
+
+      final high = _editor.movePitches(xml, all, octaves: 1).xml;
+      expect(_read(high), ['c5', 'c5', 'r', 'f5']);
+      // What one note at a time comes to.
+      var one = xml;
+      for (final ref in all) {
+        try {
+          final pitch = _editor.describe(one, ref).pitch;
+          if (pitch == null || pitch.octave == 5 && ref.measureIndex == 0) {
+            continue;
+          }
+          one = _editor.shiftOctave(one, ref, 1).xml;
+        } on FormatException {
+          // a rest
+        }
+      }
+      expect(_read(high, measureIndex: 1), _read(one, measureIndex: 1));
+    });
+
+    test('nothing to move is said so, and the score is as it was', () {
+      final xml = _score([_rest() + _rest() + _rest() + _rest()]);
+      expect(
+        () => _editor.movePitches(xml, [_ref(0), _ref(1)], steps: 1),
+        throwsFormatException,
+      );
+      expect(
+        () => _editor.movePitches(xml, [_ref(0)], steps: 1, octaves: 1),
+        throwsFormatException,
+      );
+      // A note out of range is passed over; the others go.
+      final edge = _score([_note('C', 9) + _note('C', 4) + _rest() + _rest()]);
+      final moved = _editor.movePitches(edge, [
+        _ref(0),
+        _ref(1),
+      ], octaves: 1).xml;
+      expect(_read(moved), ['c9', 'c5', 'r', 'r']);
+    });
   });
 }

@@ -65,6 +65,8 @@ class VerovioScoreView extends StatefulWidget {
     this.wordScale = 1,
     this.alignChords = false,
     this.barNumbers = BarNumbers.lines,
+    this.pageView = false,
+    this.widthFactor = 1,
     this.soundingRange,
     this.onBlankTapped,
     this.onLongPressed,
@@ -171,6 +173,16 @@ class VerovioScoreView extends StatefulWidget {
 
   /// Where bar numbers are written.
   final BarNumbers barNumbers;
+
+  /// Shows the pages as they are printed: each at its full height, with
+  /// its outline and a gap to the next. Otherwise the pages follow one
+  /// another without a seam.
+  final bool pageView;
+
+  /// How many screens wide the score is drawn: more than one for a score
+  /// engraved on a wide page ([engravingPageSize]) to be read as one long
+  /// line that moves across the screen.
+  final double widthFactor;
 
   /// The lowest and highest pitch the instrument (or a voice) reaches:
   /// notes outside it are marked in red. Null marks none.
@@ -331,6 +343,25 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   ScoreEventAddress? _rangeAt;
   Timer? _holdTimer;
 
+  /// Whether the run being picked has been told to the screen: only once
+  /// the finger has gone on from where it was held. A finger held and
+  /// lifted in place asks about the note under it instead.
+  var _rangeMoved = false;
+
+  /// Whether the run is being moved by one of its handles, and whether the
+  /// held finger was on a note or rest (not merely near one).
+  var _rangeByHandle = false;
+  var _heldOnEvent = false;
+
+  /// Whether the finger on a picked note has left the place it went down
+  /// on: only then does it carry the note. Where it left it, the carrying
+  /// is measured from.
+  Offset? _carryFrom;
+
+  /// What the last tap fell on, for telling two taps on one bar from two
+  /// taps on neighbouring notes.
+  ({int bar, int? event})? _lastTapTarget;
+
   /// Where the finger went down in `place` mode. The note or rest meant is
   /// the one under that point; moving the finger then chooses the line, and
   /// to the side an accidental.
@@ -340,7 +371,10 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
 
   /// How long a finger rests before what it does next picks a run of notes
   /// instead of moving the page.
-  static const _holdTime = Duration(milliseconds: 350);
+  static const _holdTime = Duration(milliseconds: 400);
+
+  /// How far a finger may wander on a picked note before it carries it.
+  static const _carrySlop = 9.0;
   static const _doubleTapTime = Duration(milliseconds: 320);
 
   bool get _fingerEdits => _noteDrag != null || _rangeFrom != null || _aiming;
@@ -385,6 +419,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     if ((oldWidget.chordDisplay != widget.chordDisplay ||
             oldWidget.wordScale != widget.wordScale ||
             oldWidget.alignChords != widget.alignChords ||
+            oldWidget.pageView != widget.pageView ||
+            oldWidget.widthFactor != widget.widthFactor ||
             (oldWidget.barNumbers == BarNumbers.none) !=
                 (widget.barNumbers == BarNumbers.none)) &&
         _lastViewportWidth != null) {
@@ -459,6 +495,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     _renderGeneration++;
     _playbackTimer?.cancel();
     _followTimer?.cancel();
+    _holdTimer?.cancel();
     widget.playback.detach();
     _transform.dispose();
     // A view that never opened its player has no backend to stop; the
@@ -960,9 +997,10 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     return _service!;
   }
 
-  void _rebuildRenderedLayout(double viewWidth) {
-    if (viewWidth <= 0 || _pages.isEmpty) return;
-    _lastViewportWidth = viewWidth;
+  void _rebuildRenderedLayout(double viewportWidth) {
+    if (viewportWidth <= 0 || _pages.isEmpty) return;
+    _lastViewportWidth = viewportWidth;
+    final viewWidth = viewportWidth * math.max(1.0, widget.widthFactor);
     final measures = <NativeMeasureBox>[];
     final notes = <NativeNotePlacement>[];
     final systemStarts = <int>[];
@@ -976,7 +1014,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       final viewBox = page.hitMap.viewBox;
       if (viewBox.width <= 0 || viewBox.height <= 0) continue;
       final scale = viewWidth / viewBox.width;
-      final pageHeight = page.visibleHeight * scale;
+      final pageHeight =
+          (widget.pageView ? viewBox.height : page.visibleHeight) * scale;
       final measureHits = orderMeasureBoxes(
         page.hitMap.byType.where((hit) => hit.type == 'measure').toList(),
         (hit) => hit.bbox,
@@ -1040,19 +1079,22 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
             if (hit.bbox.inflate(4).contains(staff.center)) staff,
         ]..sort((a, b) => a.top.compareTo(b.top));
         final drawn = <int, _StaffGeometry>{};
+        final bottomLines = <int, double>{};
         if (lines.length >= math.min(2, staffCount)) {
           final clefs = measureIndex < (part?.measures.length ?? 0)
               ? part!.measures[measureIndex].attributes.clefs
               : const <int, MusicClef>{};
           for (var staff = 1; staff <= math.min(2, staffCount); staff++) {
             final gap = lines[staff - 1].gap * scale;
+            final bottomLine = _scaledPoint(
+              Offset(0, lines[staff - 1].bottom),
+              scale,
+              pageTop,
+            ).dy;
+            bottomLines[staff] = bottomLine;
             drawn[staff] = _StaffGeometry(
               top: staffAnchorFromLines(
-                bottomLine: _scaledPoint(
-                  Offset(0, lines[staff - 1].bottom),
-                  scale,
-                  pageTop,
-                ).dy,
+                bottomLine: bottomLine,
                 lineGap: gap,
                 clef: clefs[staff],
                 staff: staff,
@@ -1078,6 +1120,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
             1: drawn[1]?.lineGap ?? frame.lineGap,
             if (staffCount > 1) 2: drawn[2]?.lineGap ?? frame.lineGap,
           },
+          staffBottomLines: bottomLines,
         );
         pageMeasureSlots[measureIndex] = measures.length;
         measures.add(box);
@@ -1252,6 +1295,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
               contentWidth: box.contentWidth,
               staffTops: staffTops,
               staffLineGaps: staffLineGaps,
+              staffBottomLines: box.staffBottomLines,
               onsetAnchors: anchors,
             );
           }
@@ -1296,7 +1340,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         );
         chordKinds.add(chord.kind);
       }
-      pageTop += pageHeight;
+      pageTop += pageHeight + (widget.pageView ? pageViewGap : 0);
     }
 
     _documentWidth = viewWidth;
@@ -1419,7 +1463,14 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
           // The click then sounds like the piano.
         }
       }
-      await _bridge.uploadAndStart(sequence, includeMetronome: false);
+      // The clicks are notes of this sequence: the bridge leaves a track
+      // named for them out unless it is told to take it.
+      await _bridge.uploadSequence(
+        sequence,
+        includeMetronome: false,
+        includeMetronomeTrackNotes: widget.metronome,
+      );
+      await _audio.start();
     } catch (_) {
       widget.onPlayerIssue?.call();
       return false;
@@ -1843,7 +1894,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     final gap = box.lineGapFor(caret.staff);
     // Treble staffTop is E4 (bottom line). Draw from F5 so the caret sits on
     // the staff the user is editing, not the gap below it.
-    final topLine = caret.staff >= 2 ? staffTop : staffTop - 4 * gap;
+    final topLine = box.staffBottomLines.containsKey(caret.staff)
+        ? box.topLineFor(caret.staff)
+        : (caret.staff >= 2 ? staffTop : staffTop - 4 * gap);
     return Rect.fromLTWH(
       x,
       topLine - gap * 0.4,
@@ -1873,8 +1926,9 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     for (final box in layout.measures) {
       if (box.measureIndex != place.measureIndex) continue;
       final gap = box.lineGapFor(place.staff);
-      final bottom = box.staffTopFor(place.staff);
-      final top = bottom - 4 * gap;
+      // The staff's own lines: where a pitch is drawn is not an edge of it.
+      final bottom = box.bottomLineFor(place.staff);
+      final top = box.topLineFor(place.staff);
       final away = content.dy < top
           ? top - content.dy
           : (content.dy > bottom ? content.dy - bottom : 0.0);
@@ -1915,8 +1969,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       if (box == null) continue;
       final staves = box.staffTops.keys.toList()..sort();
       if (staves.isEmpty) staves.add(1);
-      final top =
-          box.staffTopFor(staves.first) - 4 * box.lineGapFor(staves.first);
+      final top = box.topLineFor(staves.first);
       // A chord symbol and a tempo mark stand over the staff; a syllable
       // belongs to the staff it is under.
       final above = kind != 'verse' && center.dy < top;
@@ -1925,7 +1978,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       if (!above) {
         var found = false;
         for (final candidate in staves) {
-          if (box.staffTopFor(candidate) < center.dy) {
+          if (box.bottomLineFor(candidate) < center.dy) {
             staff = candidate;
             found = true;
           }
@@ -2035,7 +2088,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   _handles(NativeScoreLayout layout) {
     if (!widget.rangeHandles) return null;
     final picked = [?widget.selectedNoteAddress, ...widget.alsoSelectedNotes];
-    if (picked.length < 2) return null;
+    if (picked.isEmpty) return null;
     picked.sort(
       (a, b) => a.measureIndex != b.measureIndex
           ? a.measureIndex.compareTo(b.measureIndex)
@@ -2066,6 +2119,15 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         );
         return Offset(x, y);
       }
+      // A bar that holds only its rest draws no note to stand under: the
+      // handle stands at the bar's own edge.
+      for (final measure in layout.measures) {
+        if (measure.measureIndex != address.measureIndex) continue;
+        return Offset(
+          left ? measure.contentLeft : measure.rect.right - 4,
+          measure.rect.bottom,
+        );
+      }
       return null;
     }
 
@@ -2084,13 +2146,21 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   /// zoom.
   double get _handleRadius => 9 / _viewScale;
 
-  void _beginRange(ScoreEventAddress from, ScoreEventAddress at) {
+  void _beginRange(
+    ScoreEventAddress from,
+    ScoreEventAddress at, {
+    bool byHandle = false,
+  }) {
     _holdTimer?.cancel();
+    _holdTimer = null;
     setState(() {
+      _noteDrag = null;
+      _carryFrom = null;
       _rangeFrom = from;
       _rangeAt = at;
+      _rangeMoved = false;
+      _rangeByHandle = byHandle;
     });
-    widget.onRangeDragged?.call(from, at);
   }
 
   void _endFingerEdit() {
@@ -2099,10 +2169,13 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     if (!_fingerEdits && _ghostCenter == null && !_placePanned) return;
     setState(() {
       _noteDrag = null;
+      _carryFrom = null;
       _dragSteps = 0;
       _dragAlter = 0;
       _rangeFrom = null;
       _rangeAt = null;
+      _rangeMoved = false;
+      _rangeByHandle = false;
       _aiming = false;
       _placePanned = false;
       _ghostCenter = null;
@@ -2120,21 +2193,32 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     if (widget.onRangeDragged != null) {
       final handles = _handles(layout);
       if (handles != null) {
-        final reach = _handleRadius * 2.2;
-        if ((handles.lastAt.translate(0, _handleRadius) - scene).distance <=
-            reach) {
-          _beginRange(handles.first, handles.last);
-          return;
-        }
-        if ((handles.firstAt.translate(0, _handleRadius) - scene).distance <=
-            reach) {
-          _beginRange(handles.last, handles.first);
+        // The nearer of the two, where they stand close together.
+        final reach = _handleRadius * 1.8;
+        final toLast =
+            (handles.lastAt.translate(0, _handleRadius) - scene).distance;
+        final toFirst =
+            (handles.firstAt.translate(0, _handleRadius) - scene).distance;
+        if (math.min(toLast, toFirst) <= reach) {
+          if (toLast <= toFirst) {
+            _beginRange(handles.first, handles.last, byHandle: true);
+          } else {
+            _beginRange(handles.last, handles.first, byHandle: true);
+          }
           return;
         }
       }
     }
+    // A finger on a picked note may come to carry it. On the note itself:
+    // its box and a finger's breadth around it, the same on screen at any
+    // zoom.
     final note = layout.noteAt(scene);
-    if (note != null && widget.onSelectionDragged != null && _isPicked(note)) {
+    final margin = 10 / _viewScale;
+    final onNote =
+        note != null &&
+        (note.bounds?.inflate(margin).contains(scene) ??
+            (note.center - scene).distance <= margin * 1.6);
+    if (onNote && widget.onSelectionDragged != null && _isPicked(note)) {
       NativeMeasureBox? box;
       for (final measure in layout.measures) {
         if (measure.measureIndex == note.measureIndex) {
@@ -2148,22 +2232,26 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
           note: note,
           gap: box?.lineGapFor(note.staff) ?? nativeStaffLineGap,
         );
+        _carryFrom = null;
         _dragSteps = 0;
         _dragAlter = 0;
       });
-      return;
     }
-    if (widget.onRangeDragged == null) return;
+    // Held still, it picks a run from here, or asks about the note.
+    if (widget.onRangeDragged == null && widget.onLongPressed == null) return;
     _holdTimer?.cancel();
     _holdTimer = Timer(_holdTime, () {
       _holdTimer = null;
       if (!mounted || _activePointers.length != 1 || _multiPointerGesture) {
         return;
       }
+      // The finger went on to carry the note: it is not being held.
+      if (_carryFrom != null) return;
       final now = _layout;
       if (now == null || _pagesStale) return;
       final from = _eventNear(now, scene);
       if (from == null) return;
+      _heldOnEvent = now.noteAt(scene, includeRests: true) != null;
       unawaited(HapticFeedback.selectionClick());
       _beginRange(from, from);
     });
@@ -2171,29 +2259,54 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
 
   void _moveSelectGesture(PointerMoveEvent event) {
     final start = _pointerDownAt;
-    if (_holdTimer != null &&
-        start != null &&
-        (event.position - start).distance > kTouchSlop) {
-      // Moved before it was held: the page is what moves.
-      _holdTimer?.cancel();
-      _holdTimer = null;
-    }
+    final moved = start == null ? 0.0 : (event.position - start).distance;
     final layout = _layout;
-    if (layout == null) return;
+    // What is on screen is the score before the last edit: its notes are
+    // not the notes of the score now.
+    if (layout == null || _pagesStale) return;
     if (_noteDrag case final drag?) {
+      // The finger has to leave the place it went down on before it
+      // carries the note: a tap that wanders a little is still a tap.
+      if (_carryFrom == null) {
+        if ((event.localPosition - drag.down).distance < _carrySlop) return;
+        _holdTimer?.cancel();
+        _holdTimer = null;
+        _carryFrom = event.localPosition;
+      }
       final (:steps, :alter) = fingerCarry(
-        event.localPosition - drag.down,
+        event.localPosition - _carryFrom!,
         lineGap: drag.gap,
         scale: _viewScale,
       );
       if (steps == _dragSteps && alter == _dragAlter) return;
+      // The preview stands where the notehead will: on the line of the
+      // note's pitch, not at the middle of its box (a box holds the stem).
+      NativeMeasureBox? box;
+      for (final measure in layout.measures) {
+        if (measure.measureIndex == drag.note.measureIndex) {
+          box = measure;
+          break;
+        }
+      }
+      final midi = drag.note.midi;
+      final head = box == null || midi == null
+          ? drag.note.center.dy
+          : staffYForMidi(
+              midi,
+              staffTop: box.staffTopFor(drag.note.staff),
+              lineGap: drag.gap,
+              bass: drag.note.staff >= 2,
+            );
       setState(() {
         _dragSteps = steps;
         _dragAlter = alter;
         if (steps == 0 && alter == 0) {
           _ghostCenter = null;
         } else {
-          _ghostCenter = drag.note.center.translate(0, -steps * drag.gap / 2);
+          _ghostCenter = Offset(
+            drag.note.center.dx,
+            head - steps * drag.gap / 2,
+          );
           _ghostRest = false;
           _ghostLineGap = drag.gap;
           _ghostDurationType = 'quarter';
@@ -2203,11 +2316,19 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
       });
       return;
     }
+    if (_holdTimer != null && moved > kTouchSlop) {
+      // Moved before it was held: the page is what moves.
+      _holdTimer?.cancel();
+      _holdTimer = null;
+    }
     final from = _rangeFrom;
     if (from != null) {
       final at = _eventNear(layout, _scenePosition(event));
       if (at == null || at == _rangeAt) return;
-      setState(() => _rangeAt = at);
+      setState(() {
+        _rangeAt = at;
+        _rangeMoved = true;
+      });
       widget.onRangeDragged?.call(from, at);
     }
   }
@@ -2443,6 +2564,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
                               _VerovioPages(
                                 pages: _pages,
                                 width: docW,
+                                paged: widget.pageView,
                                 onHeightChanged: (height) {
                                   if ((_documentHeight - height).abs() > 0.5 &&
                                       mounted) {
@@ -2673,6 +2795,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   }
 
   void _handlePointerDown(PointerDownEvent event) {
+    if (!mounted) return;
     _activePointers.add(event.pointer);
     _pointerDownAt = event.position;
     if (_activePointers.length > 1) {
@@ -2720,6 +2843,7 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   }
 
   void _handlePointerMove(PointerMoveEvent event) {
+    if (!mounted) return;
     if (_multiPointerGesture || _activePointers.length != 1) return;
     if (widget.inputMode == 'select') _moveSelectGesture(event);
     if (_handlesPointerInput) {
@@ -2741,6 +2865,25 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   }
 
   void _handlePointerUp(PointerUpEvent event) {
+    if (!mounted) {
+      _activePointers.remove(event.pointer);
+      return;
+    }
+    // Whatever the screen does with what the finger asked for, the finger
+    // is up: one that stayed counted would make every touch after it the
+    // second of two.
+    try {
+      _finishPointer(event);
+    } finally {
+      _placeDown = null;
+      _activePointers.remove(event.pointer);
+      if (_activePointers.isEmpty && _multiPointerGesture && mounted) {
+        setState(() => _multiPointerGesture = false);
+      }
+    }
+  }
+
+  void _finishPointer(PointerUpEvent event) {
     final start = _pointerDownAt;
     final panned =
         (widget.onEventTapped != null || widget.inputMode == 'select') &&
@@ -2752,14 +2895,19 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     final steps = _dragSteps;
     final alter = _dragAlter;
     final carried = _noteDrag != null && (steps != 0 || alter != 0);
-    final ranged = _rangeFrom != null;
-    // Held and lifted without going anywhere: not a run, a question.
-    final pressed = _rangeFrom != null && _rangeAt == _rangeFrom
+    // A finger that left its place on a picked note and came back to where
+    // the note was has carried it nowhere: neither a move nor a tap.
+    final wandered = _noteDrag != null && _carryFrom != null && !carried;
+    // A run is one the finger went along. Held and lifted in place it is a
+    // question about the note; a handle touched and let go is a tap.
+    final ranged = _rangeFrom != null && (_rangeMoved || !_rangeByHandle);
+    final pressed =
+        _rangeFrom != null && !_rangeMoved && !_rangeByHandle && _heldOnEvent
         ? _rangeFrom
         : null;
     final placePanned = _placePanned;
     final shouldCommit =
-        single && !panned && !carried && !ranged && !placePanned;
+        single && !panned && !carried && !wandered && !ranged && !placePanned;
     // The note is placed while the finger still counts as carrying it:
     // where it went down and what it asked for are read then.
     if (shouldCommit && _handlesPointerInput) {
@@ -2772,11 +2920,8 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
     if (single && carried && !_pagesStale) {
       widget.onSelectionDragged?.call(steps, alter);
     }
-    if (single && pressed != null) widget.onLongPressed?.call(pressed);
-    _placeDown = null;
-    _activePointers.remove(event.pointer);
-    if (_activePointers.isEmpty && _multiPointerGesture) {
-      setState(() => _multiPointerGesture = false);
+    if (single && pressed != null && !_pagesStale) {
+      widget.onLongPressed?.call(pressed);
     }
   }
 
@@ -2784,8 +2929,18 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   bool _doubleTapped(PointerUpEvent event, Offset scene) {
     final before = _lastTapAt;
     final where = _lastTapPosition;
+    final was = _lastTapTarget;
+    final layout = _layout;
+    final bar = layout?.measureAt(scene)?.measureIndex;
+    final target = bar == null
+        ? null
+        : (
+            bar: bar,
+            event: layout?.noteAt(scene, includeRests: true)?.eventIndex,
+          );
     _lastTapAt = event.timeStamp;
     _lastTapPosition = event.position;
+    _lastTapTarget = target;
     if (widget.inputMode != 'select' ||
         widget.onMeasureDoubleTapped == null ||
         before == null ||
@@ -2799,14 +2954,24 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
         (event.position - where).distance > 36) {
       return false;
     }
-    final measure = _layout?.measureAt(scene);
-    if (measure == null) return false;
+    // Two taps on one bar; two taps on two notes next to each other are
+    // two notes picked.
+    if (target == null || was == null || target.bar != was.bar) return false;
+    if (target.event != null &&
+        was.event != null &&
+        target.event != was.event) {
+      return false;
+    }
     _lastTapAt = null;
-    widget.onMeasureDoubleTapped!(measure.measureIndex);
+    widget.onMeasureDoubleTapped!(target.bar);
     return true;
   }
 
   void _handlePointerCancel(PointerCancelEvent event) {
+    if (!mounted) {
+      _activePointers.remove(event.pointer);
+      return;
+    }
     _placeDown = null;
     _endFingerEdit();
     _activePointers.remove(event.pointer);

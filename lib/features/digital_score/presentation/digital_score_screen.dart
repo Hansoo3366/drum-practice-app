@@ -272,6 +272,10 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     );
   }
 
+  /// Whether the pages are shown as they are printed, each with its
+  /// outline.
+  var _pageView = false;
+
   /// Goes on to the next way of showing chord symbols, and keeps it.
   void _nextChordDisplay() {
     final next = ChordDisplay
@@ -553,7 +557,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         fileName: exported.fileName,
         type: FileType.custom,
         allowedExtensions: [exported.extension],
-        bytes: _namedAsGiven(exported.bytes),
+        bytes: exported.bytes,
       );
       if (!mounted || savedPath == null) return;
       messenger.showSnackBar(SnackBar(content: Text(context.l10n.done)));
@@ -563,21 +567,6 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     } finally {
       if (mounted) setState(() => _exporting = false);
     }
-  }
-
-  /// [bytes] so that the system saves them under the name the app gives.
-  ///
-  /// Android does not know the ".musicxml" extension and then goes by the
-  /// content: a file that starts with `<?xml ` is taken for XML and saved as
-  /// "….musicxml.xml". A tab after `<?xml` is the same declaration to every
-  /// XML reader, and the name stays.
-  static Uint8List _namedAsGiven(Uint8List bytes) {
-    const declaration = [0x3C, 0x3F, 0x78, 0x6D, 0x6C, 0x20]; // "<?xml "
-    if (bytes.length < declaration.length) return bytes;
-    for (var i = 0; i < declaration.length; i++) {
-      if (bytes[i] != declaration[i]) return bytes;
-    }
-    return Uint8List.fromList(bytes)..[declaration.length - 1] = 0x09;
   }
 
   /// The export made from the version's own file, so nothing the editing
@@ -654,8 +643,11 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     if (kind == ScoreExportKind.musicXml) {
       return ScoreExport(
         bytes: Uint8List.fromList(utf8.encode(xml)),
-        fileName: '$title.musicxml',
-        extension: 'musicxml',
+        // ".xml": Android knows no ".musicxml", and a second file of the
+        // same name would be saved as "name.musicxml (1)". Every program
+        // that reads MusicXML reads it under either name.
+        fileName: '$title.$musicXmlExportExtension',
+        extension: musicXmlExportExtension,
       );
     }
     if (view == null) return null;
@@ -1561,6 +1553,8 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
         _export(data, score, ScoreExportKind.project);
       case _ScoreMenuAction.chordDisplay:
         _nextChordDisplay();
+      case _ScoreMenuAction.pageView:
+        setState(() => _pageView = !_pageView);
       case _ScoreMenuAction.mixer:
         unawaited(
           _showMixer(_playbackEnabled ? _performanceScore(score) : score),
@@ -1994,7 +1988,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
+        ).showSnackBar(SnackBar(content: Text(_saidOf(error))));
       }
     }
   }
@@ -2063,7 +2057,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
+        ).showSnackBar(SnackBar(content: Text(_saidOf(error))));
       }
     }
   }
@@ -2100,7 +2094,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
+        ).showSnackBar(SnackBar(content: Text(_saidOf(error))));
       }
     }
   }
@@ -2152,9 +2146,17 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
           autofocus: _editing,
           onKeyEvent: (node, event) => _onNoteKey(event),
           child: PopScope(
-            canPop: !_isDirty,
+            // Back puts away the playing-order panel first: it lies over
+            // the score like a sheet, and leaving the score with it would
+            // be one step too many.
+            canPop: !_isDirty && !_showSequencePanel,
             onPopInvokedWithResult: (didPop, _) {
-              if (!didPop) _confirmLeave(value, editor);
+              if (didPop) return;
+              if (_showSequencePanel) {
+                _toggleSequencePanel();
+              } else {
+                _confirmLeave(value, editor);
+              }
             },
             child: Scaffold(
               appBar: AppBar(
@@ -2407,6 +2409,11 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                             title: Text('MIDI'),
                           ),
                         ),
+                        CheckedPopupMenuItem(
+                          value: _ScoreMenuAction.pageView,
+                          checked: _pageView,
+                          child: Text(context.l10n.viewPrint),
+                        ),
                         PopupMenuItem(
                           value: _ScoreMenuAction.mixer,
                           child: ListTile(
@@ -2466,6 +2473,7 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
                           : PlaybackSequence.empty,
                       tempoPercent: _tempoPercent,
                       chordDisplay: _chordDisplay,
+                      pageView: _pageView,
                       partLevels: _partLevels(
                         (_playbackEnabled ? _performanceScore(score) : score)
                             .parts
@@ -2686,3 +2694,8 @@ class _DigitalScoreScreenState extends ConsumerState<DigitalScoreScreen> {
     );
   }
 }
+
+/// What went wrong, as the user is told it: a refusal in its own words,
+/// without the name of the error it came as.
+String _saidOf(Object error) =>
+    error is FormatException ? error.message : error.toString();

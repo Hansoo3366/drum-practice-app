@@ -462,7 +462,11 @@ void _dropRestated(XmlElement measure, _Context active) {
         clef.getElement('sign')?.innerText.trim() ?? 'G',
         number(clef.getElement('line')) ?? 2,
       );
-      if (state.clefs[staff] == written) _remove(clef);
+      final octaves = number(clef.getElement('clef-octave-change')) ?? 0;
+      if (state.clefs[staff] == written &&
+          (state.clefOctaves[staff] ?? 0) == octaves) {
+        _remove(clef);
+      }
     }
     for (final divisions in attributes.findElements('divisions').toList()) {
       if (number(divisions) == state.divisions) _remove(divisions);
@@ -801,6 +805,8 @@ class XmlNoteSummary {
     this.hidden = false,
     this.tacet = false,
     this.fermataShape,
+    this.quarterTone = 0,
+    this.tieStop = false,
   });
 
   final bool isRest;
@@ -871,6 +877,13 @@ class XmlNoteSummary {
   /// Whether the note is written but not played.
   final bool tacet;
 
+  /// Whether the note is a quarter tone higher (+1) or lower (-1) than its
+  /// pitch, or neither (0).
+  final int quarterTone;
+
+  /// Whether a tie from the note before ends on this note.
+  final bool tieStop;
+
   /// The shape of the note's fermata when it has one: `normal`, `angled`
   /// (a short hold) or `square` (a long one).
   final String? fermataShape;
@@ -901,8 +914,27 @@ class XmlMeasureEditor {
   const XmlMeasureEditor();
 
   XmlNoteSummary describe(String xml, XmlNoteRef ref) {
-    final measure = _ScoreDoc(xml).measure(ref);
-    return _summarize(measure, measure.note(ref.noteIndex));
+    final doc = _ScoreDoc(xml);
+    try {
+      final measure = doc.measure(ref);
+      return _summarize(measure, measure.note(ref.noteIndex));
+    } finally {
+      // Only read: the next edit need not read the score again.
+      doc.keep(xml);
+    }
+  }
+
+  /// A summary of each note of a bar: what [inspect] says of its notes,
+  /// without the bar being written out on its own (which is most of what
+  /// [inspect] takes, and is not needed to know what notes a bar has).
+  List<XmlNoteSummary> notesOf(String xml, int partIndex, int measureIndex) {
+    final doc = _ScoreDoc(xml);
+    try {
+      final measure = doc.measureAt(partIndex, measureIndex);
+      return [for (final info in measure.notes) _summarize(measure, info)];
+    } finally {
+      doc.keep(xml);
+    }
   }
 
   /// The bar on its own, a summary of each of its notes and its texts.
@@ -988,6 +1020,8 @@ class XmlMeasureEditor {
       staff: info.staff,
       hidden: info.element.getAttribute('print-object') == 'no',
       tacet: _isTacet(info.element),
+      quarterTone: info.quarterTone,
+      tieStop: info.tieStop,
       fermataShape: switch (head.element
           .getElement('notations')
           ?.getElement('fermata')) {
@@ -1014,29 +1048,172 @@ class XmlMeasureEditor {
   /// Moves a note one staff position up or down in the key and measure
   /// context. Tied notes move together.
   XmlEditResult moveDiatonic(String xml, XmlNoteRef ref, int steps) {
-    return _editPitch(xml, ref, (doc, measure, info) {
-      final pitch = info.pitch!;
-      final number = pitch.octave * 7 + pitch.step.index + steps;
-      final step = PitchStep.values[number % 7];
-      final octave = number ~/ 7;
-      return MusicPitch(
-        step: step,
-        octave: octave,
-        alter: measure.contextAlter(info, step, octave),
-      );
-    });
+    return _editPitch(xml, ref, _bySteps(steps));
   }
 
   XmlEditResult shiftOctave(String xml, XmlNoteRef ref, int octaves) {
-    return _editPitch(xml, ref, (doc, measure, info) {
-      final pitch = info.pitch!;
-      return MusicPitch(
-        step: pitch.step,
-        octave: pitch.octave + octaves,
-        alter: pitch.alter,
-      );
-    });
+    return _editPitch(xml, ref, _byOctaves(octaves));
   }
+
+  /// Does [edit] to each of [refs] in turn, each on the score the one
+  /// before left. An edit that refuses (a [FormatException]) or returns
+  /// null is passed over. Says the score at the end and how many edits
+  /// went through.
+  ///
+  /// The score is read once and written as seldom as can be, not once per
+  /// note: picked a whole piano piece, an edit per note that each wrote the
+  /// score out would hold the screen for many seconds.
+  ///
+  /// [edit] must work through this editor alone and be given the same
+  /// result for the same score: after a refusal the score is brought back
+  /// to what was last written and the edits since are made again.
+  ({String xml, int done}) editEach(
+    String xml,
+    Iterable<XmlNoteRef> refs,
+    XmlEditResult? Function(String xml, XmlNoteRef ref) edit,
+  ) {
+    final all = refs.toList();
+    if (_ScoreDoc._deferring || all.length < 8) {
+      return _editEachPlainly(xml, all, edit);
+    }
+    _ScoreDoc._deferring = true;
+    try {
+      // What was written last, and the edits that went through since.
+      var text = xml;
+      var since = <XmlNoteRef>[];
+      var current = xml;
+      var done = 0;
+      // How many edits before the score is written again: fewer after a
+      // refusal (each costs the edits since the last writing), more again
+      // while they go through.
+      var every = 64;
+      for (final ref in all) {
+        try {
+          final result = edit(current, ref);
+          if (result == null) continue;
+          current = result.xml;
+          since.add(ref);
+          done++;
+          if (since.length >= every) {
+            current = text = _ScoreDoc.written(current);
+            since = [];
+            if (every < 64) every *= 2;
+          }
+        } on XmlException {
+          // The edit read a slip as text.
+          throw const _SlipLost();
+        } on FormatException {
+          // The score in hand may be half changed. Back to what was
+          // written last, and what went through since is done again.
+          current = text;
+          try {
+            for (final again in since) {
+              current = edit(current, again)!.xml;
+            }
+          } on FormatException {
+            // What went through once does not go through again: [edit]
+            // is not one this can be done for.
+            throw const _SlipLost();
+          }
+          current = text = _ScoreDoc.written(current);
+          since = [];
+          every = math.max(1, every ~/ 2);
+        }
+      }
+      return (xml: _ScoreDoc.written(current), done: done);
+    } on _SlipLost {
+      // An edit this cannot be done for: the plain way, from the start.
+      _ScoreDoc._deferring = false;
+      return _editEachPlainly(xml, all, edit);
+    } finally {
+      _ScoreDoc._deferring = false;
+    }
+  }
+
+  ({String xml, int done}) _editEachPlainly(
+    String xml,
+    List<XmlNoteRef> refs,
+    XmlEditResult? Function(String xml, XmlNoteRef ref) edit,
+  ) {
+    var current = xml;
+    var done = 0;
+    for (final ref in refs) {
+      try {
+        final result = edit(current, ref);
+        if (result == null) continue;
+        current = result.xml;
+        done++;
+      } on FormatException {
+        // A note the edit does not fit is passed over.
+      }
+    }
+    return (xml: current, done: done);
+  }
+
+  /// [moveDiatonic] by [steps], or [shiftOctave] by [octaves], for many
+  /// notes at once. The score is read once and written once however many
+  /// notes there are (a whole piano piece picked is thousands of them:
+  /// written note by note, it would be written thousands of times).
+  ///
+  /// A note it does not fit (a rest, a note that would leave the range) is
+  /// passed over, and so is a note that has already moved with a note it is
+  /// tied to. Throws when not one note could be moved.
+  XmlEditResult movePitches(
+    String xml,
+    Iterable<XmlNoteRef> refs, {
+    int steps = 0,
+    int octaves = 0,
+  }) {
+    if ((steps == 0) == (octaves == 0)) {
+      throw const FormatException('옮길 방향을 하나만 고르세요.');
+    }
+    final next = steps != 0 ? _bySteps(steps) : _byOctaves(octaves);
+    final doc = _ScoreDoc(xml);
+    final moved = <XmlElement>{};
+    XmlNoteRef? first;
+    try {
+      for (final ref in refs) {
+        try {
+          _editPitchIn(doc, ref, next, moved: moved);
+          first ??= ref;
+        } on FormatException {
+          // Refused before anything was changed: the next note.
+        }
+      }
+    } finally {
+      // Nothing was changed: the score read is still what the text says.
+      if (moved.isEmpty) doc.keep(xml);
+    }
+    if (moved.isEmpty || first == null) {
+      throw const FormatException('고른 음에는 할 수 없는 편집입니다.');
+    }
+    return XmlEditResult(doc.toXml(), first);
+  }
+
+  static MusicPitch Function(_ScoreDoc, _MeasureView, _NoteInfo) _bySteps(
+    int steps,
+  ) => (doc, measure, info) {
+    final pitch = info.pitch!;
+    final number = pitch.octave * 7 + pitch.step.index + steps;
+    final step = PitchStep.values[number % 7];
+    final octave = number ~/ 7;
+    return MusicPitch(
+      step: step,
+      octave: octave,
+      alter: measure.contextAlter(info, step, octave),
+    );
+  };
+
+  static MusicPitch Function(_ScoreDoc, _MeasureView, _NoteInfo) _byOctaves(
+    int octaves,
+  ) => (doc, measure, info) {
+    final pitch = info.pitch!;
+    return MusicPitch(
+      step: pitch.step,
+      octave: pitch.octave + octaves,
+      alter: pitch.alter,
+    );
+  };
 
   XmlEditResult setAlter(String xml, XmlNoteRef ref, int alter) {
     if (alter < -2 || alter > 2) {
@@ -2008,6 +2185,15 @@ class XmlMeasureEditor {
     }
     for (final harmony in harmonies) {
       _remove(harmony.$2);
+      // It is placed by where it sounded: an offset from a note that is
+      // gone would be counted a second time.
+      harmony.$2.findElements('offset').toList().forEach(_remove);
+    }
+    // The notes that go take their ties and lines with them: the bar
+    // before must not be left tied to a note that is no longer there.
+    for (final note in measure.notes) {
+      if (note.tieStart || note.tieStop) doc.breakTies(measureIndex, note);
+      _detachNoteSpans(note.element);
     }
     for (final note in old) {
       _remove(note);
@@ -2176,11 +2362,27 @@ class XmlMeasureEditor {
     next,
   ) {
     final doc = _ScoreDoc(xml);
+    _editPitchIn(doc, ref, next);
+    return XmlEditResult(doc.toXml(), ref);
+  }
+
+  /// [_editPitch] on a score already read. It refuses before it changes
+  /// anything, so a score it refused is the score as it was. The notes it
+  /// gave a new pitch are added to [moved]; a note already in [moved] (it
+  /// went with a note it is tied to) is left where it is.
+  void _editPitchIn(
+    _ScoreDoc doc,
+    XmlNoteRef ref,
+    MusicPitch Function(_ScoreDoc doc, _MeasureView measure, _NoteInfo info)
+    next, {
+    Set<XmlElement>? moved,
+  }) {
     final measure = doc.measure(ref);
     final info = measure.note(ref.noteIndex);
     if (info.isRest) {
       throw const FormatException('쉼표를 먼저 음표로 바꾸세요.');
     }
+    if (moved != null && moved.contains(info.element)) return;
     final pitch = next(doc, measure, info);
     if (pitch.octave < 0 || pitch.octave > 9) {
       throw const FormatException('음역을 벗어났습니다.');
@@ -2189,6 +2391,7 @@ class XmlMeasureEditor {
     final chain = doc.tieChain(ref.measureIndex, info);
     for (final (_, note) in chain) {
       note.element.getElement('pitch')!.replace(_pitchElement(pitch));
+      moved?.add(note.element);
     }
     final touched = <int>{for (final (index, _) in chain) index};
     for (final index in touched) {
@@ -2197,7 +2400,6 @@ class XmlMeasureEditor {
         pitch.step,
       });
     }
-    return XmlEditResult(doc.toXml(), ref);
   }
 }
 
@@ -2395,6 +2597,12 @@ String harmonyText(XmlElement harmony) {
 
 // --- Document model -------------------------------------------------------
 
+/// A slip was handed to code that reads the text itself, or after the
+/// score it stands for was let go: the edits have to be made the plain way.
+class _SlipLost implements Exception {
+  const _SlipLost();
+}
+
 class _ScoreDoc {
   _ScoreDoc(String xml) : document = _take(xml) {
     if (document.rootElement.name.local != 'score-partwise') {
@@ -2403,11 +2611,38 @@ class _ScoreDoc {
   }
 
   static XmlDocument _parse(String xml) {
+    if (xml.startsWith(_slipMark)) {
+      // A slip stands for a score that was never written out, and that
+      // score is no longer kept: there is nothing to read.
+      throw const _SlipLost();
+    }
     try {
       return XmlDocument.parse(xml);
     } on XmlException {
       throw const FormatException('악보 파일을 읽을 수 없습니다.');
     }
+  }
+
+  // Writing a long score out takes as long as reading it, and an edit made
+  // to each of many notes would write it once per note only for the next
+  // edit to take the kept document and never look at the text. While such
+  // edits run ([XmlMeasureEditor.editEach]), [toXml] therefore hands out a
+  // slip in place of the text: a short string that stands for the kept
+  // document. Whoever is given a slip and asks for its document gets the
+  // kept one; the text is written when [written] is asked for it.
+  static const _slipMark = '\u0000score-not-written-yet#';
+  static var _slips = 0;
+  static var _deferring = false;
+
+  /// The text [xml] stands for: itself, or the kept score written out when
+  /// it is a slip.
+  static String written(String xml) {
+    if (!xml.startsWith(_slipMark)) return xml;
+    final kept = _keptDocument;
+    if (kept == null || !identical(xml, _keptXml)) throw const _SlipLost();
+    final text = kept.toXmlString();
+    _keptXml = text;
+    return text;
   }
 
   // Reading a long score is most of the time an edit takes, and an editor
@@ -2433,7 +2668,7 @@ class _ScoreDoc {
 
   /// The score as text. The document must not be changed after this.
   String toXml() {
-    final xml = document.toXmlString();
+    final xml = _deferring ? '$_slipMark${_slips++}' : document.toXmlString();
     _keptXml = xml;
     _keptDocument = document;
     return xml;
@@ -2710,6 +2945,7 @@ class _Context {
     this.beatType = 4,
     this.staves = 1,
     this.clefs = const {},
+    this.clefOctaves = const {},
   });
 
   final int divisions;
@@ -2719,6 +2955,11 @@ class _Context {
   final int staves;
   final Map<int, (String, int)> clefs;
 
+  /// By how many octaves the clef of a staff sounds off what it shows (a
+  /// tenor's treble clef with an 8 under it is -1); staves without such a
+  /// clef are not in it.
+  final Map<int, int> clefOctaves;
+
   bool sameAs(_Context other) =>
       divisions == other.divisions &&
       fifths == other.fifths &&
@@ -2726,7 +2967,12 @@ class _Context {
       beatType == other.beatType &&
       staves == other.staves &&
       clefs.length == other.clefs.length &&
-      clefs.entries.every((entry) => other.clefs[entry.key] == entry.value);
+      clefs.entries.every(
+        (entry) =>
+            other.clefs[entry.key] == entry.value &&
+            (other.clefOctaves[entry.key] ?? 0) ==
+                (clefOctaves[entry.key] ?? 0),
+      );
 
   /// An `<attributes>` element restating this context.
   XmlElement toAttributes() {
@@ -2745,19 +2991,35 @@ class _Context {
         XmlElement(
           XmlName('clef'),
           [if (staves > 1) XmlAttribute(XmlName('number'), '${entry.key}')],
-          [leaf('sign', entry.value.$1), leaf('line', '${entry.value.$2}')],
+          [
+            leaf('sign', entry.value.$1),
+            leaf('line', '${entry.value.$2}'),
+            if ((clefOctaves[entry.key] ?? 0) != 0)
+              leaf('clef-octave-change', '${clefOctaves[entry.key]}'),
+          ],
         ),
     ]);
   }
 
   _Context merge(XmlElement attributes) {
     final clefs = Map<int, (String, int)>.of(this.clefs);
+    final clefOctaves = Map<int, int>.of(this.clefOctaves);
     for (final clef in attributes.findElements('clef')) {
       final number = int.tryParse(clef.getAttribute('number') ?? '') ?? 1;
       clefs[number] = (
         clef.getElement('sign')?.innerText.trim() ?? 'G',
         int.tryParse(clef.getElement('line')?.innerText.trim() ?? '') ?? 2,
       );
+      final octaves =
+          int.tryParse(
+            clef.getElement('clef-octave-change')?.innerText.trim() ?? '',
+          ) ??
+          0;
+      if (octaves == 0) {
+        clefOctaves.remove(number);
+      } else {
+        clefOctaves[number] = octaves;
+      }
     }
     final time = attributes.getElement('time');
     return _Context(
@@ -2776,18 +3038,26 @@ class _Context {
                 '',
           ) ??
           fifths,
-      beats:
-          int.tryParse(time?.getElement('beats')?.innerText.trim() ?? '') ??
-          beats,
-      beatType:
-          int.tryParse(time?.getElement('beat-type')?.innerText.trim() ?? '') ??
-          beatType,
+      // A time of no beats or of beats of no length says nothing.
+      beats: switch (int.tryParse(
+        time?.getElement('beats')?.innerText.trim() ?? '',
+      )) {
+        final written? when written > 0 => written,
+        _ => beats,
+      },
+      beatType: switch (int.tryParse(
+        time?.getElement('beat-type')?.innerText.trim() ?? '',
+      )) {
+        final written? when written > 0 => written,
+        _ => beatType,
+      },
       staves:
           int.tryParse(
             attributes.getElement('staves')?.innerText.trim() ?? '',
           ) ??
           staves,
       clefs: clefs,
+      clefOctaves: clefOctaves,
     );
   }
 }
@@ -2825,13 +3095,26 @@ class _NoteInfo {
     if (pitch == null) return null;
     return MusicPitch(
       step: PitchStepMusicXml.parse(pitch.getElement('step')!.innerText),
+      // A quarter tone is written as a half: the note is its whole
+      // alteration here, and [quarterTone] says the rest.
       alter:
           double.tryParse(
             pitch.getElement('alter')?.innerText.trim() ?? '',
-          )?.round() ??
+          )?.truncate() ??
           0,
       octave: int.parse(pitch.getElement('octave')!.innerText.trim()),
     );
+  }
+
+  /// Whether the note is a quarter tone higher (+1) or lower (-1) than its
+  /// pitch says, or neither (0).
+  int get quarterTone {
+    final alter = double.tryParse(
+      element.getElement('pitch')?.getElement('alter')?.innerText.trim() ?? '',
+    );
+    if (alter == null) return 0;
+    final rest = alter - alter.truncate();
+    return rest > 0.25 ? 1 : (rest < -0.25 ? -1 : 0);
   }
 }
 
@@ -3006,13 +3289,14 @@ class _MeasureView {
   (PitchStep, int) middleLine(int staff) {
     final (sign, line) =
         context.clefs[staff] ?? (staff == 1 ? ('G', 2) : ('F', 4));
-    return switch ((sign, line)) {
+    final (step, octave) = switch ((sign, line)) {
       ('F', 4) => (PitchStep.d, 3),
       ('F', 3) => (PitchStep.f, 3),
       ('C', 3) => (PitchStep.c, 4),
       ('C', 4) => (PitchStep.a, 3),
       _ => (PitchStep.b, 4),
     };
+    return (step, octave + (context.clefOctaves[staff] ?? 0));
   }
 
   /// The alter a note written at [step]/[octave] gets without its own
@@ -3051,6 +3335,8 @@ class _MeasureView {
         );
     final seen = <(PitchStep, int), int>{};
     for (final note in ordered) {
+      // A quarter tone carries its own sign, which is not one of these.
+      if (note.quarterTone != 0) continue;
       final pitch = note.pitch!;
       final key = (pitch.step, pitch.octave);
       final expected = seen[key] ?? _keyAlter(pitch.step, context.fifths);

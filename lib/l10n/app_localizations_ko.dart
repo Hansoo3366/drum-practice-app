@@ -2884,4 +2884,33 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get mixerSolo => '혼자 듣기';
+
+  @override
+  String get quarterToneMenu => '사분음';
+
+  @override
+  String get quarterToneUp => '사분음 올림';
+
+  @override
+  String get quarterToneDown => '사분음 내림';
+
+  @override
+  String get viewMenu => '보기 방식';
+
+  @override
+  String get viewLines => '줄 보기';
+
+  @override
+  String get viewContinuous => '이어 보기';
+
+  @override
+  String get viewPrint => '인쇄 보기 (쪽 테두리)';
+
+  @override
+  String get toolsView => '보기';
+
+  @override
+  String editingManyNotes(int done, int total) {
+    return '음 $total개 가운데 $done개째 편집하는 중';
+  }
 }

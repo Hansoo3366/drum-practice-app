@@ -200,7 +200,12 @@ extension XmlMeasureMarks on XmlMeasureEditor {
       _remove(member.element);
     }
     var end = voiceEnd - removed;
-    final fill = voiceEnd >= capacity && end < capacity ? capacity - end : 0;
+    // A bar that was full is filled up again. A bar that was short and
+    // would be left with nothing in it keeps a rest where the note was: a
+    // bar without a note or rest is one no tool can reach any more.
+    final fill = voiceEnd >= capacity && end < capacity
+        ? capacity - end
+        : (end <= 0 && removed > 0 ? removed : 0);
     if (fill > 0) {
       measure = doc.measure(ref);
       final rests = <XmlElement>[];
