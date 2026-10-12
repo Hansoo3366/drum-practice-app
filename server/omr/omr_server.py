@@ -947,7 +947,10 @@ def _postprocess(path: Path, profile: str) -> tuple[Path, dict]:
         # Bars and notes from the second reader; the reading of chords and lyrics below
         # then goes by them (omr_hybrid).
         try:
-            report["second_reader"] = omr_hybrid.read_sheets(path, book)
+            # A score it cannot use (voice and piano) is not read: reading takes a
+            # good half minute a page.
+            if omr_hybrid.unfit(root) is None:
+                report["second_reader"] = omr_hybrid.read_sheets(path, book)
             report["hybrid"], undo = omr_hybrid.apply(root, book, path.parent, dashes)
         except Exception as exc:  # noqa: BLE001 - the score stays the engine's
             report["hybrid"], undo = {"status": "error", "error": str(exc)[-300:]}, None

@@ -287,6 +287,13 @@ class RereadTest(unittest.TestCase):
         self.assertIsNone(undo)
         self.assertEqual(ET.tostring(self.score), before)
 
+    def test_a_score_of_two_staves_is_not_one_for_the_second_reader(self):
+        self.assertIsNone(omr_hybrid.unfit(self.score))
+        self.bars()[0].find("note").append(ET.fromstring("<staff>2</staff>"))
+        self.assertEqual(omr_hybrid.unfit(self.score), "more than one staff")
+        report, undo = omr_hybrid.apply(self.score, self.book, self.folder)
+        self.assertEqual((report["status"], undo), ("skipped", None))
+
     def test_an_empty_bar_before_the_repeat_sign_is_no_bar(self):
         _homr_page(self.folder,
                    [["", _note("C", 4), _note("D", 4)], [_note("E", 4), _note("F", 4)]],

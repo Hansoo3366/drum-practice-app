@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-12T07:56:00+09:00"
+last_updated: "2026-10-12T13:37:00+09:00"
 current_phase:
   id: "RELEASE-4"
   name: "OMR 정확도 최소 95% 개선·검증"
@@ -1430,6 +1430,9 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-10-06T13:58:32+09:00"
   checks:
+    - name: "hybrid_notes_live_20261012"
+      result: "passed_with_known_gaps"
+      detail: "분업(omr_hybrid.py, homr 0.7.0)을 서버에 배포·켜고 공개 API로 실변환(convert.py hy1, AI 검토 포함). 17곡 766마디: 완전 일치 519→636(67.8→83.0%), 찾은 마디 743→763, 합쳐 읽은 마디 44→0, 음표 수 83.6→98.3%, 가사 87.9→94.8%, 코드 92.1→94.4%, 기호 72.5→74.2%. 15곡 상승·1곡 동일·1곡 하락(s11 한 마디). 독립 표본 3곡 91마디 86.8→87.9%(두 파트 악보 1곡은 분업 대상이 아니어서 동일). 서버 작업 시간 곡당 평균 198→245초. 변환 결과 40개를 앱 코드로 읽기·재생 MIDI·편집 확인. 서버 unittest 209 통과, 서버·로컬 파일 해시 일치. 알려진 공백: 95% 목표까지 92마디 부족(gate 실패), 음높이는 정답지가 재지 않음, 엔진이 놓친 줄(4마디)은 채우지 못함."
     - name: "hybrid_notes_in_server_20261012"
       result: "passed_with_known_gaps"
       detail: "서버 후처리 안의 분업(omr_hybrid.py, 기본 꺼짐)을 tool/accuracy/replay_post.py로 17곡 766마디에 재생(AI 검토 전 fixed 단계끼리, homr 0.7.0 프로세서 전용): 찾은 마디 743→763, 합쳐 읽은 마디 44→0, 음표 수 83.6→98.3%, 가사 81.7→88.1%, 코드 63.3→67.5%, 기호 72.5→72.3%, 완전 일치 38.1→46.5%. 곡별로 완전 일치가 내려간 곡 없음, 211줄 모두 homr 줄, 17곡 모두 쪽 그림과 묶임. 스위치를 끄면 17곡 결과가 이전과 바이트 단위로 같음. 서버 unittest 208 통과. 알려진 공백: AI 검토 뒤 최종 수치(기준 67.8%)와 독립 표본 3곡은 서버 배포 후에만 잴 수 있음(이 Mac에 AI 키·엔진 자료 없음), 음높이는 정답지가 재지 않음, 서버 설치·배포는 하지 않음."

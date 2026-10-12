@@ -45,6 +45,19 @@ def enabled() -> bool:
     return os.environ.get("OMR_HYBRID_NOTES", "").strip() == "1"
 
 
+def unfit(root: ET.Element) -> str | None:
+    """Why this score is not one for the second reader (it reads one staff of one part: a
+    melody line), or None."""
+    parts = root.findall("part")
+    if len(parts) != 1:
+        return "more than one part"
+    if not parts[0].findall("measure"):
+        return "no bars"
+    if any(int(_number(note.findtext("staff"), 1)) > 1 for note in parts[0].iter("note")):
+        return "more than one staff"
+    return None
+
+
 def _sheet_images(path: Path, book: dict) -> dict[str, bytes]:
     """Per sheet, the picture homr reads: the photo that was uploaded (homr was taught on
     photos), else the page as the engine saw it."""
@@ -768,15 +781,11 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
     notes, are moved to the notes that stand for them. Returns what it did and, when it
     changed the score, a function that puts the score back as it was."""
     (folder / SIDECAR).unlink(missing_ok=True)
-    parts = root.findall("part")
-    if len(parts) != 1:
-        return {"status": "skipped", "reason": "more than one part"}, None
-    part = parts[0]
+    reason = unfit(root)
+    if reason is not None:
+        return {"status": "skipped", "reason": reason}, None
+    part = root.find("part")
     measures = part.findall("measure")
-    if not measures:
-        return {"status": "skipped", "reason": "no bars"}, None
-    if any(int(_number(note.findtext("staff"), 1)) > 1 for note in part.iter("note")):
-        return {"status": "skipped", "reason": "more than one staff"}, None
     entries = book["placements"][0]
     heights = {number: image.height for number, _sheet, image, _interline, _staves in book["sheets"]}
     server = _lines(measures)

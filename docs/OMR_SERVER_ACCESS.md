@@ -158,3 +158,17 @@ flutter build apk --release --flavor piano -t lib/piano_main.dart \
 
 한도 조정(`/etc/default/omr`, 하루·UTC): `OMR_CONVERT_PER_CLIENT`(30), `OMR_CONVERT_PER_ADDRESS`(60), `OMR_CONVERT_PER_DAY`(500), `OMR_AI_PER_CLIENT`(60), `OMR_AI_PER_ADDRESS`(120), `OMR_AI_PER_DAY`(1000), `OMR_REGISTER_PER_ADDRESS`(10), `OMR_REGISTER_PER_DAY`(500). 바꾼 뒤 `sudo systemctl restart omr.service`.
 
+
+## 두 번째 판독기 homr (2026-10-12 배포)
+
+코드·가사 악보의 마디·음표를 homr가 읽고 그 위에서 서버가 코드·가사를 읽는다(`server/omr/omr_hybrid.py`, D-231).
+
+- VM 확인: 2 vCPU, 메모리 8 GB, 디스크 여유 23 GB, Ubuntu 24.04, Python 3.12.
+- 배포 전 서버 파일은 VM `~/omr_backup_20261012/`(저장소 커밋 `386864f`의 서버 파일과 같음), 올린 파일은 `~/omr_upload_20261012/`.
+- `sudo bash update.sh <폴더>`로 서버 코드 갱신(스위치 꺼진 상태) → `bash install_homr.sh`로 설치·켜기.
+  - `/opt/omr/homr/`에 전용 venv와 `homr==0.7.0`(546 MB, 모델 3개 포함), `/opt/omr/homr_sheet.py`.
+  - `/etc/default/omr`에 `OMR_HOMR_PYTHON=/opt/omr/homr/bin/python`, `OMR_HYBRID_NOTES=1`.
+- 끄기: `bash install_homr.sh --off`(값만 0으로 바꾸고 서비스 재시작, 설치는 남음). 스위치가 꺼지면 변환 결과는 이전 코드와 같다.
+- 확인: 작업의 `recognition.json` → 후보의 `repairs.second_reader`(읽은 쪽 수, 걸린 시간)와 `repairs.hybrid`(바뀐 줄 수, 남긴 줄과 이유). homr가 실패한 쪽은 `out/homr/sheet<N>.log`.
+- 걸리는 시간: homr는 이 VM에서 쪽당 약 35초(프로세서만 사용). 한 작업에서 300/400 DPI 두 후보가 같은 결과를 쓴다.
+- 설치 때 커널 갱신 안내가 나왔다(실행 중 7.0.0-1011, 새 커널 7.0.0-1014). 재부팅은 하지 않았다.
