@@ -1,6 +1,7 @@
 """Command contract tests that do not need a running VM or Flask installation."""
 
 import importlib.util
+import math
 import io
 import json
 import os
@@ -588,9 +589,135 @@ class LineOcrTest(unittest.TestCase):
         # Crop starts at 100 and carries a 10 px border.
         self.assertEqual([x for x, _ in syllables], [125.0, 165.0, 195.0, 230.0])
 
+    def test_the_lines_after_held_syllables_do_not_make_a_line_no_lyrics(self):
+        # "않으리— 빛가운데로~ 걸으리_": nine syllables and three held-syllable lines, which
+        # the reader gives as words of their own.
+        words = [(20 + 30 * i, 25, 90 + i % 5, ch) for i, ch in enumerate("않으리")] + [(110, 20, 90, "-")]
+        words += [(140 + 30 * i, 25, 88 + i % 6, ch) for i, ch in enumerate("빛가운데로")] + [(290, 20, 80, "~")]
+        words += [(320 + 30 * i, 25, 92, ch) for i, ch in enumerate("걸으리")] + [(410, 20, 60, "_")]
+        syllables = self.read(self.tsv(*words))
+        self.assertEqual("".join(text for _, text in syllables), "않으리빛가운데로걸으리")
+        # Note heads and stems under a staff, read as a few Hangul among more such lines:
+        # not a line of words.
+        heads = [(20, 30, 70, "트"), (60, 20, 90, "-"), (90, 20, 80, "~"), (120, 30, 72, "공"), (160, 20, 60, "_"),
+                 (190, 30, 85, "공"), (220, 20, 70, "~"), (250, 30, 73, "골"), (280, 20, 75, "~"), (310, 30, 63, "닐"),
+                 (340, 20, 70, "~"), (370, 20, 70, "-")]
+        self.assertEqual(self.read(self.tsv(*heads)), [])
+
     def test_note_heads_read_as_hangul_are_rejected(self):
         self.assertEqual(self.read(self.tsv((20, 30, 50, "골"), (60, 30, 45, "공"), (100, 30, 56, "호"))), [])
         self.assertEqual(self.read(self.tsv((20, 30, 95, "가"), (60, 30, 90, "-"), (100, 30, 90, "<"), (140, 30, 90, "@"))), [])
+
+
+class SlashBarTest(unittest.TestCase):
+    """Bars printed as rhythm slashes."""
+
+    def book(self, strokes: int, heads=(), rests=True, time="4/4"):
+        from PIL import Image, ImageDraw
+        image = Image.new("L", (1000, 300), 255)
+        draw = ImageDraw.Draw(image)
+        for i in range(5):
+            draw.line((0, 100 + 20 * i, 1000, 100 + 20 * i), fill=0, width=2)
+        for k in range(strokes):  # rising strokes over the 2nd to 4th lines, at about 45 degrees
+            x = 150 + k * 120
+            draw.line((x, 165, x + 45, 115), fill=0, width=5)
+        beats, beat_type = time.split("/")
+        measure = ET.fromstring(
+            f"<measure number='1' width='900'><attributes><divisions>2</divisions>"
+            f"<time><beats>{beats}</beats><beat-type>{beat_type}</beat-type></time>"
+            "<clef><sign>G</sign><line>2</line></clef></attributes>"
+            "<harmony><root><root-step>G</root-step></root><kind>major</kind></harmony>"
+            + ("<note><rest/><duration>8</duration></note>" if rests else "<note><pitch><step>C</step><octave>5</octave></pitch><duration>8</duration></note>")
+            + "</measure>")
+        part = ET.Element("part")
+        part.append(measure)
+        staff = {"id": "1", "system": 0, "part": 0, "number": 1, "top": 100.0, "bottom": 180.0,
+                 "left": 50.0, "right": 950.0, "interline": 20.0, "measures": [(50.0, 950.0, list(heads))]}
+        return {"sheets": [("1", None, image, 20.0, [staff])], "parts": [part],
+                "placements": [[("1", 0, 0, [staff])]]}, measure
+
+    def test_four_slashes_in_a_rest_bar_become_four_slash_notes(self):
+        book, measure = self.book(4)
+        self.assertEqual(omr_marks._slash_bars(book), 1)
+        notes = measure.findall("note")
+        self.assertEqual([n.findtext("notehead") for n in notes], ["slash"] * 4)
+        self.assertEqual([n.findtext("duration") for n in notes], ["2"] * 4)
+        self.assertEqual([n.findtext("pitch/step") for n in notes], ["B"] * 4)
+        xs = [float(n.get("default-x")) for n in notes]
+        self.assertEqual(xs, sorted(xs))
+        self.assertTrue(100 < xs[0] < 140 and 460 < xs[3] < 500)
+        # The chord stays, before the first slash.
+        self.assertEqual([child.tag for child in measure][:3], ["attributes", "harmony", "note"])
+
+    def test_other_counts_and_bars_with_notes_or_heads_are_left_alone(self):
+        for strokes, heads, rests in ((3, (), True), (4, (300.0,), True), (4, (), False), (0, (), True)):
+            book, measure = self.book(strokes, heads, rests)
+            before = ET.tostring(measure)
+            self.assertEqual(omr_marks._slash_bars(book), 0, (strokes, heads, rests))
+            self.assertEqual(ET.tostring(measure), before)
+
+    def test_the_flats_of_a_key_signature_are_no_slashes(self):
+        # Two flats after the clef in the first bar of a line, in 6/8: two strokes, but
+        # where no slash stands.
+        book, measure = self.book(0, time="6/8")
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(book["sheets"][0][2])
+        for x in (80, 100):
+            draw.line((x, 165, x + 20, 125), fill=0, width=5)
+        self.assertEqual(omr_marks._slash_bars(book), 0)
+
+    def test_quarter_rests_are_no_slashes(self):
+        book, measure = self.book(0, time="6/8")
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(book["sheets"][0][2])
+        for x in (300, 500):  # the zigzag of a quarter rest, two of them
+            draw.line((x, 112, x + 16, 130, x, 148, x + 16, 166), fill=0, width=5)
+        self.assertEqual(omr_marks._slash_bars(book), 0)
+
+    def test_two_slashes_in_six_eight_are_dotted_quarters(self):
+        book, measure = self.book(2, time="6/8")
+        self.assertEqual(omr_marks._slash_bars(book), 1)
+        notes = measure.findall("note")
+        self.assertEqual([(n.findtext("duration"), n.find("dot") is not None) for n in notes], [("3", True)] * 2)
+
+
+class ChordLineTopTest(unittest.TestCase):
+    def test_the_chord_line_read_above_a_staff_bounds_the_lyrics_of_the_staff_above(self):
+        staff = {"id": "s2"}
+        self.assertEqual(omr_text._chord_line_top({}, {}, staff), math.inf)
+        self.assertEqual(omr_text._chord_line_top({}, {"s2": 410.0}, staff), 410.0)
+        # Read as chords where the engine marked none: the band's top counts. Kept by the
+        # staff record, not its id: the engine numbers staves per sheet.
+        self.assertEqual(omr_text._chord_line_top({"chord_bands": {id(staff): 395.0}}, {}, staff), 395.0)
+        self.assertEqual(omr_text._chord_line_top({"chord_bands": {id(staff): 395.0}}, {"s2": 410.0}, staff), 395.0)
+        self.assertEqual(omr_text._chord_line_top({"chord_bands": {id({}): 395.0}}, {}, staff), math.inf)
+
+
+class ChordBarTest(unittest.TestCase):
+    """A chord symbol that begins a little before a barline."""
+
+    def setUp(self):
+        self.first = ET.fromstring("<measure number='1'><note/><note/></measure>")
+        self.second = ET.fromstring("<measure number='2'><note/></measure>")
+        notes = self.first.findall("note") + self.second.findall("note")
+        self.book = {"onsets": {id(self.first): [(20.0, notes[0]), (100.0, notes[1])],
+                                id(self.second): [(230.0, notes[2])]}}
+        self.measures = {0: self.first, 1: self.second}
+        self.staff = {"measures": [(0.0, 200.0, []), (200.0, 400.0, [])]}
+
+    def test_the_next_bar_when_its_first_note_is_nearer(self):
+        # Letters from 190: ten pixels before the line, the next bar's note at 230.
+        self.assertIs(omr_text._bar_under_chord(self.book, self.measures, self.staff, 0, 190.0, 20.0), self.second)
+
+    def test_this_bar_when_the_letters_are_not_near_the_line(self):
+        self.assertIs(omr_text._bar_under_chord(self.book, self.measures, self.staff, 0, 120.0, 20.0), self.first)
+
+    def test_this_bar_when_its_last_note_is_nearer(self):
+        self.book["onsets"][id(self.first)].append((185.0, self.first.findall("note")[1]))
+        self.assertIs(omr_text._bar_under_chord(self.book, self.measures, self.staff, 0, 190.0, 20.0), self.first)
+
+    def test_no_bar_under_the_letters_is_none(self):
+        self.assertIsNone(omr_text._bar_under_chord(self.book, self.measures, self.staff, None, 190.0, 20.0))
 
 
 class AlignmentTest(unittest.TestCase):
@@ -1403,6 +1530,26 @@ class AiApplyTest(unittest.TestCase):
         self.assertEqual(texts, [["나"], ["—"], ["는"], []])
 
 
+    def test_nothing_sung_takes_the_words_off(self):
+        # Slashes under a staff read as Hangul; the model, sure, says this verse is empty.
+        measure = ET.fromstring("""<measure number="6">
+          <note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><tie type="stop"/>
+            <lyric number="1"><text>—</text></lyric><lyric number="2"><text>골</text></lyric></note>
+          <note><pitch><step>A</step><octave>4</octave></pitch><duration>1</duration>
+            <lyric number="1"><text>나</text></lyric><lyric number="2"><text>글</text></lyric></note>
+        </measure>""")
+        applied = omr_ai._apply_ai_measure(
+            measure, [{"field": "lyrics", "verse": "2", "suggested": "", "confidence": 0.98}], 0)
+        self.assertEqual([(a["field"], a["verse"], a["after"]) for a in applied], [("lyrics", "2", "")])
+        texts = [[l.findtext("text") for l in n.findall("lyric")] for n in measure.findall("note")]
+        self.assertEqual(texts, [["—"], ["나"]])
+        # Only dashes: the same, but the dash on the note tied from the bar before stays.
+        applied = omr_ai._apply_ai_measure(
+            measure, [{"field": "lyrics", "verse": "1", "suggested": "-", "confidence": 0.95}], 0)
+        self.assertEqual([a["after"] for a in applied], ["—"])
+        texts = [[l.findtext("text") for l in n.findall("lyric")] for n in measure.findall("note")]
+        self.assertEqual(texts, [["—"], []])
+
     def test_a_held_syllable_is_written_as_a_dash(self):
         def measure():
             return ET.fromstring("""<measure number="29">
@@ -1453,6 +1600,29 @@ class AiApplyTest(unittest.TestCase):
         self.assertEqual(applied[0]["after"], "사 합 니 — 온")
         texts = [[l.findtext("text") for l in n.findall("lyric")] for n in measure.findall("note")]
         self.assertEqual(texts, [["사"], ["합"], ["니"], ["—"], ["온"]])
+
+    def test_a_bar_may_begin_with_a_dash_on_a_note_tied_over_the_barline(self):
+        # The first note holds the last syllable of the bar before (a tie over the
+        # barline). The reader put the bar's two syllables one note early; the model
+        # names the first note as held.
+        measure = ET.fromstring("""<measure number="53">
+          <note><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration><tie type="stop"/>
+            <lyric number="1"><text>교</text></lyric></note>
+          <note><pitch><step>D</step><octave>4</octave></pitch><duration>1</duration>
+            <lyric number="1"><text>위</text></lyric></note>
+          <note><pitch><step>E</step><octave>4</octave></pitch><duration>1</duration></note>
+        </measure>""")
+        applied = omr_ai._apply_ai_measure(
+            measure, [{"field": "lyrics", "verse": "1", "suggested": "-그의", "confidence": 0.98}], 0)
+        self.assertEqual([a["field"] for a in applied], ["lyrics"])
+        texts = [[l.findtext("text") for l in n.findall("lyric")] for n in measure.findall("note")]
+        self.assertEqual(texts, [["—"], ["그"], ["의"]])
+        # Counted by the notes that begin a syllable when the model left the tie out.
+        again = ET.fromstring(ET.tostring(measure))
+        omr_ai._apply_ai_measure(
+            again, [{"field": "lyrics", "verse": "1", "suggested": "-가나", "confidence": 0.98}], 0)
+        texts = [[l.findtext("text") for l in n.findall("lyric")] for n in again.findall("note")]
+        self.assertEqual(texts, [["—"], ["가"], ["나"]])
 
     def test_a_dash_never_replaces_a_sung_syllable(self):
         measure = ET.fromstring("""<measure number="16">

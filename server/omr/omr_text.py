@@ -28,8 +28,7 @@ def _ocr_lyrics(book: dict, workdir: Path) -> dict:
                 continue
             if position + 1 < len(ordered):
                 below = ordered[position + 1]
-                limit = min(below["top"] - interline * 0.5,
-                            chord_tops.get(below["id"], math.inf) - interline * 0.2)
+                limit = min(below["top"] - interline * 0.5, _chord_line_top(book, chord_tops, below) - interline * 0.2)
             else:
                 limit = min(image.height, staff["bottom"] + interline * 10)
             box = (int(staff["left"]), int(staff["bottom"] + interline * 0.5),
@@ -207,6 +206,28 @@ def _place_harmony(book: dict, measure: ET.Element, x: float, interline: float,
     return True
 
 
+def _bar_under_chord(book: dict, measures: dict, staff: dict, index: int | None, x: float,
+                     interline: float) -> ET.Element | None:
+    """The bar a chord symbol beginning at page [x] belongs to: the one it stands over
+    ([index] among the staff's bars), or the next one when its letters begin a little before
+    that bar's line and the next bar's first note is nearer than this bar's last."""
+    if index is None:
+        return None
+    choices = []
+    for candidate in (index, index + 1):
+        measure = measures.get(candidate)
+        if measure is None:
+            continue
+        if candidate != index and x + interline * 1.5 < staff["measures"][candidate][0]:
+            continue
+        onsets = book["onsets"].get(id(measure), [])
+        distance = min((abs(px - x - interline * 0.5) for px, _note in onsets), default=math.inf)
+        choices.append((distance, candidate != index, measure))
+    if not choices:
+        return None
+    return min(choices, key=lambda choice: choice[:2])[2]
+
+
 def _split_chord_tokens(text: str) -> list[tuple[int, str]]:
     """Split glued chords ("Bsus4B") at each new root, with char offsets."""
     starts = [0] + [
@@ -318,8 +339,17 @@ def _chord_line_above(book: dict, image, staff: dict, interline: float, workdir:
         ]
         chords = [t for t in tokens if _parse_reread_chord(t["text"], 0) is not None]
         if len(chords) >= 2 and len(chords) >= 0.6 * len(tokens):
+            # Where this staff's chord line is: the lyrics of the staff above end over it.
+            # By the staff record itself: the engine numbers staves per sheet.
+            book.setdefault("chord_bands", {})[id(staff)] = float(band_top)
             return tokens
     return []
+
+
+def _chord_line_top(book: dict, chord_tops: dict, staff: dict) -> float:
+    """The top of a staff's chord line, as the engine saw it or as the line above the staff
+    was read as chords; infinity when neither found one."""
+    return min(chord_tops.get(staff["id"], math.inf), book.get("chord_bands", {}).get(id(staff), math.inf))
 
 
 def _ocr_chord_lines(book: dict, workdir: Path) -> int:
@@ -366,7 +396,7 @@ def _ocr_chord_lines(book: dict, workdir: Path) -> int:
                     index = next(
                         (i for i, (a, b, _) in enumerate(staff["measures"]) if a <= x < b), None,
                     )
-                    measure = measures.get(index)
+                    measure = _bar_under_chord(book, measures, staff, index, token["x"], interline)
                     if measure is None:
                         continue
                     chord = _parse_reread_chord(
@@ -420,11 +450,13 @@ def _reread_chords(book: dict, workdir: Path) -> int:
                         (i for i, (left, right, _) in enumerate(staff["measures"]) if left <= x < right),
                         None,
                     )
-                    measure = measures.get(index)
+                    home = measures.get(index)
+                    measure = _bar_under_chord(book, measures, staff, index, x, interline)
                     if measure is None:
                         continue
+                    # The word was exported into the bar it stands over.
                     direction = next(
-                        (d for d in measure.findall("direction")
+                        (d for bar in (home, measure) if bar is not None for d in bar.findall("direction")
                          if value in " ".join(w.text or "" for w in d.iter("words")).split()),
                         None,
                     )
@@ -452,7 +484,9 @@ def _reread_chords(book: dict, workdir: Path) -> int:
                     if remaining:
                         words.text = " ".join(remaining)
                     else:
-                        measure.remove(direction)
+                        for bar in (home, measure):
+                            if bar is not None and direction in list(bar):
+                                bar.remove(direction)
     return converted
 
 

@@ -66,9 +66,18 @@ def _sheet_images(path: Path, book: dict) -> dict[str, bytes]:
 
     out: dict[str, bytes] = {}
     sheets = book["sheets"]
+    # Pen and highlighter taken out (omr_annotations), as the engine reads it: a drawn
+    # bracket is no barline to homr either.
+    cleaned = path.parent.parent / "annotations"
+    for number, *_rest in sheets:
+        page = cleaned / f"page-{number}.clean.jpg"
+        if page.is_file():
+            out[number] = page.read_bytes()
     upload = next(iter(sorted((path.parent.parent.parent / "in").glob("score.*"))), None)
     try:
-        if upload is not None and upload.suffix.lower() in (".jpg", ".jpeg", ".png") and len(sheets) == 1:
+        if out:
+            pass
+        elif upload is not None and upload.suffix.lower() in (".jpg", ".jpeg", ".png") and len(sheets) == 1:
             out[sheets[0][0]] = upload.read_bytes()
         elif upload is not None and upload.suffix.lower() == ".pdf":
             photos = _pdf_photos(upload)
@@ -366,7 +375,7 @@ def _match_lines(mine: list[float], theirs: list[float | None]) -> list[int | No
     gaps = sorted(b - a for a, b in zip(mine, mine[1:]))
     near = max(1e-4, gaps[len(gaps) // 2] * 0.3)
     best: list[int | None] = [None] * len(mine)
-    most = 1
+    most, closest = 1, (math.inf, math.inf)
     for i0 in range(len(mine)):
         for i1 in range(i0 + 1, len(mine)):
             for j0 in range(len(theirs)):
@@ -376,17 +385,21 @@ def _match_lines(mine: list[float], theirs: list[float | None]) -> list[int | No
                         continue
                     moved = [mine[i0] + (y - theirs[j0]) * scale for y in theirs]
                     out: list[int | None] = []
-                    used = -1
+                    used, apart = -1, 0.0
                     for down in mine:
                         pick = min(range(used + 1, len(moved)), key=lambda k: abs(moved[k] - down), default=None)
                         if pick is not None and abs(moved[pick] - down) <= near:
                             out.append(pick)
                             used = pick
+                            apart += abs(moved[pick] - down)
                         else:
                             out.append(None)
                     count = sum(1 for value in out if value is not None)
-                    if count > most:
-                        best, most = out, count
+                    # As many lines as can be, the nearest their heights, and then by the
+                    # least stretch: both frames show the same page.
+                    fit = (apart, abs(math.log(scale)))
+                    if count > most or (count == most and fit < closest):
+                        best, most, closest = out, count, fit
     return best
 
 
@@ -458,7 +471,11 @@ def _line(engine: list[tuple[ET.Element, float, float]], homr: list[ET.Element],
     out = [copy.deepcopy(bar) for bar in homr]
     placed: list[list[tuple[float, ET.Element]]] = []   # the notes of each bar, by page x
     anchors: list[list[tuple[float, ET.Element]]] = []  # and with its rests
+    # The repeat signs homr read (it reads no sign it did not see): kept where the engine
+    # read none at that end of the bar.
+    repeats: list[list[ET.Element]] = []
     for index, bar in enumerate(out):
+        repeats.append([copy.deepcopy(b) for b in bar.findall("barline") if b.find("repeat") is not None])
         for child in list(bar):
             if child.tag in ("harmony", "barline", "print", "direction", "sound"):
                 bar.remove(child)
@@ -545,6 +562,13 @@ def _line(engine: list[tuple[ET.Element, float, float]], homr: list[ET.Element],
                     # Nothing to go by but its place among the bar's children.
                     x = first + (last - first) * (0.02 + 0.9 * position / max(1, len(children)))
                 bar = bar_at(x + interline * 0.5)
+                if bar + 1 < len(out) and x + interline * 1.5 >= cuts[bar + 1]:
+                    # Its letters begin a little before the next bar's line: it is the next
+                    # bar's when that bar's first note is nearer than this bar's last.
+                    def nearest(which: int) -> float:
+                        return min((abs(px - x - interline * 0.5) for px, _n in anchors[which]), default=math.inf)
+                    if nearest(bar + 1) < nearest(bar):
+                        bar += 1
                 element = copy.deepcopy(child)
                 target = note_at(bar, x + interline * 0.5, rests=True)
                 if target is not None:
@@ -558,6 +582,21 @@ def _line(engine: list[tuple[ET.Element, float, float]], homr: list[ET.Element],
                 else:
                     edge = max(1, min(range(len(cuts)), key=lambda k: abs(cuts[k] - last)))
                     out[edge - 1].append(copy.deepcopy(child))
+    for bar, seen in zip(out, repeats):
+        for barline in seen:
+            location = barline.get("location") or "right"
+            if any((b.get("location") or "right") == location for b in bar.findall("barline")):
+                continue
+            kept = ET.Element("barline", location=location)
+            for tag in ("bar-style", "repeat"):
+                found = barline.find(tag)
+                if found is not None:
+                    kept.append(copy.deepcopy(found))
+            if location == "left":
+                at = next((i for i, child in enumerate(bar) if child.tag not in ("print", "attributes")), 0)
+                bar.insert(at, kept)
+            else:
+                bar.append(kept)
     return out, [[round(x, 1) for x, _note in row] for row in placed]
 
 
@@ -777,7 +816,7 @@ def _same(a: ET.Element | None, b: ET.Element | None) -> bool:
 
 def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None):
     """Give the score homr's bars and notes where the two readers line up, keeping what the
-    engine's bars carry. [dashes], the (note, verse) held syllables found on the engine's
+    engine's bars carry, and put in the lines the engine left out whole. [dashes], the (note, verse) held syllables found on the engine's
     notes, are moved to the notes that stand for them. Returns what it did and, when it
     changed the score, a function that puts the score back as it was."""
     (folder / SIDECAR).unlink(missing_ok=True)
@@ -837,12 +876,41 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
     if common > 20160:
         return {"status": "skipped", "reason": "the two readers count time too differently"}, None
 
+    # A line of homr's that stands for none of the engine's is a line the engine left out
+    # whole: it goes in between its neighbours, where it stands on the page.
+    added = _added_lines(placed, theirs, pages)
+    entries: list[tuple] = [("added", line) for line in added if line["after"] < 0]
+    for index in range(len(server)):
+        entries.append(("engine", index))
+        entries.extend(("added", line) for line in added if line["after"] == index)
+
     merged: list[list[ET.Element]] = []
     sources: list[str] = []
+    matches: list[tuple[str, int] | None] = []  # homr's line behind each merged line
+    engine_lines: list[int | None] = []         # and the engine's
+    sheet_of: list[str | None] = []
     spans: list[dict] = []
     kept: list[str] = []
     moved: dict[int, ET.Element] = {}
-    for index, line in enumerate(server):
+    for kind, entry in entries:
+        if kind == "added":
+            line = entry
+            match = (line["sheet"], line["row"])
+            fresh = [copy.deepcopy(bar) for bar in pages[line["sheet"]]["lines"][line["row"]]]
+            _rescale(fresh, common // homr_divisions[match])
+            bars_out, xs = _line([], fresh, line["cuts"], [], line["staff"]["interline"], {})
+            merged.append(bars_out)
+            sources.append("added")
+            matches.append(match)
+            engine_lines.append(None)
+            sheet_of.append(line["sheet"])
+            spans.append({
+                "sheet": line["sheet"], "after": line["after_system"], "staff": line["staff"],
+                "spans": [[round(a, 1), round(b, 1)] for a, b in zip(line["cuts"], line["cuts"][1:])], "heads": xs,
+            })
+            continue
+        index = entry
+        line = server[index]
         match = theirs[index]
         divides = None
         if placed[index] is None:
@@ -865,6 +933,8 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
                 divides = known
             if divides is None:
                 kept.append(f"line {index + 1}: homr's barlines do not come to its bars")
+        engine_lines.append(index)
+        sheet_of.append(placed[index][0] if placed[index] is not None else None)
         if divides is None:
             own = [copy.deepcopy(bar) for bar in line]
             for old, new in zip(line, own):
@@ -873,6 +943,7 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
             _rescale(own, common // server_divisions[index])
             merged.append(own)
             sources.append("engine")
+            matches.append(None)
             continue
         source = [copy.deepcopy(bar) for bar in line]
         ids = {id(new): id(old) for old_bar, new_bar in zip(line, source)
@@ -890,6 +961,7 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
         moved.update({ids[key]: note for key, note in mine.items() if key in ids})
         merged.append(bars_out)
         sources.append("homr")
+        matches.append(match)
         spans.append({
             "sheet": placed[index][0], "system": placed[index][1],
             "spans": [[round(a, 1), round(b, 1)] for a, b in zip(cuts, cuts[1:])], "heads": xs,
@@ -902,13 +974,15 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
     force: dict[str, ET.Element] = {}
     before = None
     for index, (bars, source) in enumerate(zip(merged, sources)):
-        if source == "homr":
-            state = dict(homr_states[theirs[index]])
-            engine_time = _state_after(server_states[index], server[index][:1]).get("time")
-            if "time" not in state and "time" not in _state_after({}, bars[:1]) and engine_time is not None:
-                state["time"] = engine_time
+        if source == "engine":
+            state = dict(server_states[engine_lines[index]])
         else:
-            state = dict(server_states[index])
+            state = dict(homr_states[matches[index]])
+            if source == "homr":
+                own_line = engine_lines[index]
+                engine_time = _state_after(server_states[own_line], server[own_line][:1]).get("time")
+                if "time" not in state and "time" not in _state_after({}, bars[:1]) and engine_time is not None:
+                    state["time"] = engine_time
         own = _state_after({}, bars[:1])
         missing = [
             copy.deepcopy(state[tag]) for tag in _CARRIED
@@ -927,14 +1001,14 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
     number = 0 if measures[0].get("implicit") == "yes" else 1
     page = None
     for index, bars in enumerate(merged):
-        sheet = placed[index][0] if placed[index] is not None else page
+        sheet = sheet_of[index] if sheet_of[index] is not None else page
         for position, bar in enumerate(bars):
             for mark in bar.findall("print"):
                 bar.remove(mark)
             bar.set("number", str(number))
             if number == 0:
                 bar.set("implicit", "yes")
-            elif sources[index] == "homr":
+            elif sources[index] != "engine":
                 bar.attrib.pop("implicit", None)
             number += 1
             if position == 0 and index > 0:
@@ -966,21 +1040,114 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
 
     return {
         "status": "done", "bars": sum(map(len, merged)), "bars_before": len(measures),
-        "lines": len(merged), "lines_reread": sources.count("homr"), "lines_kept": kept, **settled,
+        "lines": len(merged), "lines_reread": sources.count("homr"), "lines_added": sources.count("added"),
+        "lines_kept": kept, **settled,
     }, undo
 
 
-def placed_lines(folder: Path) -> dict[tuple[str, int], list[tuple[float, float, list[float]]]]:
-    """Per sheet and system of a reread line: the span of each bar on the page and the page
-    x of its notes."""
+def _fit(points: list[tuple[float, float]]):
+    """The straight line through [points] (least squares), as a function, or None when the
+    points do not give one: two readers' frames of a page differ by a stretch and a shift."""
+    if len(points) < 2:
+        return None
+    mean_x = sum(x for x, _ in points) / len(points)
+    mean_y = sum(y for _, y in points) / len(points)
+    spread = sum((x - mean_x) ** 2 for x, _ in points)
+    if spread < 1e-6:
+        return None
+    scale = sum((x - mean_x) * (y - mean_y) for x, y in points) / spread
+    if not 0.3 < scale < 3.0:
+        return None
+    return lambda x: mean_y + scale * (x - mean_x)
+
+
+def _added_lines(placed: list, theirs: list, pages: dict) -> list[dict]:
+    """The lines of homr's that stand for none of the engine's and can be put in: each with
+    the engine line it follows ("after": its index, -1 for none), the system of the book it
+    follows on its sheet ("after_system"), its staff in the page's pixels and the page x
+    where its bars divide ("cuts"). The page is measured in the engine's frame; homr's
+    frame (a crop of the photo) is brought to it through the lines both read."""
+    out = []
+    for sheet, page in pages.items():
+        mine = [i for i, key in enumerate(placed) if key is not None and key[0] == sheet]
+        pairs = [(i, theirs[i][1]) for i in mine if theirs[i] is not None and theirs[i][0] == sheet]
+        if len(pairs) < 2:
+            continue
+        rows = {row for _i, row in pairs}
+        staffs = page["staffs"]
+        down = _fit([((staffs[row]["y1"] + staffs[row]["y2"]) / 2, (placed[i][2]["top"] + placed[i][2]["bottom"]) / 2)
+                     for i, row in pairs])
+        across = _fit([(x, y) for i, row in pairs
+                       for x, y in ((staffs[row]["x1"], placed[i][2]["left"]), (staffs[row]["x2"], placed[i][2]["right"]))])
+        if down is None or across is None:
+            continue
+        for row, bars in enumerate(page["lines"]):
+            if row in rows or not any(_onsets(bar) for bar in bars):
+                continue
+            divides = boundaries(staffs[row].get("bars") or [], len(bars))
+            if divides is None:
+                continue
+            top, bottom = down(staffs[row]["y1"]), down(staffs[row]["y2"])
+            left, right = across(staffs[row]["x1"]), across(staffs[row]["x2"])
+            if bottom - top < 4 or right - left < 100:
+                continue
+            centre, height = (top + bottom) / 2, bottom - top
+            if any(abs(centre - (placed[i][2]["top"] + placed[i][2]["bottom"]) / 2) < height for i in mine):
+                continue  # over a staff the engine read: two staves do not overlap
+            before = [i for i, r in pairs if r < row]
+            after = [i for i, r in pairs if r > row]
+            previous = max(before) if before else None
+            following = min(after) if after else None
+            if previous is not None and following is not None and following != previous + 1:
+                continue  # the engine has lines between the two: not this simple
+            if previous is not None and centre < placed[previous][2]["bottom"]:
+                continue
+            if following is not None and centre > placed[following][2]["top"]:
+                continue
+            out.append({
+                "sheet": sheet, "row": row,
+                "after": previous if previous is not None else (following - 1 if following is not None else -1),
+                "after_system": placed[previous][1] if previous is not None else -1,
+                "staff": {"top": round(top, 1), "bottom": round(bottom, 1), "left": round(left, 1),
+                          "right": round(right, 1), "interline": round(height / 4, 2)},
+                "cuts": [left] + [left + x * (right - left) for x in divides] + [right],
+            })
+    out.sort(key=lambda line: (line["after"], line["row"]))
+    return out
+
+
+def page_lines(folder: Path) -> tuple[dict, dict, dict]:
+    """What omr_book._load_book needs of a reread score: the bars of every reread line (the
+    span of each on the page and the page x of its notes) by sheet and system; the staff of
+    every line put in, by the same key; and per sheet, the systems of the book after which
+    a line was put in, so the systems are numbered as the score now has them: a system of
+    the book that [n] put-in lines precede is system (index + n), and the line put in after
+    system (a) as number (j) among its sheet's is system (a + j)."""
     try:
         lines = json.loads((folder / SIDECAR).read_text())["lines"]
-        return {
-            (str(line["sheet"]), int(line["system"])): [
-                (float(a), float(b), [float(x) for x in heads])
-                for (a, b), heads in zip(line["spans"], line["heads"])
-            ]
-            for line in lines
-        }
     except (OSError, ValueError, KeyError, TypeError):
-        return {}
+        return {}, {}, {}
+    afters: dict[str, list[int]] = {}
+    for line in lines:
+        if "after" in line:
+            afters.setdefault(str(line["sheet"]), []).append(int(line["after"]))
+    bars: dict[tuple[str, int], list] = {}
+    staffs: dict[tuple[str, int], dict] = {}
+    counted: dict[str, int] = {}
+    try:
+        for line in lines:
+            sheet = str(line["sheet"])
+            spans = [(float(a), float(b), [float(x) for x in heads]) for (a, b), heads in zip(line["spans"], line["heads"])]
+            if "after" in line:
+                counted[sheet] = counted.get(sheet, 0) + 1
+                index = int(line["after"]) + counted[sheet]
+                staffs[(sheet, index)] = {key: float(value) for key, value in line["staff"].items()}
+            else:
+                index = int(line["system"])
+                index += sum(1 for after in afters.get(sheet, []) if after < index)
+            bars[(sheet, index)] = spans
+    except (ValueError, KeyError, TypeError):
+        return {}, {}, {}
+    return bars, staffs, afters
+
+

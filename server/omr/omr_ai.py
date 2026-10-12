@@ -254,9 +254,6 @@ def _apply_ai_measure(measure: ET.Element, corrections: list[dict], fifths: int)
         elif fix.get("field") == "lyrics":
             syllables = _hangul(fix.get("suggested"))
             verse = str(fix.get("verse") or "1").strip() or "1"
-            if not syllables or syllables[0] == "—":
-                # Nothing, or a dash where nothing is held yet.
-                continue
             before = _measure_view(measure)["lyrics"].get(verse, "")
             sung = [n for n in measure.findall("note") if _sung_note(n)]
 
@@ -265,6 +262,24 @@ def _apply_ai_measure(measure: ET.Element, corrections: list[dict], fifths: int)
 
             def held(note):
                 return _tied_on(note) or any((l.findtext("text") or "") == "—" for l in own(note))
+
+            if not syllables or all(sy == "—" for sy in syllables):
+                # Nothing is sung here in this verse: words the reader took from marks that
+                # are no lyrics (slashes, a line of another verse) come off. A dash on a
+                # note tied from the bar before stays: that is what the bar prints.
+                for note in sung:
+                    for lyric in own(note):
+                        if not ((lyric.findtext("text") or "") == "—" and _tied_on(note)):
+                            note.remove(lyric)
+                after = _measure_view(measure)["lyrics"].get(verse, "")
+                if after != before:
+                    applied.append({"field": "lyrics", "verse": verse, "before": before, "after": after,
+                                    "confidence": fix.get("confidence")})
+                continue
+            if syllables[0] == "—" and not (sung and _tied_on(sung[0])):
+                # A dash where nothing is held yet. A first note tied over the barline does
+                # hold the syllable of the bar before.
+                continue
 
             # The answer names every note, held ones with a dash; or, as the
             # older answers did, only the notes that get a new syllable.

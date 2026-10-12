@@ -12,7 +12,10 @@ top or bottom edge may show a sliver of the neighbouring system: ignore it.
 
 ## What counts
 
-Only what is PRINTED in black as part of the score. Ignore everything added by a player:
+Only what is PRINTED as part of the score. That is black print, and the navigation signs
+an arranger engraves in colour in the score's own music font: a segno or coda sign, "To
+Coda", "D.S. al Coda" (s17 prints these in blue and magenta). Ignore everything added by a
+player:
 coloured handwriting or typed notes (blue/red/purple/green text such as "Intro-ABB",
 "도돌이O", "B1", "tag", "2절 들어갈 때 간주 1마디"), highlighter strokes, circles, crosses,
 red alternative chords written above the printed ones, watermarks, URLs, copyright lines.

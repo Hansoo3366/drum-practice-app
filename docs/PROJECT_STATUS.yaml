@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-12T13:37:00+09:00"
+last_updated: "2026-10-12T16:57:00+09:00"
 current_phase:
   id: "RELEASE-4"
   name: "OMR 정확도 최소 95% 개선·검증"
@@ -1430,6 +1430,15 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-10-06T13:58:32+09:00"
   checks:
+    - name: "answer_key_fix_20261012"
+      result: "passed"
+      detail: "정답지 수정(사용자 지시): s17에서 편곡자가 색으로 인쇄한 D.S. al Coda(p1-s04 4번째 마디)·To Coda(p1-s05 2번째)·코다 기호(p1-s06 1번째)를 signs에 추가. 같은 방식의 세뇨는 이미 있었음. 줄 그림 확대로 확인. s07의 1번 엔딩은 정답지가 맞고 우리 결과가 한 마디 이른 것으로 정정(정답지 변경 없음). 원본은 truth_before_20261012/에 보존. READING.md 규칙 명확화. 고친 기준 재채점: 분업 전 520/766(67.9%), 지금 서버 실변환 hy1 638/766(83.3%), rv2 660(86.2%), rv8 81.7%."
+    - name: "cheap_fixes_batch_20261012"
+      result: "passed_with_known_gaps"
+      detail: "남은 108마디 분류 뒤 8가지 수정(가사 줄 늘임 대시, homr 도돌이표, AI 가사-없음 적용, 마디줄 앞 코드 마디 선택, homr에 낙서 지운 그림, 놓친 줄 채우기, 슬래시 마디, 읽은 코드 띠로 가사 상자 한계). 로컬 재생(변경 전 코드 h10 + hy1 AI 응답 재적용 = 기준 rvb, 이번 rv8): 규칙 단계 완전 일치 46.5→50.5%, 코드 67.5→71.3, 가사 88.1→90.5, 음표 수 98.3→99.3, 기호 72.3→74.5, 찾은 마디 763→766/766, 빠진·늘어난 마디 0. AI 재적용 뒤 80.5→81.5%(옛 응답 재적용이라 보수적). 서버 unittest 226 통과. 알려진 공백: 서버 미배포·실변환 미측정, 독립 표본 미측정, 정답지에 빠진 인쇄 기호(s17 3마디)는 이 측정 뒤에 고침(answer_key_fix_20261012)."
+    - name: "lyric_supplement_20261012"
+      result: "passed_with_known_gaps"
+      detail: "가사 보태기 시험. 큰 판독 모델: PP-OCRv6 medium은 한글 0자, korean PP-OCRv5 mobile에 큰 찾기 모델(v5 server, v6 medium, 2배 확대)을 붙여도 줄 단위 가사 48.6~52.8%(서버 94.5%), 서버가 틀린 33줄 중 판독기가 다 맞힌 줄 8 → 보류. AI 가사 제안 적용 규칙 수정(붙임줄로 이어 받은 첫 음의 대시 허용, omr_ai._apply_ai_measure): tool/accuracy/replay_review.py로 hy1의 AI 응답을 재생해 17곡 완전 일치 636→658/766(83.0→85.9%), 가사 94.8→95.9%, 내려간 곡 없음. 서버 unittest 210 통과. 알려진 공백: 재생 측정이며 서버 미배포·실변환 미측정, 독립 표본 미측정."
     - name: "hybrid_notes_live_20261012"
       result: "passed_with_known_gaps"
       detail: "분업(omr_hybrid.py, homr 0.7.0)을 서버에 배포·켜고 공개 API로 실변환(convert.py hy1, AI 검토 포함). 17곡 766마디: 완전 일치 519→636(67.8→83.0%), 찾은 마디 743→763, 합쳐 읽은 마디 44→0, 음표 수 83.6→98.3%, 가사 87.9→94.8%, 코드 92.1→94.4%, 기호 72.5→74.2%. 15곡 상승·1곡 동일·1곡 하락(s11 한 마디). 독립 표본 3곡 91마디 86.8→87.9%(두 파트 악보 1곡은 분업 대상이 아니어서 동일). 서버 작업 시간 곡당 평균 198→245초. 변환 결과 40개를 앱 코드로 읽기·재생 MIDI·편집 확인. 서버 unittest 209 통과, 서버·로컬 파일 해시 일치. 알려진 공백: 95% 목표까지 92마디 부족(gate 실패), 음높이는 정답지가 재지 않음, 엔진이 놓친 줄(4마디)은 채우지 못함."

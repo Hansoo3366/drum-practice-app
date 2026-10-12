@@ -25,6 +25,164 @@ def _heavy_bar_width(image, staff: dict, x0: float, x1: float) -> float:
     return best / staff["interline"]
 
 
+def _time_in_force(part: ET.Element) -> list[tuple[int, int]]:
+    """(beats, beat type) in force at each bar of [part]; 4/4 before any is stated."""
+    beats, beat_type, out = 4, 4, []
+    for measure in part.findall("measure"):
+        for time in measure.findall("attributes/time"):
+            try:
+                beats, beat_type = int(time.findtext("beats") or 0), int(time.findtext("beat-type") or 0)
+            except ValueError:
+                beats, beat_type = 4, 4
+            if beats <= 0 or beat_type <= 0:
+                beats, beat_type = 4, 4
+        out.append((beats, beat_type))
+    return out
+
+
+def _slash_strokes(image, staff: dict, left: float, right: float, first: bool = False) -> list[float]:
+    """Page x of the rhythm slashes in a bar: strokes rising to the right, about an
+    interline wide and over two interlines tall, between the staff lines. Each is cut by
+    the staff lines into parts; the parts of one stroke stand one above the other. In the
+    [first] bar of a line the key signature's flats stand where strokes do: the first
+    interlines are left out."""
+    interline = staff["interline"]
+    top, bottom = int(staff["top"] - interline * 0.5), int(staff["bottom"] + interline * 0.5)
+    x0, x1 = int(left + interline * (4 if first else 0.2)), int(right - interline * 0.2)
+    if x1 - x0 < interline * 2 or bottom - top < interline * 3:
+        return []
+    crop = image.crop((x0, top, x1, bottom)).load()
+    width, height = x1 - x0, bottom - top
+    ink = [[crop[x, y] < 128 for x in range(width)] for y in range(height)]
+    for row in ink:  # the staff lines
+        if sum(row) > 0.6 * width:
+            row[:] = [False] * width
+    seen = [[False] * width for _ in range(height)]
+    parts = []
+    for y in range(height):
+        for x in range(width):
+            if not ink[y][x] or seen[y][x]:
+                continue
+            stack, points = [(y, x)], []
+            seen[y][x] = True
+            while stack:
+                cy, cx = stack.pop()
+                points.append((cy, cx))
+                for ny in (cy - 1, cy, cy + 1):
+                    for nx in (cx - 1, cx, cx + 1):
+                        if 0 <= ny < height and 0 <= nx < width and ink[ny][nx] and not seen[ny][nx]:
+                            seen[ny][nx] = True
+                            stack.append((ny, nx))
+            if len(points) < 20:
+                continue
+            ys, xs = [p[0] for p in points], [p[1] for p in points]
+            w, h = max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+            if not (0.6 * interline <= w <= 1.8 * interline and 0.45 * interline <= h <= 1.3 * interline):
+                continue
+            # Ink along the rising diagonal of the box.
+            rising = sum(1 for py, px in points
+                         if abs((px - min(xs)) / max(1, w - 1) - (1 - (py - min(ys)) / max(1, h - 1))) < 0.25)
+            if rising < 0.4 * len(points):
+                continue
+            parts.append((min(xs) + w / 2, min(ys), max(ys)))
+    # Parts one above the other are one stroke.
+    strokes: list[list[tuple]] = []
+    for part in sorted(parts):
+        for stroke in strokes:
+            if abs(stroke[-1][0] - part[0]) < interline * 1.2:
+                stroke.append(part)
+                break
+        else:
+            strokes.append([part])
+    out = []
+    for stroke in strokes:
+        span = max(p[2] for p in stroke) - min(p[1] for p in stroke)
+        if span < 1.4 * interline:
+            continue
+        # One straight stroke rising to the right: each part stands to the right of the
+        # part under it. A quarter rest's parts zigzag.
+        ordered = sorted(stroke, key=lambda p: p[1])
+        if any(upper[0] < lower[0] + 0.15 * interline for upper, lower in zip(ordered, ordered[1:])):
+            continue
+        out.append(x0 + sum(p[0] for p in stroke) / len(stroke))
+    # Slashes stand at even distances, one a beat.
+    gaps = [b - a for a, b in zip(out, out[1:])]
+    if len(gaps) >= 2:
+        mean = sum(gaps) / len(gaps)
+        if max(abs(g - mean) for g in gaps) > 0.35 * mean:
+            return []
+    return out
+
+
+def _slash_bars(book: dict) -> int:
+    """Bars printed as rhythm slashes (an intro or interlude: "/ / / /"), which neither reader
+    gives notes. Where a bar has no note and the engine saw no note head, and the staff
+    shows as many slashes as the bar has beats, the bar gets a slash note per beat (a
+    slash notehead, silent in the app). Returns how many bars."""
+    images = {number: image for number, _sheet, image, _interline, _staves in book["sheets"]}
+    written = 0
+    for part, entries in zip(book["parts"], book["placements"]):
+        times = _time_in_force(part)
+        for measure, entry, (beats, beat_type) in zip(part.findall("measure"), entries, times):
+            if entry is None:
+                continue
+            notes = measure.findall("note")
+            if any(n.find("rest") is None for n in notes) or measure.find("backup") is not None:
+                continue
+            sheet, _system, stack, siblings = entry
+            staff = siblings[0]
+            if stack >= len(staff["measures"]) or sheet not in images:
+                continue
+            left, right, heads = staff["measures"][stack]
+            if heads:
+                continue
+            strokes = _slash_strokes(images[sheet], staff, left, right, first=stack == 0)
+            if len(strokes) == beats:
+                each = 4 / beat_type  # quarters per slash
+            elif beat_type == 8 and beats % 3 == 0 and len(strokes) == beats // 3:
+                each = 1.5
+            else:
+                continue
+            divisions = 1
+            for earlier in part.findall("measure"):
+                stated = earlier.findtext("attributes/divisions")
+                if stated and stated.strip().isdigit():
+                    divisions = int(stated)
+                if earlier is measure:
+                    break
+            duration = each * divisions
+            if duration != int(duration):
+                continue
+            clef = "G"
+            for earlier in part.findall("measure"):
+                sign = earlier.findtext("attributes/clef/sign")
+                if sign:
+                    clef = sign
+                if earlier is measure:
+                    break
+            step, octave = {"F": ("D", "3"), "C": ("C", "4")}.get(clef, ("B", "4"))
+            width = _float(measure.get("width")) or (right - left)
+            at = next((i for i, child in enumerate(measure) if child.tag == "note"), len(measure))
+            for note in notes:
+                measure.remove(note)
+            for x in strokes:
+                note = ET.Element("note", {"default-x": f"{(x - left) * width / max(1.0, right - left):.1f}"})
+                pitch = ET.SubElement(note, "pitch")
+                ET.SubElement(pitch, "step").text = step
+                ET.SubElement(pitch, "octave").text = octave
+                ET.SubElement(note, "duration").text = str(int(duration))
+                ET.SubElement(note, "voice").text = "1"
+                ET.SubElement(note, "type").text = {1.0: "quarter", 1.5: "quarter", 2.0: "half", 0.5: "eighth"}.get(each, "quarter")
+                if each == 1.5:
+                    ET.SubElement(note, "dot")
+                ET.SubElement(note, "stem").text = "none"
+                ET.SubElement(note, "notehead").text = "slash"
+                measure.insert(at, note)
+                at += 1
+            written += 1
+    return written
+
+
 def _repeat_starts(book: dict) -> int:
     """Forward repeat signs read as a dotted chord at the start of a measure.
 

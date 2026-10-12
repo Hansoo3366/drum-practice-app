@@ -287,6 +287,55 @@ class RereadTest(unittest.TestCase):
         self.assertIsNone(undo)
         self.assertEqual(ET.tostring(self.score), before)
 
+    def test_homrs_repeat_signs_stand_where_the_engine_read_none(self):
+        repeat = "<barline location='{}'><bar-style>{}</bar-style><repeat direction='{}'/></barline>"
+        _homr_page(self.folder,
+                   [[repeat.format("left", "heavy-light", "forward") + _note("C", 4) + _note("D", 4)
+                     + repeat.format("right", "light-heavy", "backward"),
+                     repeat.format("left", "heavy-light", "forward") + _note("E", 4), _note("F", 4)],
+                    [_note("G", 4), _note("A", 4)]],
+                   [{"x1": 0, "x2": 800, "y1": 100, "y2": 180, "bars": [0.4, 0.7, 1.0]},
+                    {"x1": 0, "x2": 800, "y1": 300, "y2": 380, "bars": [0.5, 1.0]}], size=(1200, 600))
+        # The engine read a start repeat on the first bar and no end repeat anywhere.
+        first = self.bars()[0]
+        first.remove(first.find("barline[@location='right']"))
+        report, _undo = omr_hybrid.apply(self.score, self.book, self.folder)
+        self.assertEqual(report["bars"], 5)
+        bars = self.bars()
+        # Bar 1: the engine's own start repeat, once; homr's end repeat added.
+        self.assertEqual([b.get("location") for b in bars[0].findall("barline")], ["left", "right"])
+        self.assertEqual(bars[0].find("barline[@location='right']/repeat").get("direction"), "backward")
+        self.assertEqual(bars[1].find("barline[@location='left']/repeat").get("direction"), "forward")
+        self.assertEqual(bars[1].find("barline").get("location"), "left")
+        self.assertEqual(bars[2].findall("barline"), [])
+
+    def test_a_line_the_engine_left_out_is_put_in_from_homr(self):
+        # The page has three staves; the engine's book has the first and the third. homr
+        # read all three: its middle line goes in between, where it stands on the page.
+        _homr_page(self.folder,
+                   [[_note("C", 4), _note("D", 4)], [_note("E", 4), _note("F", 4)], [_note("G", 4), _note("A", 4)]],
+                   [{"x1": 0, "x2": 800, "y1": 100, "y2": 180, "bars": [0.5, 1.0]},
+                    {"x1": 0, "x2": 800, "y1": 200, "y2": 280, "bars": [0.5, 1.0]},
+                    {"x1": 0, "x2": 800, "y1": 300, "y2": 380, "bars": [0.5, 1.0]}], size=(1200, 600))
+        report, _undo = omr_hybrid.apply(self.score, self.book, self.folder)
+        self.assertEqual((report["lines"], report["lines_reread"], report["lines_added"], report["bars"]), (3, 2, 1, 6))
+        bars = self.bars()
+        self.assertEqual([n.findtext("pitch/step") for n in bars[2].findall("note") + bars[3].findall("note")], ["E", "F"])
+        self.assertEqual(bars[2].find("print").get("new-system"), "yes")
+        self.assertEqual(bars[4].find("print").get("new-system"), "yes")
+        # The page is tied to the new line too: a staff of its own, numbered in between.
+        book = omr_book._load_book(self.score, self.folder, ocr=False)
+        self.assertIsNotNone(book)
+        self.assertEqual(book["unmatched"], [])
+        self.assertEqual([entry[1] for entry in book["placements"][0]], [0, 0, 1, 1, 2, 2])
+        staff = book["placements"][0][2][3][0]
+        self.assertTrue(staff["id"].startswith("homr-"))
+        self.assertEqual((staff["top"], staff["bottom"], staff["left"], staff["right"]), (200.0, 280.0, 0.0, 800.0))
+        self.assertEqual([bar[:2] for bar in staff["measures"]], [(0.0, 400.0), (400.0, 800.0)])
+        self.assertEqual(len(book["onsets"][id(bars[2])]), 1)
+        # The third line's staff is now system 2.
+        self.assertEqual(book["placements"][0][4][3][0]["system"], 2)
+
     def test_a_score_of_two_staves_is_not_one_for_the_second_reader(self):
         self.assertIsNone(omr_hybrid.unfit(self.score))
         self.bars()[0].find("note").append(ET.fromstring("<staff>2</staff>"))
@@ -302,6 +351,32 @@ class RereadTest(unittest.TestCase):
         report, _undo = omr_hybrid.apply(self.score, self.book, self.folder)
         self.assertEqual((report["bars"], report["lines_reread"]), (4, 2))
         self.assertEqual(self.bars()[0].findtext("attributes/key/fifths"), "1")
+
+
+class SheetImagesTest(unittest.TestCase):
+    def job(self, clean: bool):
+        job = Path(self.directory.name)
+        (job / "in").mkdir(exist_ok=True)
+        (job / "in" / "score.jpg").write_bytes(b"photo")
+        (job / "out" / "dpi-300").mkdir(parents=True, exist_ok=True)
+        if clean:
+            (job / "out" / "annotations").mkdir(exist_ok=True)
+            (job / "out" / "annotations" / "page-1.clean.jpg").write_bytes(b"clean")
+        from PIL import Image
+        book = {"sheets": [("1", None, Image.new("L", (10, 10), 255), 20.0, [])]}
+        return omr_hybrid._sheet_images(job / "out" / "dpi-300" / "score.mxl", book)
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def test_the_photo_as_uploaded(self):
+        self.assertEqual(self.job(clean=False), {"1": b"photo"})
+
+    def test_the_page_with_the_pen_taken_out_when_there_is_one(self):
+        self.assertEqual(self.job(clean=True), {"1": b"clean"})
 
 
 class ReaderTest(unittest.TestCase):

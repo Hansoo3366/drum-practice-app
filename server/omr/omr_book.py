@@ -510,6 +510,11 @@ def _text_bands(image, box: tuple[int, int, int, int], interline: float) -> list
     return bands
 
 
+# The line after a held syllable, as the reader writes it: no word, and no mark against
+# the line being lyrics.
+_HELD_MARK = re.compile(r"[-—–~_=ㅡ]+")
+
+
 def _ocr_line(tesseract: str, image, box, workdir: Path) -> list[tuple[float, str]]:
     """Hangul syllables of one text line with their page x centres."""
     from PIL import ImageOps
@@ -528,7 +533,7 @@ def _ocr_line(tesseract: str, image, box, workdir: Path) -> list[tuple[float, st
     except (OSError, subprocess.TimeoutExpired):
         return []
     syllables = []
-    hangul = other = 0  # tokens, to tell a lyric line from note heads read as text
+    hangul = other = held = 0  # tokens, to tell a lyric line from note heads read as text
     confidence = 0.0
     for line in output.splitlines():
         fields = line.split("\t")
@@ -546,8 +551,15 @@ def _ocr_line(tesseract: str, image, box, workdir: Path) -> list[tuple[float, st
             hangul += 1
             confidence += float(fields[10])
             syllables.extend(found)
+        elif _HELD_MARK.fullmatch(text):
+            held += 1
         else:
             other += 1
+    # The lines after held syllables are no mark against a line of words. But note heads
+    # and stems under a staff read as a few Hangul among many such lines: they count
+    # against a line that is short, or that has more lines than words.
+    if hangul < 6 or held > hangul:
+        other += held
     if len(syllables) < 2 or hangul < 2 * other:
         return []
     if confidence / hangul < _LYRIC_MIN_LINE_CONFIDENCE:
@@ -754,6 +766,7 @@ def _load_book(root: ET.Element, folder: Path, ocr: bool = True) -> dict | None:
     ]
     sheets = []
     systems = []
+    reread, put_in, added_after = omr_hybrid.page_lines(folder)
     try:
         with zipfile.ZipFile(books[0]) as archive:
             book = ET.fromstring(archive.read("book.xml"))
@@ -766,16 +779,35 @@ def _load_book(root: ET.Element, folder: Path, ocr: bool = True) -> dict | None:
                     io.BytesIO(archive.read(f"sheet#{number}/BINARY.png"))
                 ).convert("L")
                 interline, staves = _omr_staves(sheet)
+                # Lines a second reader read (omr_hybrid): their bars and notes stand where
+                # it found them, and a line it read that the book has no system for is a
+                # system of its own, numbered in among the book's.
+                afters = added_after.get(number, [])
+                for staff in staves:
+                    staff["system"] += sum(1 for after in afters if after < staff["system"])
+                numbered = {
+                    old + sum(1 for after in afters if after < old): system
+                    for old, system in enumerate(sheet.iter("system"))
+                }
+                for count, after in enumerate(sorted(afters), start=1):
+                    index = after + count
+                    record, bars = put_in.get((number, index)), reread.get((number, index))
+                    if record is None or bars is None:
+                        continue
+                    staves.append({
+                        "id": f"homr-{number}-{index}", "system": index, "part": 0, "number": 1,
+                        "top": record["top"], "bottom": record["bottom"], "left": record["left"],
+                        "right": record["right"], "interline": record.get("interline") or interline,
+                        "measures": list(bars),
+                    })
+                    numbered[index] = None
                 sheets.append((number, sheet, image, interline, staves))
-                for system_index, system in enumerate(sheet.iter("system")):
-                    systems.append((number, system_index, system, staves, interline))
+                for system_index in sorted(numbered):
+                    systems.append((number, system_index, numbered[system_index], staves, interline))
     except (OSError, KeyError, ValueError, AttributeError, zipfile.BadZipFile, ET.ParseError):
         return None
     if len(systems) != len(groups):
         return None
-    # Lines whose bars a second reader read: bars and notes stand where it found them
-    # (omr_hybrid).
-    reread = omr_hybrid.placed_lines(folder)
     unmatched = []
     for (number, system_index, system, staves, interline), group in zip(systems, groups):
         bars = reread.get((str(number), system_index))
@@ -784,8 +816,15 @@ def _load_book(root: ET.Element, folder: Path, ocr: bool = True) -> dict | None:
                 if staff["system"] == system_index:
                     staff["measures"] = list(bars)
         # The bars of the system: the signature announced at the end of a line is not one.
-        elif len(_system_stacks(system, interline)) != len(group):
+        elif system is None or len(_system_stacks(system, interline)) != len(group):
             unmatched.append((group, number, [s for s in staves if s["system"] == system_index]))
+            continue
+        if system is None:
+            # A line put in by the second reader: one staff of the one part.
+            siblings = [s for s in staves if s["system"] == system_index]
+            for stack_index, measure_index in enumerate(group):
+                if measure_index < len(placements[0]):
+                    placements[0][measure_index] = (number, system_index, stack_index, siblings)
             continue
         for part_index, part in enumerate(system.findall("part")):
             # A system may hold only some of the parts; the id is the part's
