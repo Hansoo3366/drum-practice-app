@@ -165,6 +165,7 @@ flutter build apk --release --flavor piano -t lib/piano_main.dart \
 
 - VM 확인: 2 vCPU, 메모리 8 GB, 디스크 여유 23 GB, Ubuntu 24.04, Python 3.12.
 - 배포 전 서버 파일은 VM `~/omr_backup_20261012/`(저장소 커밋 `386864f`의 서버 파일과 같음), 올린 파일은 `~/omr_upload_20261012/`.
+- 2026-10-13 배포(커밋 `1aa15b3`: 음 확인 표시 N001·N002, 조표 검사 K001·K002, 도돌이·엔딩 보정): 배포 전 파일은 `~/omr_backup_20261013/`, 올린 파일은 `~/omr_upload_20261013/`. 되돌리려면 백업 폴더의 `.py`를 `/opt/omr/`에 다시 넣고 `sudo systemctl restart omr.service`.
 - `sudo bash update.sh <폴더>`로 서버 코드 갱신(스위치 꺼진 상태) → `bash install_homr.sh`로 설치·켜기.
   - `/opt/omr/homr/`에 전용 venv와 `homr==0.7.0`(546 MB, 모델 3개 포함), `/opt/omr/homr_sheet.py`.
   - `/etc/default/omr`에 `OMR_HOMR_PYTHON=/opt/omr/homr/bin/python`, `OMR_HYBRID_NOTES=1`.

@@ -266,6 +266,79 @@ void main() {
     await _close(tester);
   });
 
+  testWidgets('bars only one reader read wait until they are asked for', (
+    tester,
+  ) async {
+    const alone = OmrReviewBar(
+      partIndex: 0,
+      measureIndex: 3,
+      measure: '4',
+      issues: [
+        OmrReviewIssue(
+          rule: 'N002',
+          severity: OmrIssueSeverity.low,
+          detail: 'only one reader read these notes (the other read 3)',
+        ),
+      ],
+      suggestions: [],
+      uncertain: [],
+    );
+    await _open(tester, _MemoryStorage(), _Crops(), bars: [alone, ..._bars]);
+
+    // Not the first bar of the list: that one is left aside.
+    expect(find.text('마디 2'), findsOneWidget);
+    expect(find.text('1 / 4'), findsOneWidget);
+    expect(find.text('확인 0/4'), findsOneWidget);
+
+    await tester.tap(find.text('한 판독기만 읽은 마디 1개 보기'));
+    await _settle(tester);
+
+    // The bar on screen stays; the one taken in comes before it.
+    expect(find.text('마디 2'), findsOneWidget);
+    expect(find.text('2 / 5'), findsOneWidget);
+    expect(find.text('확인 0/5'), findsOneWidget);
+    await tester.tap(find.byTooltip('이전 마디'));
+    await _settle(tester);
+    expect(find.text('마디 4'), findsOneWidget);
+    expect(
+      find.text('이 마디의 음은 한 판독기만 읽어 견줄 것이 없습니다. 음을 확인하세요.'),
+      findsOneWidget,
+    );
+
+    // Left aside again from the bar that goes: the first one still open.
+    await tester.tap(find.text('한 판독기만 읽은 마디 숨기기'));
+    await _settle(tester);
+    expect(find.text('마디 2'), findsOneWidget);
+    expect(find.text('1 / 4'), findsOneWidget);
+
+    await _close(tester);
+  });
+
+  testWidgets('with nothing else to look at, those bars are gone through', (
+    tester,
+  ) async {
+    const alone = OmrReviewBar(
+      partIndex: 0,
+      measureIndex: 1,
+      measure: '2',
+      issues: [
+        OmrReviewIssue(
+          rule: 'N002',
+          severity: OmrIssueSeverity.low,
+          detail: 'only one reader read these notes (the other read 3)',
+        ),
+      ],
+      suggestions: [],
+      uncertain: [],
+    );
+    await _open(tester, _MemoryStorage(), _Crops(), bars: [alone]);
+
+    expect(find.text('1 / 1'), findsOneWidget);
+    expect(find.textContaining('한 판독기만 읽은 마디'), findsNothing);
+
+    await _close(tester);
+  });
+
   testWidgets('accepting a bar remembers it and moves to the next open one', (
     tester,
   ) async {

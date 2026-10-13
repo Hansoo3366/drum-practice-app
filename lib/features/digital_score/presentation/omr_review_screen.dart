@@ -56,6 +56,13 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
   late String _xml = widget.musicXml;
   late ScoreVersionCatalog _catalog = widget.catalog;
   late final Set<String> _checked = {...widget.checked};
+
+  /// Whether the bars only one reader read are gone through too.
+  var _showMinor = false;
+
+  /// The bars gone through: without the ones only one reader read, unless
+  /// they are asked for or there is nothing else.
+  late List<OmrReviewBar> _bars = _shownBars();
   late int _index = _firstOpen();
   var _saved = false;
 
@@ -81,7 +88,31 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
 
   bool get _dirty => _approved.values.any((set) => set.isNotEmpty);
 
-  OmrReviewBar get _bar => widget.bars[_index];
+  OmrReviewBar get _bar => _bars[_index];
+
+  int get _minorCount => widget.bars.where((bar) => bar.minor).length;
+
+  List<OmrReviewBar> _shownBars() {
+    if (_showMinor) return widget.bars;
+    final main = [
+      for (final bar in widget.bars)
+        if (!bar.minor) bar,
+    ];
+    return main.isEmpty ? widget.bars : main;
+  }
+
+  /// Takes the bars only one reader read in or out, staying on the bar on
+  /// screen where it is still among them.
+  void _toggleMinor() {
+    final key = _bar.key;
+    setState(() {
+      _showMinor = !_showMinor;
+      _bars = _shownBars();
+      final same = _bars.indexWhere((bar) => bar.key == key);
+      _index = same >= 0 ? same : _firstOpen();
+      _engrave();
+    });
+  }
 
   /// Where [bar], counted as the conversion left it, is in the version on
   /// screen: bars may have been added or removed since. Null when it is gone.
@@ -93,7 +124,7 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
   }
 
   int _firstOpen() {
-    final open = widget.bars.indexWhere((bar) => !_checked.contains(bar.key));
+    final open = _bars.indexWhere((bar) => !_checked.contains(bar.key));
     return open < 0 ? 0 : open;
   }
 
@@ -200,7 +231,7 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
       bar.uncertain.isEmpty;
 
   void _go(int index) {
-    if (index < 0 || index >= widget.bars.length) return;
+    if (index < 0 || index >= _bars.length) return;
     setState(() {
       _index = index;
       _engrave();
@@ -220,9 +251,9 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
       // Accepting a bar moves on to the next one still open.
       if (nowChecked) {
         final next = [
-          for (var i = _index + 1; i < widget.bars.length; i++) i,
+          for (var i = _index + 1; i < _bars.length; i++) i,
           for (var i = 0; i < _index; i++) i,
-        ].where((i) => !_checked.contains(widget.bars[i].key)).firstOrNull;
+        ].where((i) => !_checked.contains(_bars[i].key)).firstOrNull;
         if (next != null) {
           _index = next;
           _engrave();
@@ -396,7 +427,8 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
   Widget build(BuildContext context) {
     final bar = _bar;
     final checked = _checked.contains(bar.key);
-    final done = widget.bars.where((b) => _checked.contains(b.key)).length;
+    final done = _bars.where((b) => _checked.contains(b.key)).length;
+    final minor = _minorCount;
     return PopScope<bool>(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -425,7 +457,7 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
             Center(
               child: Padding(
                 padding: const EdgeInsets.only(right: 16),
-                child: Text('확인 $done/${widget.bars.length}'),
+                child: Text('확인 $done/${_bars.length}'),
               ),
             ),
           ],
@@ -451,12 +483,30 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
                       ),
                     const Spacer(),
                     Text(
-                      '${_index + 1} / ${widget.bars.length}',
+                      '${_index + 1} / ${_bars.length}',
                       style: const TextStyle(color: AppColors.mutedInk),
                     ),
                   ],
                 ),
               ),
+              // One bar in three is read by one reader only: these wait
+              // here until they are asked for.
+              if (minor > 0 && minor < widget.bars.length)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: _toggleMinor,
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                    ),
+                    child: Text(
+                      _showMinor
+                          ? '한 판독기만 읽은 마디 숨기기'
+                          : '한 판독기만 읽은 마디 $minor개 보기',
+                    ),
+                  ),
+                ),
               Expanded(
                 flex: 3,
                 child: LayoutBuilder(
@@ -513,7 +563,7 @@ class _OmrReviewScreenState extends ConsumerState<OmrReviewScreen> {
                     ),
                     IconButton(
                       tooltip: '다음 마디',
-                      onPressed: _index < widget.bars.length - 1
+                      onPressed: _index < _bars.length - 1
                           ? () => _go(_index + 1)
                           : null,
                       icon: const Icon(Icons.chevron_right_rounded),

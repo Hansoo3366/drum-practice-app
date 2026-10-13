@@ -125,6 +125,59 @@ void main() {
     expect(bars[1].issues.first.text, '주변 음에서 14반음 떨어진 음이 있습니다.');
   });
 
+  test('a bar only one reader read, and nothing else, is a minor one', () {
+    final bars = omrReviewBars(
+      validationJson: jsonEncode({
+        'issues': [
+          {
+            'rule': 'N002',
+            'severity': 'low',
+            'measureIndex': 0,
+            'measure': '1',
+          },
+          {
+            'rule': 'N002',
+            'severity': 'low',
+            'measureIndex': 1,
+            'measure': '2',
+          },
+          {
+            'rule': 'L001',
+            'severity': 'low',
+            'measureIndex': 1,
+            'measure': '2',
+          },
+          {
+            'rule': 'N001',
+            'severity': 'medium',
+            'measureIndex': 2,
+            'measure': '3',
+          },
+          {
+            'rule': 'N002',
+            'severity': 'low',
+            'measureIndex': 3,
+            'measure': '4',
+          },
+        ],
+      }),
+      aiReviewJson: jsonEncode({
+        'suggestions': [
+          {
+            'measureIndex': 3,
+            'measure': '4',
+            'corrections': [
+              {'field': 'chords', 'current': 'G', 'suggested': 'G7'},
+            ],
+          },
+        ],
+      }),
+    );
+
+    // Alone it is left aside; with another reason or a suggestion it is not.
+    expect([for (final bar in bars) bar.minor], [true, false, false, false]);
+  });
+
   test('says in words what two readers did not agree on', () {
     String text(String rule, String detail) => OmrReviewIssue(
       rule: rule,
@@ -148,10 +201,7 @@ void main() {
       '두 판독기가 조표를 다르게 읽었습니다(여기는 플랫 6개, 다른 쪽은 플랫 2개).',
     );
     expect(
-      text(
-        'K002',
-        'key 0 fits 62% of 13 chord roots; key 3 fits 100%',
-      ),
+      text('K002', 'key 0 fits 62% of 13 chord roots; key 3 fits 100%'),
       '조표(조표 없음)가 코드와 맞지 않습니다. 코드는 샤프 3개에 맞습니다.',
     );
     // A report worded otherwise still says what is the matter.

@@ -77,7 +77,9 @@ class OmrReviewIssue {
       case 'N002':
         return '이 마디의 음은 한 판독기만 읽어 견줄 것이 없습니다. 음을 확인하세요.';
       case 'K001':
-        final m = match(r'read as (-?\d+) here, as (-?\d+) by the other reader');
+        final m = match(
+          r'read as (-?\d+) here, as (-?\d+) by the other reader',
+        );
         return m == null
             ? '두 판독기가 조표를 다르게 읽었습니다.'
             : '두 판독기가 조표를 다르게 읽었습니다(여기는 ${_keyName(m[1]!)}, 다른 쪽은 ${_keyName(m[2]!)}).';
@@ -188,6 +190,15 @@ class OmrReviewBar {
   final (double, double)? focus;
 
   String get key => '$partIndex:$measureIndex';
+
+  /// Whether the only thing known about the bar is that one of the two
+  /// readers read it ([N002]): that is said of one bar in three, so the
+  /// review leaves these aside until they are asked for.
+  bool get minor =>
+      issues.isNotEmpty &&
+      suggestions.isEmpty &&
+      uncertain.isEmpty &&
+      issues.every((issue) => issue.rule == 'N002');
 
   OmrIssueSeverity get severity => issues.isEmpty
       ? OmrIssueSeverity.low

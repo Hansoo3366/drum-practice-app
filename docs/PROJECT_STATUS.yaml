@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-13T12:03:00+09:00"
+last_updated: "2026-10-13T13:55:00+09:00"
 current_phase:
   id: "RELEASE-4"
   name: "OMR 정확도 최소 95% 개선·검증"
@@ -516,6 +516,10 @@ setup_required:
       - "사용자 이름과 비밀번호"
 
 decisions:
+  - id: "D-232"
+    date: "2026-10-13"
+    status: "active"
+    decision: "변환 검토 화면은 '한 판독기만 읽음'(N002)뿐인 마디를 기본으로 접어 둔다(사용자 결정). 버튼으로 다시 넣을 수 있고, 다른 표시나 AI 제안이 함께 있는 마디는 접지 않는다. 교정 에디터에서 꽉 찬 마디의 빈 곳을 누르면 가까운 음이 바뀌는 동작은 그대로 둔다(같은 날 사용자 동의)."
   - id: "D-231"
     date: "2026-10-12"
     status: "active"
@@ -1430,6 +1434,12 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-10-06T13:58:32+09:00"
   checks:
+    - name: "review_fold_single_reader_20261013"
+      result: "passed_with_known_gaps"
+      detail: "변환 검토 화면이 N002뿐인 마디(한 판독기만 읽음, AI 제안·불확실 표시 없음)를 기본 순서에서 빼고 버튼으로 넣고 뺀다(release 4114 versionCode 6114, GitHub 사전 릴리스 v1.0.0-4114). 도메인 테스트 1·화면 테스트 2 추가, flutter analyze 문제 없음, 앱 전체 967 통과, 에뮬레이터 실행 확인. 정정: 검토 화면의 마디 수는 최신 실변환 17곡에서 532/766(69%; AI 제안 미반영·불확실 197, AI 반영만 172, 반영+N002 35, 규칙 표시 91, N002만 37)이고 앞서 적은 257은 규칙 표시만 센 수다. 이번 접기로 495마디. 알려진 틈: 실제 변환 곡으로 화면 미확인, 검토 부담의 본체인 AI 제안 마디는 그대로."
+    - name: "navigation_flags_live_20261013"
+      result: "passed_with_known_gaps"
+      detail: "커밋 1aa15b3의 서버 코드를 배포(백업 ~/omr_backup_20261013, 해시 일치 확인)하고 17곡·독립 표본 3곡을 실변환(hy4, 20곡 완료, AI 오류 0). 17곡 완전 일치 674 → 690/766(88.0 → 90.1%), 코드 95.4, 가사 98.5, 음표 수 99.3, 기호 80.4 → 88.0%(틀린 기호 마디 18 → 11, 기호가 틀린 곡 7 → 4). 독립 표본 85/91(93.4%) 그대로. 규칙 단계의 코드·가사는 앞 실변환과 마디 단위로 같아, 오른 16마디 중 약 6마디만 새 코드(기호) 몫이고 나머지는 AI 답 변동(16마디 맞아지고 6마디 틀려짐). 검토 표시가 붙은 마디 135 → 257(34%, N002 125건). 알려진 틈: 음높이·음길이 미측정, AI 변동 폭 미측정, 95%까지 38마디."
     - name: "release_4113_20261013"
       result: "passed"
       detail: "release 4113(arm64, versionCode 6113, 93.4MB, 디버그 키 서명)을 GitHub 사전 릴리스 v1.0.0-4113으로 올림. 릴리즈 전 flutter analyze 문제 없음, 앱 전체 테스트 964 통과, 서버 unittest 243 통과. 에뮬레이터에 덮어 설치해 실행 확인. 서버의 음 확인 표시·도돌이·엔딩 보정은 미배포라 새 검토 문구는 아직 뜨지 않는다."
