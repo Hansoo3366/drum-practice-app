@@ -464,10 +464,12 @@ def _place_notes(times: list[float], heads: list[float], left: float, right: flo
 
 
 def _line(engine: list[tuple[ET.Element, float, float]], homr: list[ET.Element], cuts: list[float],
-          heads: list[float], interline: float, moved: dict[int, ET.Element]) -> tuple[list[ET.Element], list[list[float]]]:
+          heads: list[float], interline: float, moved: dict[int, ET.Element],
+          checks: list | None = None) -> tuple[list[ET.Element], list[list[float]]]:
     """homr's bars of a line, between the page x of [cuts], with what the engine's bars of
     that line (each with its span on the page) carry; and the page x of every bar's notes.
-    [moved] takes, for every note of the engine's (by id), the note that stands for it."""
+    [moved] takes, for every note of the engine's (by id), the note that stands for it.
+    [checks] takes, per bar, whether the engine read the same notes there (_compare)."""
     out = [copy.deepcopy(bar) for bar in homr]
     placed: list[list[tuple[float, ET.Element]]] = []   # the notes of each bar, by page x
     anchors: list[list[tuple[float, ET.Element]]] = []  # and with its rests
@@ -527,6 +529,7 @@ def _line(engine: list[tuple[ET.Element, float, float]], homr: list[ET.Element],
     def note_at(bar: int, x: float, rests: bool = False) -> ET.Element | None:
         return min((anchors if rests else placed)[bar], key=lambda item: abs(item[0] - x), default=(0.0, None))[1]
 
+    theirs: list[tuple[float, set]] = []  # the engine's notes: page x, staff places struck together
     for measure, first, last in engine:
         children = list(measure)
         width = _number(measure.get("width"))
@@ -539,6 +542,11 @@ def _line(engine: list[tuple[ET.Element, float, float]], homr: list[ET.Element],
 
         for position, child in enumerate(children):
             if child.tag == "note":
+                if child.find("pitch") is not None and child.find("grace") is None:
+                    if child.find("chord") is not None and theirs:
+                        theirs[-1][1].add(_place(child))
+                    elif page_x(child) is not None:
+                        theirs.append((page_x(child), {_place(child)}))
                 x = page_x(child)
                 if x is None or child.find("rest") is not None:
                     continue
@@ -582,22 +590,68 @@ def _line(engine: list[tuple[ET.Element, float, float]], homr: list[ET.Element],
                 else:
                     edge = max(1, min(range(len(cuts)), key=lambda k: abs(cuts[k] - last)))
                     out[edge - 1].append(copy.deepcopy(child))
+    if checks is not None:
+        for index, bar in enumerate(out):
+            mine: list[set] = []
+            for note in bar.findall("note"):
+                if note.find("pitch") is None or note.find("grace") is not None:
+                    continue
+                if note.find("chord") is not None and mine:
+                    mine[-1].add(_place(note))
+                else:
+                    mine.append({_place(note)})
+            there = [places for x, places in sorted(theirs, key=lambda item: item[0]) if cuts[index] <= x < cuts[index + 1]]
+            checks.append(_compare(mine, there))
     for bar, seen in zip(out, repeats):
         for barline in seen:
-            location = barline.get("location") or "right"
-            if any((b.get("location") or "right") == location for b in bar.findall("barline")):
-                continue
-            kept = ET.Element("barline", location=location)
-            for tag in ("bar-style", "repeat"):
-                found = barline.find(tag)
-                if found is not None:
-                    kept.append(copy.deepcopy(found))
-            if location == "left":
-                at = next((i for i, child in enumerate(bar) if child.tag not in ("print", "attributes")), 0)
-                bar.insert(at, kept)
-            else:
-                bar.append(kept)
+            add_repeat(bar, barline.find("repeat").get("direction") == "forward")
     return out, [[round(x, 1) for x, _note in row] for row in placed]
+
+
+def add_repeat(bar: ET.Element, forward: bool) -> bool:
+    """Give [bar] a repeat sign, at its start ([forward]) or its end, unless it has one
+    there: on the barline it has at that side, or a new one. A start repeat stands at the
+    left of the bar it begins (homr writes it there but calls the side "right")."""
+    location, direction = ("left", "forward") if forward else ("right", "backward")
+    there = [b for b in bar.findall("barline") if (b.get("location") or "right") == location]
+    if any(r.get("direction") == direction for b in there for r in b.findall("repeat")):
+        return False
+    if there:
+        barline = there[0]
+    else:
+        barline = ET.Element("barline", location=location)
+        if forward:
+            at = next((i for i, child in enumerate(bar) if child.tag not in ("print", "attributes")), 0)
+            bar.insert(at, barline)
+        else:
+            bar.append(barline)
+    style = barline.find("bar-style")
+    if style is None:
+        style = ET.Element("bar-style")
+        barline.insert(0, style)
+    style.text = "heavy-light" if forward else "light-heavy"
+    # After a bracket's ending, as MusicXML orders a barline's children.
+    ET.SubElement(barline, "repeat", direction=direction)
+    return True
+
+
+def _place(note: ET.Element) -> str:
+    """Where a note stands on the staff ("E4"): its sharp or flat is the key's matter."""
+    return (note.findtext("pitch/step") or "") + (note.findtext("pitch/octave") or "")
+
+
+def _compare(mine: list[set], theirs: list[set]) -> dict:
+    """Whether two readers read the same notes in a bar: "same" (as many notes, on the same
+    places), "differ" (as many, on other places: the other reading is given), "alone" (the
+    other read another number of notes, or none: nothing to hold this reading against), or
+    "empty" (neither read a note)."""
+    if not mine and not theirs:
+        return {"state": "empty"}
+    if len(mine) != len(theirs):
+        return {"state": "alone", "other": len(theirs)}
+    if mine == theirs:
+        return {"state": "same"}
+    return {"state": "differ", "other": " ".join("+".join(sorted(places)) for places in theirs)}
 
 
 def _state_after(state: dict[str, ET.Element], bars: list[ET.Element]) -> dict[str, ET.Element]:
@@ -892,6 +946,8 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
     spans: list[dict] = []
     kept: list[str] = []
     moved: dict[int, ET.Element] = {}
+    checks: list[list[dict]] = []  # per merged line and bar: did the other reader read the same?
+    keys: list[dict] = []          # lines where the two readers read another key signature
     for kind, entry in entries:
         if kind == "added":
             line = entry
@@ -899,6 +955,7 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
             fresh = [copy.deepcopy(bar) for bar in pages[line["sheet"]]["lines"][line["row"]]]
             _rescale(fresh, common // homr_divisions[match])
             bars_out, xs = _line([], fresh, line["cuts"], [], line["staff"]["interline"], {})
+            checks.append([{"state": "alone", "other": 0} if _onsets(bar) else {"state": "empty"} for bar in bars_out])
             merged.append(bars_out)
             sources.append("added")
             matches.append(match)
@@ -941,6 +998,8 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
                 for a, b in zip(old.findall("note"), new.findall("note")):
                     moved[id(a)] = b
             _rescale(own, common // server_divisions[index])
+            checks.append([{"state": "alone", "other": 0, "reader": "engine"} if _onsets(bar) else {"state": "empty"}
+                           for bar in own])
             merged.append(own)
             sources.append("engine")
             matches.append(None)
@@ -954,10 +1013,18 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
         cuts = [staff["left"]] + [staff["left"] + x * reach for x in divides] + [staff["right"]]
         heads = sorted(head for _l, _r, found in staff["measures"] for head in found)
         mine: dict[int, ET.Element] = {}
+        compared: list[dict] = []
         bars_out, xs = _line(
             [(bar, left, right) for bar, (left, right) in zip(source, bar_spans)],
-            fresh, cuts, heads, staff["interline"], mine,
+            fresh, cuts, heads, staff["interline"], mine, compared,
         )
+        checks.append(compared)
+        engine_key = _state_after(server_states[index], line[:1]).get("key")
+        homr_key = _state_after(homr_states[match], bars[:1]).get("key")
+        if engine_key is not None and homr_key is not None:
+            a, b = int(_number(engine_key.findtext("fifths"))), int(_number(homr_key.findtext("fifths")))
+            if a != b:
+                keys.append({"line": len(merged), "engine": a, "homr": b})
         moved.update({ids[key]: note for key, note in mine.items() if key in ids})
         merged.append(bars_out)
         sources.append("homr")
@@ -1025,7 +1092,7 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
     stated.text = str(common)
     attributes.insert(0, stated)
     _drop_restated(part.findall("measure"))
-    (folder / SIDECAR).write_text(json.dumps({"lines": spans}), encoding="utf-8")
+    (folder / SIDECAR).write_text(json.dumps({"lines": spans, "checks": checks, "keys": keys}), encoding="utf-8")
     held = list(dashes) if dashes is not None else []
     if dashes is not None:
         dashes[:] = [(moved[id(note)], verse) for note, verse in held if id(note) in moved]
@@ -1042,6 +1109,10 @@ def apply(root: ET.Element, book: dict, folder: Path, dashes: list | None = None
         "status": "done", "bars": sum(map(len, merged)), "bars_before": len(measures),
         "lines": len(merged), "lines_reread": sources.count("homr"), "lines_added": sources.count("added"),
         "lines_kept": kept, **settled,
+        "bars_same": sum(1 for line in checks for c in line if c["state"] == "same"),
+        "bars_differ": sum(1 for line in checks for c in line if c["state"] == "differ"),
+        "bars_alone": sum(1 for line in checks for c in line if c["state"] == "alone"),
+        "key_differs_in_lines": len(keys),
     }, undo
 
 
@@ -1113,6 +1184,44 @@ def _added_lines(placed: list, theirs: list, pages: dict) -> list[dict]:
                 "cuts": [left] + [left + x * (right - left) for x in divides] + [right],
             })
     out.sort(key=lambda line: (line["after"], line["row"]))
+    return out
+
+
+def reader_checks(root: ET.Element, folder: Path) -> list[dict]:
+    """What the two readers did not agree on, as findings for the review list (rule, bar
+    index, detail): N001 a bar both read with as many notes but on other staff places, N002
+    a bar only one reader read (nothing to hold its notes against), K001 lines where they
+    read another key signature. Empty when the score was not reread or no longer has the
+    lines it was reread with."""
+    try:
+        saved = json.loads((folder / SIDECAR).read_text())
+        checks, keys = saved["checks"], saved.get("keys") or []
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    part = root.find("part")
+    lines = _lines(part.findall("measure")) if part is not None else []
+    if [len(line) for line in lines] != [len(line) for line in checks]:
+        return []
+    out, index = [], 0
+    starts = []
+    for line, states in zip(lines, checks):
+        starts.append(index)
+        for measure, check in zip(line, states):
+            if check.get("state") == "differ":
+                out.append({"rule": "N001", "measureIndex": index, "measure": measure.get("number"),
+                            "detail": f"the two readers differ; the other read {check.get('other')}"})
+            elif check.get("state") == "alone":
+                out.append({"rule": "N002", "measureIndex": index, "measure": measure.get("number"),
+                            "detail": f"only one reader read these notes (the other read {check.get('other') or 0})"})
+            index += 1
+    # One finding per pair of keys, at the first line it shows in.
+    seen: dict[tuple, list[int]] = {}
+    for item in keys:
+        seen.setdefault((item["engine"], item["homr"]), []).append(item["line"])
+    for (engine, homr), where in seen.items():
+        at = starts[where[0]] if where[0] < len(starts) else 0
+        out.append({"rule": "K001", "measureIndex": at, "measure": lines[where[0]][0].get("number") if where[0] < len(lines) else None,
+                    "detail": f"key signature read as {homr} here, as {engine} by the other reader, in {len(where)} lines"})
     return out
 
 

@@ -244,6 +244,12 @@ class RereadTest(unittest.TestCase):
         self.assertEqual(bars[2].find("print").get("new-system"), "yes")
         # The held syllable goes with the note that stands for the engine's.
         self.assertIs(held[0][0], bars[1].find("note"))
+        # What the two readers agreed on, bar by bar: the engine read one note where homr
+        # read two (nothing to hold them against), and the same notes in the other bars.
+        self.assertEqual((report["bars_same"], report["bars_differ"], report["bars_alone"]), (3, 0, 1))
+        found = omr_hybrid.reader_checks(self.score, self.folder)
+        self.assertEqual([(f["rule"], f["measureIndex"]) for f in found], [("N002", 0), ("K001", 0)])
+        self.assertIn("as 1 here, as 2 by the other reader", found[1]["detail"])
         # The page is tied to the new bars: steps that follow find each bar and note on it.
         book = omr_book._load_book(self.score, self.folder, ocr=False)
         self.assertEqual(book["unmatched"], [])
@@ -289,10 +295,11 @@ class RereadTest(unittest.TestCase):
 
     def test_homrs_repeat_signs_stand_where_the_engine_read_none(self):
         repeat = "<barline location='{}'><bar-style>{}</bar-style><repeat direction='{}'/></barline>"
+        # homr writes a start repeat first in the bar it begins and calls the side "right".
         _homr_page(self.folder,
-                   [[repeat.format("left", "heavy-light", "forward") + _note("C", 4) + _note("D", 4)
+                   [[repeat.format("right", "heavy-light", "forward") + _note("C", 4) + _note("D", 4)
                      + repeat.format("right", "light-heavy", "backward"),
-                     repeat.format("left", "heavy-light", "forward") + _note("E", 4), _note("F", 4)],
+                     repeat.format("right", "heavy-light", "forward") + _note("E", 4), _note("F", 4)],
                     [_note("G", 4), _note("A", 4)]],
                    [{"x1": 0, "x2": 800, "y1": 100, "y2": 180, "bars": [0.4, 0.7, 1.0]},
                     {"x1": 0, "x2": 800, "y1": 300, "y2": 380, "bars": [0.5, 1.0]}], size=(1200, 600))
@@ -336,6 +343,21 @@ class RereadTest(unittest.TestCase):
         # The third line's staff is now system 2.
         self.assertEqual(book["placements"][0][4][3][0]["system"], 2)
 
+    def test_a_bar_the_readers_read_differently_is_a_finding(self):
+        # Same number of notes in the first bar, but the engine has D where homr has E.
+        _homr_page(self.folder,
+                   [[_note("C", 4) + _note("E", 4)], [_note("E", 4), _note("F", 4)]],
+                   [{"x1": 0, "x2": 800, "y1": 100, "y2": 180, "bars": [1.0]},
+                    {"x1": 0, "x2": 800, "y1": 300, "y2": 380, "bars": [0.5, 1.0]}], size=(1200, 600))
+        omr_hybrid.apply(self.score, self.book, self.folder)
+        found = [f for f in omr_hybrid.reader_checks(self.score, self.folder) if f["rule"] == "N001"]
+        self.assertEqual([(f["measureIndex"], f["measure"]) for f in found], [(0, "1")])
+        self.assertIn("the other read C4 D4", found[0]["detail"])
+        # Bars taken off or put in afterwards: the findings no longer name the right bars.
+        part = self.score.find("part")
+        part.remove(part.findall("measure")[-1])
+        self.assertEqual(omr_hybrid.reader_checks(self.score, self.folder), [])
+
     def test_a_score_of_two_staves_is_not_one_for_the_second_reader(self):
         self.assertIsNone(omr_hybrid.unfit(self.score))
         self.bars()[0].find("note").append(ET.fromstring("<staff>2</staff>"))
@@ -377,6 +399,32 @@ class SheetImagesTest(unittest.TestCase):
 
     def test_the_page_with_the_pen_taken_out_when_there_is_one(self):
         self.assertEqual(self.job(clean=True), {"1": b"clean"})
+
+
+class AddRepeatTest(unittest.TestCase):
+    def test_a_start_repeat_stands_at_the_left_and_joins_the_barline_there(self):
+        bar = ET.fromstring("<measure><print/><attributes/><note/><barline location='right'>"
+                            "<bar-style>light-light</bar-style></barline></measure>")
+        self.assertTrue(omr_hybrid.add_repeat(bar, True))
+        self.assertEqual([c.tag for c in bar], ["print", "attributes", "barline", "note", "barline"])
+        self.assertEqual((bar[2].get("location"), bar[2].findtext("bar-style"), bar[2].find("repeat").get("direction")),
+                         ("left", "heavy-light", "forward"))
+        self.assertFalse(omr_hybrid.add_repeat(bar, True))
+        # The end repeat joins the barline the bar already has at its right.
+        self.assertTrue(omr_hybrid.add_repeat(bar, False))
+        right = bar.findall("barline")[1]
+        self.assertEqual((right.findtext("bar-style"), right.find("repeat").get("direction")), ("light-heavy", "backward"))
+        self.assertEqual(len(bar.findall("barline")), 2)
+
+
+class CompareTest(unittest.TestCase):
+    def test_the_states(self):
+        self.assertEqual(omr_hybrid._compare([], [])["state"], "empty")
+        self.assertEqual(omr_hybrid._compare([{"C4"}, {"E4"}], [{"C4"}, {"E4"}])["state"], "same")
+        # Two notes struck together are the same whichever is written first.
+        self.assertEqual(omr_hybrid._compare([{"E4", "C4"}], [{"C4", "E4"}])["state"], "same")
+        self.assertEqual(omr_hybrid._compare([{"C4"}, {"E4"}], [{"C4"}, {"G6"}]), {"state": "differ", "other": "C4 G6"})
+        self.assertEqual(omr_hybrid._compare([{"C4"}, {"E4"}], [{"C4"}]), {"state": "alone", "other": 1})
 
 
 class ReaderTest(unittest.TestCase):

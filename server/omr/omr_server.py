@@ -24,7 +24,7 @@ from flask import Flask, jsonify, request, send_file
 from omr_score import PIPELINE, _find_score, _read_score, _write_mxl
 from omr_rules import _clamp_backups, _add_lyric_dashes, _chords_from_words, _drop_bad_tempos, _drop_lyric_dash_articulations, _drop_placeholder_rests, _drop_second_chords, _drop_tie_dots, _merge_split_parts, _split_korean_lyrics, _tie_held_dashes, _title_from_credits, _undo_octave_shifts
 from omr_book import _load_book, _restore_dropped_bars, _restore_exported_rhythm
-from omr_marks import _add_segno_coda, _navigation_marks, _repeat_starts, _segno_coda_marks, _slash_bars, _tidy_endings, _upload_photos
+from omr_marks import _add_segno_coda, _navigation_marks, _repeat_signs, _repeat_starts, _segno_coda_marks, _slash_bars, _tidy_endings, _upload_photos
 from omr_text import _attach_stray_accidentals, _drop_chord_junk, _ocr_chord_lines, _ocr_lyrics, _reread_chords
 from omr_validate import _corrections, _validate
 import omr_hybrid
@@ -961,6 +961,8 @@ def _postprocess(path: Path, profile: str) -> tuple[Path, dict]:
                 report["hybrid"] = {"status": "undone", "reason": "the reread score is not tied to the page"}
             book = _load_book(root, path.parent)
     if book is not None:
+        # Repeat signs that stand on the page and no reader wrote.
+        report["repeats_added"] = _repeat_signs(book)
         # Intro and interlude bars printed as rhythm slashes, which no reader gives notes.
         report["slash_bars"] = _slash_bars(book)
         if report["slash_bars"]:

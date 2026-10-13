@@ -791,6 +791,9 @@ _SEVERITY = {
     "V001": "high", "V002": "medium", "V003": "medium", "V004": "medium",
     "V006": "low", "V007": "high", "V008": "medium", "V009": "medium", "S001": "high", "L001": "low",
     "A001": "medium",
+    # Two readers (omr_hybrid): N001 they read other notes, N002 only one read the bar,
+    # K001 they read another key signature. K002: the key does not fit the chords.
+    "N001": "medium", "N002": "low", "K001": "medium", "K002": "medium",
 }
 _STEP_SEMITONE = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
 

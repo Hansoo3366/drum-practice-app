@@ -68,9 +68,34 @@ class OmrReviewIssue {
             : '읽다 남은 글자가 있습니다: $leftover';
       case 'A001':
         return '색 필기가 겹친 마디입니다. 가려진 부분은 읽지 못했습니다.';
+      case 'N001':
+        // Two readers read the notes; the other one's reading is given.
+        final m = match(r'the other read (.+)$');
+        return m == null
+            ? '두 판독기가 이 마디의 음을 다르게 읽었습니다. 음을 확인하세요.'
+            : '두 판독기가 이 마디의 음을 다르게 읽었습니다. 다른 쪽이 읽은 음: ${m[1]}';
+      case 'N002':
+        return '이 마디의 음은 한 판독기만 읽어 견줄 것이 없습니다. 음을 확인하세요.';
+      case 'K001':
+        final m = match(r'read as (-?\d+) here, as (-?\d+) by the other reader');
+        return m == null
+            ? '두 판독기가 조표를 다르게 읽었습니다.'
+            : '두 판독기가 조표를 다르게 읽었습니다(여기는 ${_keyName(m[1]!)}, 다른 쪽은 ${_keyName(m[2]!)}).';
+      case 'K002':
+        final m = match(r'key (-?\d+) fits (\d+)%.*key (-?\d+) fits (\d+)%');
+        return m == null
+            ? '조표가 코드와 맞지 않습니다. 조표를 확인하세요.'
+            : '조표(${_keyName(m[1]!)})가 코드와 맞지 않습니다. 코드는 ${_keyName(m[3]!)}에 맞습니다.';
     }
     return detail.isEmpty ? rule : detail;
   }
+}
+
+/// "2" → "샤프 2개", "-3" → "플랫 3개", "0" → "조표 없음".
+String _keyName(String fifths) {
+  final count = int.tryParse(fifths) ?? 0;
+  if (count == 0) return '조표 없음';
+  return count > 0 ? '샤프 $count개' : '플랫 ${-count}개';
 }
 
 /// One change the AI review proposed for a measure.

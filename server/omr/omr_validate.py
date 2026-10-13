@@ -11,6 +11,7 @@ from xml.etree import ElementTree as ET
 from omr_score import PIPELINE, _read_score
 from omr_rules import _BOTTOM_LINE, _CLEAN_WORDS, _DIATONIC, _INSTRUCTION_WORDS, _MAX_SUSPECT_IMAGES, _SEVERITY, _STEP_SEMITONE
 from omr_book import _load_book
+import omr_hybrid
 
 
 def _garbled_chord(text: str) -> bool:
@@ -142,6 +143,10 @@ def _validate_score(root: ET.Element) -> list[dict]:
                     if abs(midi - middle) > 12:
                         add("V006", part_index, index, measure,
                             f"pitch {midi} is {abs(midi - middle)} semitones from its neighbours")
+        # K002: the key signature against the chord symbols written under it.
+        for at, fifths, fit, better, better_fit, count in _keys_against_chords(measures):
+            add("K002", part_index, at, measures[at],
+                f"key {fifths} fits {round(fit * 100)}% of {count} chord roots; key {better} fits {round(better_fit * 100)}%")
         # V008: a key change undone within eight measures is usually a misread.
         for (at, fifths), (back, again) in zip(keys, keys[1:]):
             before = [f for i, f in keys if i < at]
@@ -176,12 +181,57 @@ def _validate_score(root: ET.Element) -> list[dict]:
     return issues
 
 
+def _key_scale(fifths: int) -> set[int]:
+    """The pitch classes of the major scale with this many sharps (flats: negative)."""
+    tonic = (7 * fifths) % 12
+    return {(tonic + step) % 12 for step in (0, 2, 4, 5, 7, 9, 11)}
+
+
+def _keys_against_chords(measures: list[ET.Element]) -> list[tuple]:
+    """Stretches of one key signature whose chord symbols speak for another key: (first bar,
+    key, share of chord roots and basses in its scale, the key that fits best, its share,
+    how many roots). A song's chords are mostly of its key; a key signature read with
+    sharps or flats too few or too many leaves many of them outside its scale."""
+    stretches: list[list] = []  # [first bar, fifths, pitch classes]
+    fifths = None
+    for index, measure in enumerate(measures):
+        stated = measure.findtext("attributes/key/fifths")
+        if stated is not None and stated.strip().lstrip("-").isdigit() and int(stated) != fifths:
+            fifths = int(stated)
+            stretches.append([index, fifths, []])
+        if not stretches:
+            stretches.append([index, 0, []])
+            fifths = 0
+        for harmony in measure.findall("harmony"):
+            for step_tag, alter_tag in (("root/root-step", "root/root-alter"), ("bass/bass-step", "bass/bass-alter")):
+                step = harmony.findtext(step_tag)
+                if step in _STEP_SEMITONE:
+                    alter = harmony.findtext(alter_tag) or "0"
+                    stretches[-1][2].append((_STEP_SEMITONE[step] + (int(alter) if alter.lstrip("-").isdigit() else 0)) % 12)
+    out = []
+    for at, key, roots in stretches:
+        if len(roots) < 8:
+            continue
+        def fit(k: int) -> float:
+            scale = _key_scale(k)
+            return sum(1 for root in roots if root in scale) / len(roots)
+        own = fit(key)
+        # The nearest key by signature among the best: one accidental misread is likelier than six.
+        best = max(range(-7, 8), key=lambda k: (fit(k), -abs(k - key)))
+        if own < 0.8 and fit(best) - own >= 0.15:
+            out.append((at, key, own, best, fit(best), len(roots)))
+    return out
+
+
 def _validate(path: Path, folder: Path) -> dict:
     """Write validation.json and suspect crops for one candidate folder."""
     root = _read_score(path)
     issues = _validate_score(root)
     book = _load_book(_read_score(path), folder, ocr=False)
     crops = folder / "suspects"
+    for found in omr_hybrid.reader_checks(root, folder):
+        issues.append({"rule": found["rule"], "severity": _SEVERITY[found["rule"]], "part": 0,
+                       "measureIndex": found["measureIndex"], "measure": found["measure"], "detail": found["detail"]})
     if book is not None:
         issues += _image_checks(root, book)
         issues += _annotation_checks(root, book, _annotations(folder))

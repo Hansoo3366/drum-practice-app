@@ -294,6 +294,19 @@ class VerovioScoreViewState extends State<VerovioScoreView> {
   List<_VerovioPage> _pages = const <_VerovioPage>[];
   NativeScoreLayout? _layout;
 
+  /// For tests that touch the score on a device: the layout as drawn (in
+  /// the coordinates of the page under the fingers), how that page is moved
+  /// and enlarged on the screen, and whether the page shown is still the
+  /// score before the last edit (taps are not taken then).
+  @visibleForTesting
+  NativeScoreLayout? get layoutForTest => _layout;
+
+  @visibleForTesting
+  Matrix4 get transformForTest => _transform.value.clone();
+
+  @visibleForTesting
+  bool get pagesStaleForTest => _pagesStale;
+
   /// Chord symbol boxes in scene coordinates, kept clear by section labels.
   List<Rect> _chordRects = const [];
 

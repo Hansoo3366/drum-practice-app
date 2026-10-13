@@ -48,17 +48,32 @@ def replay(song, source_run, new_run, review_run=None):
     measures = root.find('part').findall('measure')
     keys = omr_ai._key_fifths(measures)
     mapping = _index_map(_read_score(data / f'out{reviewed_run}' / song / 'fixed.mxl'), root)
-    items, answers = [], {}
+    # One question per staff line, as the server asks: some rules look at neighbouring bars.
+    wanted = {}
     for suggestion in review['suggestions']:
         index = suggestion['measureIndex']
         if mapping is not None:
             index = mapping.get(index)
             if index is None:
                 continue
-        name = f'm{index}'
-        items.append({'id': name, 'measureIndex': [index], 'targets': [suggestion['measure']], 'fifths': keys[index]})
-        corrections = [{k: v for k, v in fix.items() if k != 'status'} for fix in suggestion['corrections']]
-        answers[name] = {'answer': {'corrections': corrections, 'uncertain': suggestion.get('uncertain') or []}}
+        wanted[index] = suggestion
+    items, answers, start = [], {}, 0
+    for number, line in enumerate(omr_hybrid._lines(measures)):
+        indexes = list(range(start, start + len(line)))
+        start += len(line)
+        name = f's{number}'
+        items.append({'id': name, 'measureIndex': indexes, 'targets': [measures[i].get('number') for i in indexes],
+                      'fifths': keys[indexes[0]]})
+        corrections, unsure = [], []
+        for i in indexes:
+            suggestion = wanted.get(i)
+            if suggestion is None:
+                continue
+            for fix in suggestion['corrections']:
+                corrections.append({**{k: v for k, v in fix.items() if k != 'status'}, 'measure': measures[i].get('number')})
+            for doubt in suggestion.get('uncertain') or []:
+                unsure.append({**doubt, 'measure': measures[i].get('number')})
+        answers[name] = {'answer': {'corrections': corrections, 'uncertain': unsure}}
     out.mkdir(parents=True, exist_ok=True)
     for name in ('raw.mxl', 'fixed.mxl'):
         shutil.copy2(source / name, out / name)

@@ -125,6 +125,39 @@ void main() {
     expect(bars[1].issues.first.text, '주변 음에서 14반음 떨어진 음이 있습니다.');
   });
 
+  test('says in words what two readers did not agree on', () {
+    String text(String rule, String detail) => OmrReviewIssue(
+      rule: rule,
+      severity: OmrIssueSeverity.medium,
+      detail: detail,
+    ).text;
+
+    expect(
+      text('N001', 'the two readers differ; the other read C4 D4+F4 G6'),
+      '두 판독기가 이 마디의 음을 다르게 읽었습니다. 다른 쪽이 읽은 음: C4 D4+F4 G6',
+    );
+    expect(
+      text('N002', 'only one reader read these notes (the other read 3)'),
+      '이 마디의 음은 한 판독기만 읽어 견줄 것이 없습니다. 음을 확인하세요.',
+    );
+    expect(
+      text(
+        'K001',
+        'key signature read as -6 here, as -2 by the other reader, in 28 lines',
+      ),
+      '두 판독기가 조표를 다르게 읽었습니다(여기는 플랫 6개, 다른 쪽은 플랫 2개).',
+    );
+    expect(
+      text(
+        'K002',
+        'key 0 fits 62% of 13 chord roots; key 3 fits 100%',
+      ),
+      '조표(조표 없음)가 코드와 맞지 않습니다. 코드는 샤프 3개에 맞습니다.',
+    );
+    // A report worded otherwise still says what is the matter.
+    expect(text('K001', ''), '두 판독기가 조표를 다르게 읽었습니다.');
+  });
+
   test('adds what the AI review says, applied or advice only', () {
     final bars = omrReviewBars(validationJson: _validation, aiReviewJson: _ai);
 

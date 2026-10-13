@@ -172,3 +172,10 @@ flutter build apk --release --flavor piano -t lib/piano_main.dart \
 - 확인: 작업의 `recognition.json` → 후보의 `repairs.second_reader`(읽은 쪽 수, 걸린 시간)와 `repairs.hybrid`(바뀐 줄 수, 남긴 줄과 이유). homr가 실패한 쪽은 `out/homr/sheet<N>.log`.
 - 걸리는 시간: homr는 이 VM에서 쪽당 약 35초(프로세서만 사용). 한 작업에서 300/400 DPI 두 후보가 같은 결과를 쓴다.
 - 설치 때 커널 갱신 안내가 나왔다(실행 중 7.0.0-1011, 새 커널 7.0.0-1014). 재부팅은 하지 않았다.
+
+### 2026-10-12 오후 배포(보정 9가지, 커밋 `ce89a7a`)
+
+- 배포 전 서버 파일은 VM `~/omr_backup_20261012b/`. `sudo bash update.sh ~/omr_upload_20261012`.
+- 하루 변환 한도는 설치본당 30회·주소당 60회(UTC 날짜 기준, `/opt/omr/state/quota.json`의 개수로 확인). 정확도 측정으로 17곡과 독립 표본을 하루에 두 번 돌리면 한도에 걸린다. 한도 값은 `/etc/default/omr`의 `OMR_CONVERT_PER_CLIENT` 등으로 정하며, 측정을 위해 바꾸려면 사용자 승인이 필요하다.
+- 2026-10-12 저녁: 사용자 승인으로 `OMR_CONVERT_PER_CLIENT=100`을 넣고 재시작(이전 파일 `/etc/default/omr.before_20261012_limit`). 주소당·전체 한도는 그대로.
+- AI 검토가 모든 마디 오류로 끝나면(토큰 0, 1초 남짓) 먼저 AI 제공자의 크레딧을 의심한다. 2026-10-12에 Gemini 선불 크레딧이 소진돼 `402 RESOURCE_EXHAUSTED`가 났다. 충전 뒤에는 다시 변환하지 말고 `python3 tool/accuracy/review_again.py <실행>`(서버의 `POST /jobs/<id>/ai-review`)으로 AI 검토만 다시 요청한다. 전체 측정 한 번(20곡)은 입력 약 35만·출력 약 7만 토큰이다.

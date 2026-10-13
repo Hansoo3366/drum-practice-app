@@ -183,6 +183,138 @@ def _slash_bars(book: dict) -> int:
     return written
 
 
+def _full_height_runs(pixels, width: int, staff: dict, x0: float, x1: float) -> list[tuple[int, int]]:
+    """Runs of columns inked over the whole height of the staff: barlines, thin and heavy."""
+    top, bottom = int(staff["top"]), int(staff["bottom"])
+    height = bottom - top + 1
+    runs: list[tuple[int, int]] = []
+    start = None
+    for x in range(max(0, int(x0)), min(width, int(x1)) + 1):
+        dark = x < width and sum(1 for y in range(top, bottom + 1) if pixels[x, y] < 128) >= 0.9 * height
+        if dark and start is None:
+            start = x
+        elif not dark and start is not None:
+            runs.append((start, x - 1))
+            start = None
+    if start is not None:
+        runs.append((start, min(width, int(x1))))
+    return runs
+
+
+def _repeat_dots(pixels, width: int, staff: dict, x0: float, x1: float) -> bool:
+    """The two dots of a repeat sign between page x [x0] and [x1]: a small round blob in the
+    second space of the staff and one in the third, one above the other. What is left of a
+    ragged staff line at the edge of a space, and a note or rest standing there too, do
+    not count for or against."""
+    interline = staff["interline"]
+    a, b = max(0, int(x0)), min(width - 1, int(x1))
+    if b - a < 0.3 * interline:
+        return False
+    centres = []
+    for space in (1, 2):
+        y0 = int(staff["top"] + space * interline + 0.15 * interline)
+        y1 = int(staff["top"] + (space + 1) * interline - 0.15 * interline)
+        middle = staff["top"] + (space + 0.5) * interline
+        seen: set[tuple[int, int]] = set()
+        dots = []
+        for x in range(a, b + 1):
+            for y in range(y0, y1 + 1):
+                if (x, y) in seen or pixels[x, y] >= 128:
+                    continue
+                stack, points = [(x, y)], []
+                seen.add((x, y))
+                while stack:
+                    cx, cy = stack.pop()
+                    points.append((cx, cy))
+                    for nx in (cx - 1, cx, cx + 1):
+                        for ny in (cy - 1, cy, cy + 1):
+                            if a <= nx <= b and y0 <= ny <= y1 and (nx, ny) not in seen and pixels[nx, ny] < 128:
+                                seen.add((nx, ny))
+                                stack.append((nx, ny))
+                xs, ys = [p[0] for p in points], [p[1] for p in points]
+                wide, tall = max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+                if (0.15 * interline <= wide <= 0.6 * interline and 0.15 * interline <= tall <= 0.6 * interline
+                        and len(points) >= max(0.03 * interline * interline, 0.5 * wide * tall)
+                        and abs((min(ys) + max(ys)) / 2 - middle) <= 0.35 * interline):
+                    dots.append((min(xs) + max(xs)) / 2)
+        if len(dots) != 1:
+            return False
+        centres.append(dots[0])
+    return abs(centres[0] - centres[1]) <= 0.3 * interline
+
+
+def _repeat_signs_on(image, staff: dict) -> list[tuple[float, bool]]:
+    """The repeat signs drawn on a staff, as (page x of the heavy bar, True for a start
+    repeat): a heavy bar and a thin one side by side with the two dots beyond the thin one.
+    The final barline has the two bars and no dots; a stem or a single barline is thin."""
+    interline = staff["interline"]
+    pixels = image.load()
+    runs = _full_height_runs(pixels, image.width, staff, staff["left"] - interline, staff["right"] + interline)
+    out = []
+    for h0, h1 in runs:
+        for t0, t1 in runs:
+            # A heavy bar is a third of an interline wide or more, and well wider than the
+            # thin one beside it.
+            if h1 - h0 + 1 < 0.33 * interline or (h1 - h0 + 1) < 1.5 * (t1 - t0 + 1):
+                continue
+            # Start repeat: heavy, thin, dots.
+            if 0 < t0 - h1 <= interline and _repeat_dots(pixels, image.width, staff, t1 + 0.15 * interline, t1 + 1.4 * interline):
+                out.append(((h0 + h1) / 2, True))
+            # End repeat: dots, thin, heavy.
+            if 0 < h0 - t1 <= interline and _repeat_dots(pixels, image.width, staff, t0 - 1.4 * interline, t0 - 0.15 * interline):
+                out.append(((h0 + h1) / 2, False))
+    return out
+
+
+def _repeat_signs(book: dict) -> list[dict]:
+    """Add the repeat signs that stand on the page and that no reader wrote: each is looked
+    for in the picture (_repeat_signs_on) and given to the bar that starts or ends at it. A
+    start repeat after the clef belongs to the first bar of its line. Returns what was
+    added."""
+    from omr_hybrid import add_repeat
+
+    images = {number: image for number, _sheet, image, _interline, _staves in book["sheets"]}
+    added = []
+    part = book["parts"][0]
+    measures = part.findall("measure")
+    lines: dict[int, list[tuple[int, ET.Element, tuple]]] = {}
+    staffs: dict[int, tuple] = {}
+    for index, (measure, entry) in enumerate(zip(measures, book["placements"][0])):
+        if entry is None:
+            continue
+        sheet, _system, stack, siblings = entry
+        staff = siblings[0]
+        if sheet not in images or stack >= len(staff["measures"]):
+            continue
+        lines.setdefault(id(staff), []).append((index, measure, staff["measures"][stack]))
+        staffs[id(staff)] = (sheet, staff)
+    for key, bars in lines.items():
+        sheet, staff = staffs[key]
+        interline = staff["interline"]
+        for x, start in _repeat_signs_on(images[sheet], staff):
+            if start:
+                # The bar that begins at the sign; in the first bar of a line the sign
+                # stands after the clef and the key, before the first note.
+                first_index, first_measure, (first_left, first_right, heads) = bars[0]
+                limit = min(heads) if heads else first_left + (first_right - first_left) * 0.5
+                if x < limit:
+                    choice = (first_index, first_measure)
+                else:
+                    near = min(bars, key=lambda bar: abs(bar[2][0] - x))
+                    if abs(near[2][0] - x) > 2 * interline:
+                        continue
+                    choice = (near[0], near[1])
+            else:
+                near = min(bars, key=lambda bar: abs(bar[2][1] - x))
+                if abs(near[2][1] - x) > 2 * interline:
+                    continue
+                choice = (near[0], near[1])
+            if add_repeat(choice[1], start):
+                added.append({"measureIndex": choice[0], "measure": choice[1].get("number"),
+                              "sign": "repeat-start" if start else "repeat-end"})
+    return added
+
+
 def _repeat_starts(book: dict) -> int:
     """Forward repeat signs read as a dotted chord at the start of a measure.
 
@@ -519,6 +651,92 @@ def _measure_of(book: dict, sheet: str, staff: dict, x: float) -> int | None:
     return None
 
 
+def _ending_passes(text: str) -> list[int] | None:
+    """The passes a bracket's label names: "1." one, "1.2." or "1,2" those, "1-5." all from
+    the first to the last. None when the text is no such label."""
+    text = "".join(text.split()).strip(".,")
+    if not text:
+        return None
+    span = re.fullmatch(r"(\d{1,2})[-–~](\d{1,2})", text)
+    if span:
+        first, last = int(span.group(1)), int(span.group(2))
+        return list(range(first, last + 1)) if 0 < first < last <= 12 else None
+    if not re.fullmatch(r"\d(?:[.,]\d)*", text):
+        return None
+    numbers = [int(n) for n in re.split(r"[.,]", text)]
+    if numbers[0] < 1 or any(b != a + 1 for a, b in zip(numbers, numbers[1:])):
+        return None
+    return numbers
+
+
+def _ending_label_at(tesseract: str, image, staff: dict, left: float, workdir: Path,
+                     until: float | None = None) -> list[int] | None:
+    """The label printed at the start of the bracket over the bar that begins at page x
+    [left]: the bracket's hook is found above the staff (a thin upright stroke) and the
+    figures right of it are read alone, so that the hook is not taken for a "1" and the
+    chord symbols under the label are left out. None when there is no hook or no label. In
+    the first bar of a line the bracket begins after the clef and the key: the hook is
+    looked for as far as [until], the bar's first note."""
+    interline = staff["interline"]
+    x0 = max(0, int(left - 1.5 * interline))
+    x1 = min(image.width - 1, int(max(left + 1.5 * interline, until if until is not None else 0)))
+    y0, y1 = max(0, int(staff["top"] - 9 * interline)), int(staff["top"] - interline)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    pixels = image.load()
+    hooks = []  # (x, top, bottom) of upright strokes one to four interlines tall
+    for x in range(x0, x1 + 1):
+        run = None
+        for y in range(y0, y1 + 2):
+            dark = y <= y1 and pixels[x, y] < 128
+            if dark and run is None:
+                run = y
+            elif not dark and run is not None:
+                if interline <= y - run <= 4 * interline:
+                    hooks.append((x, run, y - 1))
+                run = None
+    if not hooks:
+        return None
+    # The hook is the tallest stroke: the "1" of the label is an upright stroke too, and
+    # shorter. Where a bracket ends and the next begins two hooks stand side by side: the
+    # right one begins this bracket.
+    tallest = max(b - t for _x, t, b in hooks)
+    edge = max(x for x, t, b in hooks if b - t >= 0.8 * tallest)
+    top = min(t for x, t, b in hooks if abs(x - edge) <= 0.3 * interline and b - t >= 0.8 * tallest)
+    bottom = max(b for x, t, b in hooks if abs(x - edge) <= 0.3 * interline and b - t >= 0.8 * tallest)
+    # Under the bracket's line (the hook's top) and as far down as the hook goes: the
+    # figures stand beside the hook.
+    box = (int(edge + 0.15 * interline), int(top + 0.35 * interline),
+           min(image.width, int(edge + 6 * interline)), int(max(bottom, top + 2.0 * interline) + 0.4 * interline))
+    if box[2] - box[0] < interline or box[3] <= box[1]:
+        return None
+    from PIL import ImageOps
+
+    crop = image.crop(box)
+    crop = ImageOps.expand(crop.resize((crop.width * 3, crop.height * 3)), 12, fill=255)
+    target = workdir / "ending.png"
+    crop.save(target)
+    # As a line of text, then as raw glyphs: a bold "1-5." reads only the second way, a
+    # light "1.2." only the first. Read with every character allowed: the box around an
+    # instrument cue ("P, HiHat only") has a hook too, and told to read figures only the
+    # reader makes figures of its letters.
+    for mode in ("7", "13"):
+        try:
+            text = subprocess.run(
+                [tesseract, str(target), "stdout", "-l", "eng", "--psm", mode],
+                capture_output=True, text=True, timeout=30, check=False, env=_TESSERACT_ENV,
+            ).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        line = next((part for part in (text or "").split("\n") if part.strip()), "")
+        if not re.fullmatch(r"[\d.,\-–~\s]+", line):
+            continue
+        passes = _ending_passes(line)
+        if passes is not None:
+            return passes
+    return None
+
+
 def _navigation_marks(book: dict, workdir: Path, photos: dict | None = None) -> dict:
     """Read D.S., D.C., To Coda and Fine and ending labels ("1-5.") off the page.
 
@@ -531,6 +749,7 @@ def _navigation_marks(book: dict, workdir: Path, photos: dict | None = None) -> 
     if tesseract is None:
         return report
     measures = book["parts"][0].findall("measure")
+    images = {number: image for number, _sheet, image, _interline, _staves in book["sheets"]}
     found: dict[tuple[int, str], dict] = {}
     labels: list[tuple[str, dict]] = []
     for number, _sheet, image, _interline, _staves in book["sheets"]:
@@ -587,6 +806,16 @@ def _navigation_marks(book: dict, workdir: Path, photos: dict | None = None) -> 
         numbers = None
         if best and best.group(2) and int(best.group(1)) < int(best.group(2)) <= 12:
             numbers = list(range(int(best.group(1)), int(best.group(2)) + 1))
+        elif entry is not None and images.get(entry[0]) is not None:
+            # Not found among the words of the page: read the figures at the bracket's hook.
+            staff = entry[3][0]
+            bar_left, bar_right, heads = staff["measures"][entry[2]]
+            until = (min(heads) if heads else bar_left + (bar_right - bar_left) * 0.5) if entry[2] == 0 else None
+            numbers = _ending_label_at(tesseract, images[entry[0]], staff, bar_left, workdir, until)
+            if numbers is not None and not 1 <= numbers[0] <= (previous_last or 0) + 1:
+                numbers = None  # brackets count from one; none skips a pass
+        if numbers is not None:
+            pass
         elif previous_last is not None and ending.get("number") == "2" and previous_last > 1:
             # "1-5." then "6.": the next bracket starts after the range.
             numbers = [previous_last + 1]

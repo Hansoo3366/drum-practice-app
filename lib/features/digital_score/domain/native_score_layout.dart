@@ -353,8 +353,11 @@ class NativeScoreLayout {
       final dx = (note.center.dx - point.dx).abs();
       final dy = (note.center.dy - lineY).abs();
       // Notes of one chord stand at one place in time: the nearest in height
-      // is the one meant.
-      final sameTime = (dx - bestX).abs() < lineGap * 0.6;
+      // is the one meant. Two notes as far from the finger on either side of
+      // it are not a chord.
+      final sameTime =
+          best != null &&
+          (note.center.dx - best.center.dx).abs() < lineGap * 0.6;
       if (sameTime ? dy < bestY : dx < bestX) {
         best = note;
         bestX = sameTime ? math.min(dx, bestX) : dx;
@@ -382,7 +385,9 @@ class NativeScoreLayout {
       return null;
     }
     final aside = point.dx - best.center.dx;
-    final beside = aside.abs() <= lineGap * besideNoteSpaces
+    // A rest is room for a note: beside it, the rest itself is meant, or the
+    // note would go to the beat after the one pointed at.
+    final beside = best.isRest || aside.abs() <= lineGap * besideNoteSpaces
         ? 0
         : (aside < 0 ? -1 : 1);
     return NativeStaffPlace(

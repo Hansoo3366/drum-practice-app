@@ -295,6 +295,28 @@ void main() {
       expect(after.eventIndex, on.eventIndex);
     });
 
+    test('beside a rest the rest is meant: it is room for the note', () {
+      // The rest stands at x 60; the chord at 160.
+      final after = layout.placeAt(const Offset(95, 85), score: score)!;
+      final before = layout.placeAt(const Offset(35, 85), score: score)!;
+
+      expect(
+        (after.eventIndex, after.beside, after.ghostCenter.dx),
+        (0, 0, 60),
+      );
+      expect((before.eventIndex, before.beside), (0, 0));
+    });
+
+    test('halfway between two notes the nearer in time is meant', () {
+      // Just short of the middle between the rest (60) and the chord (160),
+      // at the height of the chord's upper note: still the rest.
+      final near = layout.placeAt(const Offset(108, 75), score: score)!;
+      final far = layout.placeAt(const Offset(112, 75), score: score)!;
+
+      expect(near.eventIndex, 0);
+      expect(far.eventIndex, 2);
+    });
+
     test('of a chord the note nearest in height is meant', () {
       final high = layout.placeAt(const Offset(150, 62), score: score)!;
       final low = layout.placeAt(const Offset(150, 96), score: score)!;

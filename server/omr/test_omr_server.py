@@ -609,6 +609,183 @@ class LineOcrTest(unittest.TestCase):
         self.assertEqual(self.read(self.tsv((20, 30, 95, "가"), (60, 30, 90, "-"), (100, 30, 90, "<"), (140, 30, 90, "@"))), [])
 
 
+class EndingLabelTest(unittest.TestCase):
+    def test_the_passes_a_label_names(self):
+        for text, passes in (("1.", [1]), ("1.2.", [1, 2]), ("1,2", [1, 2]), ("1-5.", [1, 2, 3, 4, 5]), ("3.", [3]),
+                             (" 1. 2. 3. ", [1, 2, 3]), ("6", [6])):
+            self.assertEqual(omr_marks._ending_passes(text), passes, text)
+        for text in ("", "G7", "5-1.", "1.3.", "1-55.", "0.", "..."):
+            self.assertIsNone(omr_marks._ending_passes(text), text)
+
+    def picture(self, hooks):
+        from PIL import Image, ImageDraw
+        image = Image.new("L", (600, 400), 255)
+        draw = ImageDraw.Draw(image)
+        for i in range(5):
+            draw.line((0, 300 + 20 * i, 600, 300 + 20 * i), fill=0, width=2)
+        for x in hooks:
+            draw.rectangle((x, 180, x + 2, 215), fill=0)   # the bracket's hook, above the staff
+        staff = {"top": 300.0, "bottom": 380.0, "left": 0.0, "right": 600.0, "interline": 20.0}
+        return image, staff
+
+    def read(self, image, staff, left, answer):
+        seen = {}
+
+        def run(command, **_kwargs):
+            from PIL import Image
+            seen["size"] = Image.open(command[1]).size
+            seen["command"] = command
+            return types.SimpleNamespace(stdout=answer)
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(omr_marks.subprocess, "run", side_effect=run):
+            return omr_marks._ending_label_at("tesseract", image, staff, left, Path(directory)), seen
+
+    def test_the_figures_right_of_the_hook_are_read_alone(self):
+        image, staff = self.picture([200])
+        passes, seen = self.read(image, staff, 205.0, "1-5.\n")
+        self.assertEqual(passes, [1, 2, 3, 4, 5])
+        # Every character allowed: letters must not come out as figures.
+        self.assertFalse(any("whitelist" in str(word) for word in seen["command"]))
+        # From just right of the hook, six interlines wide; from under the bracket's line
+        # down the hook's length; three times enlarged with a white border.
+        self.assertEqual(seen["size"], (117 * 3 + 24, 41 * 3 + 24))
+
+    def test_of_two_hooks_side_by_side_the_right_one_begins_the_bracket(self):
+        image, staff = self.picture([196, 210])
+        passes, seen = self.read(image, staff, 205.0, "3.\n")
+        self.assertEqual(passes, [3])
+        # Read from right of the second hook: the first is not taken for a "1".
+        self.assertLess(seen["size"][0], (120 * 3 + 24))
+
+    def test_the_one_of_the_label_is_no_hook(self):
+        # "|1.2.": the figure 1 is an upright stroke too, shorter than the hook.
+        image, staff = self.picture([200])
+        from PIL import ImageDraw
+        ImageDraw.Draw(image).rectangle((212, 183, 214, 205), fill=0)
+        passes, seen = self.read(image, staff, 205.0, "1.2.\n")
+        self.assertEqual(passes, [1, 2])
+        # Read from right of the hook, the 1 included.
+        self.assertEqual(seen["size"][0], 117 * 3 + 24)
+
+    def test_no_hook_or_no_figures_is_no_label(self):
+        image, staff = self.picture([])
+        with patch.object(omr_marks.subprocess, "run") as run:
+            with tempfile.TemporaryDirectory() as directory:
+                self.assertIsNone(omr_marks._ending_label_at("tesseract", image, staff, 205.0, Path(directory)))
+        run.assert_not_called()
+        image, staff = self.picture([200])
+        self.assertIsNone(self.read(image, staff, 205.0, "G7\n")[0])
+        # The box around an instrument cue has a hook as well.
+        self.assertIsNone(self.read(image, staff, 205.0, "P, Hi\n")[0])
+        self.assertIsNone(self.read(image, staff, 205.0, "2. Song\n")[0])
+
+    def test_a_label_not_read_as_a_line_is_read_as_glyphs(self):
+        image, staff = self.picture([200])
+        answers = iter(["1 '51\n", "1-5,\n"])
+        modes = []
+
+        def run(command, **_kwargs):
+            modes.append(command[command.index("--psm") + 1])
+            return types.SimpleNamespace(stdout=next(answers))
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(omr_marks.subprocess, "run", side_effect=run):
+            passes = omr_marks._ending_label_at("tesseract", image, staff, 205.0, Path(directory))
+        self.assertEqual((passes, modes), ([1, 2, 3, 4, 5], ["7", "13"]))
+
+    def test_in_the_first_bar_of_a_line_the_hook_stands_after_the_clef(self):
+        image, staff = self.picture([330])
+        self.assertIsNone(self.read(image, staff, 0.0, "6.\n")[0])
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+                omr_marks.subprocess, "run", return_value=types.SimpleNamespace(stdout="6.\n")):
+            self.assertEqual(omr_marks._ending_label_at("tesseract", image, staff, 0.0, Path(directory), until=400.0), [6])
+
+
+class RepeatSignTest(unittest.TestCase):
+    """Repeat signs looked for in the picture of a staff."""
+
+    def staff_image(self):
+        from PIL import Image, ImageDraw
+        image = Image.new("L", (1000, 300), 255)
+        draw = ImageDraw.Draw(image)
+        for i in range(5):
+            draw.line((50, 100 + 20 * i, 950, 100 + 20 * i), fill=0, width=2)
+        staff = {"id": "1", "system": 0, "part": 0, "number": 1, "top": 100.0, "bottom": 180.0,
+                 "left": 50.0, "right": 950.0, "interline": 20.0, "measures": [(50.0, 500.0, [200.0]), (500.0, 950.0, [600.0])]}
+        return image, draw, staff
+
+    def bars(self, draw, heavy, thin):
+        draw.rectangle((heavy, 100, heavy + 9, 180), fill=0)
+        draw.rectangle((thin, 100, thin + 2, 180), fill=0)
+
+    def dots(self, draw, x):
+        for y in (130, 150):
+            draw.ellipse((x, y - 4, x + 8, y + 4), fill=0)
+
+    def test_a_start_repeat_after_the_clef_and_an_end_repeat(self):
+        image, draw, staff = self.staff_image()
+        self.bars(draw, 120, 136); self.dots(draw, 146)        # ||: before the first note
+        self.dots(draw, 458); self.bars(draw, 490, 476)         # :|| at the first barline
+        found = omr_marks._repeat_signs_on(image, staff)
+        self.assertEqual([start for _x, start in found], [True, False])
+        self.assertTrue(120 <= found[0][0] <= 130 and 490 <= found[1][0] <= 500)
+
+    def test_a_final_barline_a_single_barline_and_a_note_are_no_repeat(self):
+        image, draw, staff = self.staff_image()
+        self.bars(draw, 940, 926)                                # the final barline: no dots
+        draw.rectangle((500, 100, 502, 180), fill=0)             # a barline
+        draw.ellipse((520, 121, 546, 139), fill=0)               # a note head in the second space, right after it
+        draw.rectangle((544, 60, 546, 130), fill=0)
+        self.assertEqual(omr_marks._repeat_signs_on(image, staff), [])
+
+    def test_the_sign_goes_to_the_bar_that_starts_or_ends_at_it(self):
+        image, draw, staff = self.staff_image()
+        self.bars(draw, 120, 136); self.dots(draw, 146)
+        self.dots(draw, 458); self.bars(draw, 490, 476)
+        part = ET.fromstring("<part><measure number='1'><note/></measure>"
+                             "<measure number='2'><barline location='right'><bar-style>light-light</bar-style></barline></measure></part>")
+        first, second = part.findall("measure")
+        book = {"sheets": [("1", None, image, 20.0, [staff])], "parts": [part],
+                "placements": [[("1", 0, 0, [staff]), ("1", 0, 1, [staff])]]}
+        added = omr_marks._repeat_signs(book)
+        self.assertEqual([(a["measureIndex"], a["sign"]) for a in added], [(0, "repeat-start"), (0, "repeat-end")])
+        self.assertEqual([(b.get("location"), b.find("repeat").get("direction")) for b in first.findall("barline")],
+                         [("left", "forward"), ("right", "backward")])
+        self.assertEqual(first[0].tag, "barline")
+        # Said once: a second look adds nothing.
+        self.assertEqual(omr_marks._repeat_signs(book), [])
+        self.assertIsNone(second.find("barline/repeat"))
+
+
+class KeyAgainstChordsTest(unittest.TestCase):
+    def measures(self, fifths, chords):
+        def harmony(name):
+            step, alter = name[0], {"b": -1, "#": 1}.get(name[1:2], 0)
+            return (f"<harmony><root><root-step>{step}</root-step>"
+                    + (f"<root-alter>{alter}</root-alter>" if alter else "") + "</root><kind>major</kind></harmony>")
+        bars = [f"<measure number='{i + 1}'>" + ("<attributes><key><fifths>%d</fifths></key></attributes>" % fifths if i == 0 else "")
+                + harmony(name) + "</measure>" for i, name in enumerate(chords)]
+        return ET.fromstring("<part>" + "".join(bars) + "</part>").findall("measure")
+
+    def test_chords_of_six_flats_under_two_flats(self):
+        # The engine read two flats; the chords are those of G flat major.
+        found = omr_validate._keys_against_chords(self.measures(-2, ["Gb", "Eb", "Db", "B", "Gb", "Ab", "Db", "Gb", "Eb", "B"]))
+        self.assertEqual([(at, key, better) for at, key, _fit, better, _b, _n in found], [(0, -2, -6)])
+
+    def test_chords_of_their_key_and_a_borrowed_one_are_fine(self):
+        self.assertEqual(omr_validate._keys_against_chords(self.measures(1, ["G", "D", "E", "C", "G", "A", "D", "G", "F", "C"])), [])
+
+    def test_too_few_chords_say_nothing(self):
+        self.assertEqual(omr_validate._keys_against_chords(self.measures(-2, ["Gb", "Db", "B"])), [])
+
+    def test_it_is_a_finding_of_the_review_list(self):
+        root = ET.Element("score-partwise")
+        part = ET.SubElement(root, "part")
+        part.extend(self.measures(-2, ["Gb", "Eb", "Db", "B", "Gb", "Ab", "Db", "Gb", "Eb", "B"]))
+        found = [i for i in omr_validate._validate_score(root) if i["rule"] == "K002"]
+        self.assertEqual([(i["measureIndex"], i["severity"]) for i in found], [(0, "medium")])
+        self.assertIn("key -6 fits 100%", found[0]["detail"])
+
+
 class SlashBarTest(unittest.TestCase):
     """Bars printed as rhythm slashes."""
 
