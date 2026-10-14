@@ -6,7 +6,7 @@ project:
   flutter_initialized: true
   repository_initialized: true
 
-last_updated: "2026-10-13T13:55:00+09:00"
+last_updated: "2026-10-14T14:48:00+09:00"
 current_phase:
   id: "RELEASE-4"
   name: "OMR 정확도 최소 95% 개선·검증"
@@ -1434,6 +1434,9 @@ verification:
   status: "passed_with_known_gaps"
   checked_at: "2026-10-06T13:58:32+09:00"
   checks:
+    - name: "chord_entry_flat_minor_20261014"
+      result: "passed_with_known_gaps"
+      detail: "코드 입력칸의 대문자 고정(TextCapitalization.characters)을 첫 글자만 대문자로 바꾸고 ♭ ♯ m 7 maj7 sus4 / 넣기 버튼 추가(release 4115 versionCode 6115, GitHub 사전 릴리스 v1.0.0-4115). 위젯 테스트 1 추가, flutter analyze 문제 없음, 앱 전체 968 통과, 에뮬레이터 설치·실행 확인. 알려진 틈: 대화상자를 실기기·에뮬레이터에서 눈으로 확인하지 않음, 이미 대문자로 잘못 저장된 코드는 그대로."
     - name: "review_fold_single_reader_20261013"
       result: "passed_with_known_gaps"
       detail: "변환 검토 화면이 N002뿐인 마디(한 판독기만 읽음, AI 제안·불확실 표시 없음)를 기본 순서에서 빼고 버튼으로 넣고 뺀다(release 4114 versionCode 6114, GitHub 사전 릴리스 v1.0.0-4114). 도메인 테스트 1·화면 테스트 2 추가, flutter analyze 문제 없음, 앱 전체 967 통과, 에뮬레이터 실행 확인. 정정: 검토 화면의 마디 수는 최신 실변환 17곡에서 532/766(69%; AI 제안 미반영·불확실 197, AI 반영만 172, 반영+N002 35, 규칙 표시 91, N002만 37)이고 앞서 적은 257은 규칙 표시만 센 수다. 이번 접기로 495마디. 알려진 틈: 실제 변환 곡으로 화면 미확인, 검토 부담의 본체인 AI 제안 마디는 그대로."

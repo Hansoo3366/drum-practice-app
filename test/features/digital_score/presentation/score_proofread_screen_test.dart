@@ -303,6 +303,36 @@ void main() {
     await _close(tester);
   });
 
+  testWidgets('a chord takes a flat and a small m from the buttons', (
+    tester,
+  ) async {
+    await _open(tester, _MemoryStorage());
+
+    await _tapTool(tester, '코드');
+    final field = tester.widget<TextField>(find.byType(TextField));
+    // The keyboard does not hold every letter large: "Am7" stays minor.
+    expect(field.textCapitalization, TextCapitalization.sentences);
+    await tester.enterText(find.byType(TextField), 'B');
+    for (final mark in ['♭', 'm', '7', '/']) {
+      await tester.tap(find.widgetWithText(OutlinedButton, mark));
+      await tester.pump();
+    }
+    await tester.enterText(
+      find.byType(TextField),
+      '${tester.widget<TextField>(find.byType(TextField)).controller!.text}D',
+    );
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'B♭m7/D',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, '저장').last);
+    await _settle(tester);
+    // Written as B flat minor seventh over D, and said back plainly.
+    expect(find.text('Bbm7/D'), findsOneWidget);
+
+    await _close(tester);
+  });
+
   testWidgets('edits one bar and saves it as a new raw XML version', (
     tester,
   ) async {

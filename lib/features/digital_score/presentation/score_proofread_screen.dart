@@ -5942,6 +5942,24 @@ class _ChordSymbolDialogState extends State<_ChordSymbolDialog> {
     super.dispose();
   }
 
+  /// What a phone's own keyboard hardly has, or takes a long way round to:
+  /// put in where the cursor is.
+  static const _marks = ['♭', '♯', 'm', '7', 'maj7', 'sus4', '/'];
+
+  void _insert(String mark) {
+    final value = _controller.value;
+    final text = value.text;
+    final selection = value.selection.isValid
+        ? value.selection
+        : TextSelection.collapsed(offset: text.length);
+    final at = selection.start + mark.length;
+    _controller.value = TextEditingValue(
+      text: text.replaceRange(selection.start, selection.end, mark),
+      selection: TextSelection.collapsed(offset: at),
+    );
+    if (_error != null) setState(() => _error = null);
+  }
+
   void _submit() {
     final text = _controller.text.trim();
     if (text.isNotEmpty) {
@@ -5960,17 +5978,43 @@ class _ChordSymbolDialogState extends State<_ChordSymbolDialog> {
     final l10n = context.l10n;
     return AlertDialog(
       title: Text(l10n.chordSymbol),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        autocorrect: false,
-        enableSuggestions: false,
-        textCapitalization: TextCapitalization.characters,
-        decoration: InputDecoration(
-          hintText: l10n.chordSymbolHint,
-          errorText: _error,
-        ),
-        onSubmitted: (_) => _submit(),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            // Only the first letter large: a flat is a small "b" and a
+            // minor chord a small "m" ("Bbm7"); all large, "Am7" would read
+            // as A major seventh.
+            textCapitalization: TextCapitalization.sentences,
+            decoration: InputDecoration(
+              hintText: l10n.chordSymbolHint,
+              errorText: _error,
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final mark in _marks)
+                OutlinedButton(
+                  onPressed: () => _insert(mark),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(44, 40),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  child: Text(mark, style: const TextStyle(fontSize: 16)),
+                ),
+            ],
+          ),
+        ],
       ),
       actions: [
         if (widget.initial.isNotEmpty)
